@@ -32,3 +32,27 @@ describe("browser transcription fallback", () => {
     });
   });
 });
+
+describe("browser clipboard fallback", () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("copies text into browser test clipboard state", async () => {
+    const { copyTextToClipboard, getBrowserClipboardTextForTest } =
+      await import("./tauri");
+
+    await copyTextToClipboard("copied text");
+
+    expect(getBrowserClipboardTextForTest()).toBe("copied text");
+  });
+
+  it("paste writes text into browser test clipboard state", async () => {
+    const { getBrowserClipboardTextForTest, pasteText } =
+      await import("./tauri");
+
+    await pasteText("pasted text");
+
+    expect(getBrowserClipboardTextForTest()).toBe("pasted text");
+  });
+});

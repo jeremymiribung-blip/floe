@@ -5,6 +5,7 @@ mod settings;
 
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(recording::RecordingManager::with_cpal())
         .setup(|app| {
             use tauri::Manager;
@@ -28,6 +29,8 @@ pub fn run() {
             commands::recording::get_latest_recording_info,
             commands::recording::get_latest_recording_wav_bytes,
             commands::transcription::transcribe_latest_recording,
+            commands::clipboard::copy_text_to_clipboard,
+            commands::clipboard::paste_text,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Floe");

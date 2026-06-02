@@ -1,6 +1,7 @@
 import {
   Activity,
   Clipboard,
+  Copy,
   Info,
   KeyRound,
   Mic,
@@ -16,12 +17,13 @@ import { formatRecordingInfo } from "./lib/recording";
 import { cleanupTranscript } from "./lib/transcriptCleanup";
 import {
   clearGroqApiKey,
+  copyTextToClipboard,
   getAppSettings,
   getAppStatus,
   getGroqApiKeyStatus,
   getLatestRecordingInfo,
   getRecordingStatus,
-  runManualTestStub,
+  pasteText,
   saveAppSettings,
   saveGroqApiKey,
   startRecording,
@@ -33,9 +35,9 @@ import type {
   AppSettings,
   AppState,
   AppStatus,
+  ClipboardError,
   GroqApiKeyStatus,
   GroqTranscriptionError,
-  ManualTestResult,
   RecordingError,
   RecordingInfo,
   RecordingStatus,
@@ -52,9 +54,6 @@ export default function App() {
   const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
   const [hotkeyLabelInput, setHotkeyLabelInput] = useState("");
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
-  const [manualResult, setManualResult] = useState<ManualTestResult | null>(
-    null,
-  );
   const [recordingStatus, setRecordingStatus] =
     useState<RecordingStatus | null>(null);
   const [latestRecording, setLatestRecording] = useState<RecordingInfo | null>(
@@ -130,6 +129,20 @@ export default function App() {
     return "The transcription request failed.";
   }
 
+  function clipboardErrorMessage(caught: unknown): string {
+    const clipboardError = caught as Partial<ClipboardError>;
+
+    if (clipboardError.code === "pasteUnavailable") {
+      return "Transcript copied to clipboard, but Floe could not send the paste shortcut. Paste manually with Command+V or Control+V.";
+    }
+
+    if (typeof clipboardError.message === "string") {
+      return clipboardError.message;
+    }
+
+    return "Floe could not complete the clipboard action.";
+  }
+
   async function handleSaveGroqApiKey(event: FormEvent) {
     event.preventDefault();
 
@@ -183,23 +196,10 @@ export default function App() {
     }
   }
 
-  async function handleManualTest(action: string) {
-    try {
-      setAppState("checking");
-      setError(null);
-      setManualResult(await runManualTestStub(action));
-      setAppState("ready");
-    } catch {
-      setError(`The ${action} placeholder check failed.`);
-      setAppState("error");
-    }
-  }
-
   async function handleStartRecording() {
     try {
       setAppState("checking");
       setError(null);
-      setManualResult(null);
       setLatestTranscript(null);
       applyRecordingStatus(await startRecording());
     } catch (caught) {
@@ -248,12 +248,57 @@ export default function App() {
     try {
       setAppState("checking");
       setError(null);
-      setManualResult(null);
       const transcription = await transcribeLatestRecording();
-      setLatestTranscript(cleanupTranscript(transcription.text));
+      const finalText = cleanupTranscript(transcription.text);
+      setLatestTranscript(finalText);
+
+      if (finalText.trim().length === 0) {
+        setAppState("ready");
+        return;
+      }
+
+      await pasteText(finalText);
       setAppState("ready");
     } catch (caught) {
-      setError(transcriptionErrorMessage(caught));
+      const maybeClipboardError = caught as Partial<ClipboardError>;
+      setError(
+        maybeClipboardError.code === "clipboardUnavailable" ||
+          maybeClipboardError.code === "pasteUnavailable"
+          ? clipboardErrorMessage(caught)
+          : transcriptionErrorMessage(caught),
+      );
+      setAppState("error");
+    }
+  }
+
+  async function handleCopyLatestTranscript() {
+    if (!latestTranscript || latestTranscript.trim().length === 0) {
+      return;
+    }
+
+    try {
+      setAppState("checking");
+      setError(null);
+      await copyTextToClipboard(latestTranscript);
+      setAppState("ready");
+    } catch (caught) {
+      setError(clipboardErrorMessage(caught));
+      setAppState("error");
+    }
+  }
+
+  async function handlePasteLatestTranscript() {
+    if (!latestTranscript || latestTranscript.trim().length === 0) {
+      return;
+    }
+
+    try {
+      setAppState("checking");
+      setError(null);
+      await pasteText(latestTranscript);
+      setAppState("ready");
+    } catch (caught) {
+      setError(clipboardErrorMessage(caught));
       setAppState("error");
     }
   }
@@ -261,6 +306,8 @@ export default function App() {
   const isRecording = recordingStatus?.isRecording ?? false;
   const safeLatestRecording =
     latestRecording ?? recordingStatus?.latestRecording ?? null;
+  const hasPasteableTranscript =
+    latestTranscript !== null && latestTranscript.trim().length > 0;
 
   return (
     <main>
@@ -279,12 +326,9 @@ export default function App() {
         <section className="status-panel" aria-live="polite">
           <div>
             <p className="section-label">Status</p>
-            <h2>{status?.appName ?? "Floe"} setup scaffold</h2>
+            <h2>{status?.appName ?? "Floe"} manual flow</h2>
           </div>
           <p>{error ?? status?.message ?? "Loading setup stubs..."}</p>
-          {manualResult ? (
-            <p className="manual-result">{manualResult.message}</p>
-          ) : null}
         </section>
 
         <section className="settings-panel">
@@ -432,11 +476,23 @@ export default function App() {
               onClick={handleTranscribeLatestRecording}
             >
               <WandSparkles aria-hidden="true" />
-              Transcribe latest
+              Transcribe + paste
             </button>
-            <button type="button" onClick={() => handleManualTest("paste")}>
+            <button
+              type="button"
+              disabled={!hasPasteableTranscript}
+              onClick={handleCopyLatestTranscript}
+            >
+              <Copy aria-hidden="true" />
+              Copy transcript
+            </button>
+            <button
+              type="button"
+              disabled={!hasPasteableTranscript}
+              onClick={handlePasteLatestTranscript}
+            >
               <Clipboard aria-hidden="true" />
-              Paste stub
+              Paste transcript
             </button>
           </div>
           <button

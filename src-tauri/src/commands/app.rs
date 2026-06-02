@@ -20,8 +20,7 @@ pub fn get_app_status() -> AppStatus {
     AppStatus {
         app_name: "Floe",
         status: "setup_only",
-        message:
-            "Initial scaffold is ready. Runtime transcription features are not implemented yet.",
+        message: "Manual recording, transcription, clipboard copy, and paste checks are ready.",
     }
 }
 

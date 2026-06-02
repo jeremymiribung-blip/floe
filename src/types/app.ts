@@ -99,3 +99,10 @@ export interface GroqTranscriptionError {
   code: GroqTranscriptionErrorCode;
   message: string;
 }
+
+export type ClipboardErrorCode = "clipboardUnavailable" | "pasteUnavailable";
+
+export interface ClipboardError {
+  code: ClipboardErrorCode;
+  message: string;
+}

@@ -2,7 +2,7 @@
 
 Floe is a minimal desktop push-to-talk transcription utility. Hold a global hotkey, speak, release it, and Floe sends the completed recording once to Groq Speech-to-Text, cleans the transcript locally, copies it to the clipboard, and pastes it into the focused app.
 
-This repository is currently at the setup-only scaffold milestone. The desktop shell, project structure, CI, and stub commands are in place; audio capture, Groq calls, hotkeys, clipboard writes, and paste automation are intentionally not implemented yet.
+This repository is currently an early V1 implementation. The desktop shell, settings storage, manual recording, Groq transcription, clipboard writes, and paste automation are in place; global push-to-talk hotkeys are intentionally not implemented yet.
 
 ## Product Goal
 
@@ -36,9 +36,9 @@ V1 does not include streaming, rolling transcription, audio chunking, overlap wi
 ## Current Scaffold Scope
 
 - Minimal Tauri 2 app named Floe.
-- React status screen, secure settings controls, and manual testing placeholder buttons.
-- Rust commands for app status, secure settings, recording checks, and remaining manual-test placeholders.
-- No network calls, clipboard writes, hotkeys, or paste automation.
+- React status screen, secure settings controls, manual recording controls, and transcript copy/paste actions.
+- Rust commands for app status, secure settings, recording checks, Groq transcription, clipboard writes, and paste automation.
+- No global hotkeys yet.
 - GitHub Actions CI for frontend and Rust checks.
 
 ## Privacy Model
@@ -71,6 +71,16 @@ pnpm install
 pnpm dev
 pnpm tauri:dev
 ```
+
+## Manual Test Flow
+
+1. Run `pnpm tauri:dev`.
+2. Save a Groq API key in the settings panel.
+3. Click `Start`, speak briefly, then click `Stop`.
+4. Focus a target text field in another app.
+5. Return to Floe and click `Transcribe + paste`.
+6. Confirm the cleaned transcript appears in Floe and is pasted into the focused target.
+7. If the OS blocks paste automation, Floe keeps the transcript on the clipboard. Paste manually with Command+V on macOS or Control+V on Windows/Linux.
 
 Useful checks:
 

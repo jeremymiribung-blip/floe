@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   AppStatus,
+  ClipboardError,
   GroqTranscription,
   GroqTranscriptionError,
   GroqApiKeyStatus,
@@ -15,7 +16,7 @@ const browserStatus: AppStatus = {
   appName: "Floe",
   status: "setup_only",
   message:
-    "Initial scaffold is ready. Runtime transcription features are not implemented yet.",
+    "Manual recording, transcription, clipboard copy, and paste checks are ready.",
 };
 
 let browserGroqApiKeyStatus: GroqApiKeyStatus = {
@@ -25,6 +26,7 @@ let browserGroqApiKeyStatus: GroqApiKeyStatus = {
 let browserAppSettings: AppSettings = {
   hotkeyLabel: "Not configured",
 };
+let browserClipboardText = "";
 
 const browserSampleRate = 48_000;
 const browserMaxDurationSeconds = 120;
@@ -47,6 +49,13 @@ function transcriptionError(
   code: GroqTranscriptionError["code"],
   message: string,
 ): GroqTranscriptionError {
+  return { code, message };
+}
+
+function clipboardError(
+  code: ClipboardError["code"],
+  message: string,
+): ClipboardError {
   return { code, message };
 }
 
@@ -263,4 +272,33 @@ export function transcribeLatestRecording(): Promise<GroqTranscription> {
   }
 
   return invoke("transcribe_latest_recording");
+}
+
+export function copyTextToClipboard(text: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    browserClipboardText = text;
+    return Promise.resolve();
+  }
+
+  return invoke("copy_text_to_clipboard", { text });
+}
+
+export function pasteText(text: string): Promise<void> {
+  if (!isTauriRuntime()) {
+    browserClipboardText = text;
+    return Promise.resolve();
+  }
+
+  return invoke("paste_text", { text });
+}
+
+export function getBrowserClipboardTextForTest(): string {
+  if (isTauriRuntime()) {
+    throw clipboardError(
+      "clipboardUnavailable",
+      "Browser clipboard test state is unavailable in Tauri.",
+    );
+  }
+
+  return browserClipboardText;
 }
