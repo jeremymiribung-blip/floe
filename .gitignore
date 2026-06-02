@@ -1,0 +1,35 @@
+# Secrets
+.env
+.env.*
+*.key
+*.pem
+
+# Logs and local state
+logs/
+*.log
+*.local.json
+*.local.toml
+floe.local.*
+
+# Audio/debug artifacts
+*.wav
+*.mp3
+*.m4a
+*.flac
+debug-audio/
+
+# Frontend
+node_modules/
+dist/
+
+# Rust/Tauri
+target/
+src-tauri/target/
+src-tauri/gen/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
