@@ -4,6 +4,7 @@ const statusLabels: Record<AppState, string> = {
   loading: "Loading",
   ready: "Ready",
   checking: "Checking",
+  recording: "Recording",
   error: "Needs attention",
 };
 

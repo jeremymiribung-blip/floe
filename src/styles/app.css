@@ -94,7 +94,8 @@ dd {
 }
 
 .status-pill-checking span,
-.status-pill-loading span {
+.status-pill-loading span,
+.status-pill-recording span {
   background: #ad7d18;
 }
 
@@ -150,6 +151,10 @@ dl {
   gap: 12px;
 }
 
+.recording-metadata {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 dt {
   font-weight: 700;
 }
@@ -191,11 +196,25 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.secondary-button {
+  border-color: #8ba19b;
+  background: #ffffff;
+  color: #1f6158;
+}
+
+.secondary-button:hover:not(:disabled) {
+  background: #edf4f2;
+}
+
 @media (max-width: 640px) {
   .app-header,
   .actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .recording-metadata {
+    grid-template-columns: 1fr;
   }
 
   .app-header h1 {
