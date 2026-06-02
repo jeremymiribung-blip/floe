@@ -6,10 +6,22 @@ export interface AppStatus {
   message: string;
 }
 
-export interface SettingsStub {
-  hasGroqApiKey: boolean;
+export interface GroqApiKeyStatus {
+  configured: boolean;
+  maskedPreview: string | null;
+}
+
+export interface AppSettings {
   hotkeyLabel: string;
-  storageLabel: string;
+}
+
+export interface SettingsError {
+  code:
+    | "invalidGroqApiKey"
+    | "invalidAppSettings"
+    | "secretStoreUnavailable"
+    | "appSettingsUnavailable";
+  message: string;
 }
 
 export interface ManualTestResult {

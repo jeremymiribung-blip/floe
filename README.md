@@ -16,7 +16,7 @@ Floe aims to feel fast, private by default, and boringly reliable. V1 intentiona
 - Future `cpal` microphone recording
 - Future in-memory 16-bit PCM WAV generation
 - Future Groq Speech-to-Text with `whisper-large-v3-turbo`
-- Future OS keychain storage
+- OS keychain storage for Groq API keys
 
 ## Intended V1 Scope
 
@@ -36,9 +36,9 @@ V1 does not include streaming, rolling transcription, audio chunking, overlap wi
 ## Current Scaffold Scope
 
 - Minimal Tauri 2 app named Floe.
-- React status screen, settings placeholder, and manual testing placeholder buttons.
-- Rust stub commands only.
-- No microphone access, network calls, secret storage, clipboard writes, hotkeys, or paste automation.
+- React status screen, secure settings controls, and manual testing placeholder buttons.
+- Rust commands for app status, secure settings, recording checks, and remaining manual-test placeholders.
+- No network calls, clipboard writes, hotkeys, or paste automation.
 - GitHub Actions CI for frontend and Rust checks.
 
 ## Privacy Model
@@ -86,7 +86,11 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 ## Groq API Key
 
-Groq API key storage is not implemented in the scaffold. When added, production keys should be stored through the OS keychain and the frontend should only receive whether a key exists.
+Groq API keys are stored through the operating system keychain using the Rust `keyring` crate. Non-secret app settings are stored separately in Floe's app config directory.
+
+The frontend never receives the full Groq API key. It only receives whether a key is configured and a masked preview such as `gsk_...abcd`.
+
+If the native keychain is unavailable in the current environment, Floe does not fall back to plaintext secret files. Saving or clearing a secret returns a sanitized error, and the API key status remains unconfigured until OS keychain access works.
 
 ## Troubleshooting
 

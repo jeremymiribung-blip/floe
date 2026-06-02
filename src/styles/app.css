@@ -67,7 +67,8 @@ dd {
 }
 
 .status-pill,
-.actions {
+.actions,
+.field-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -151,6 +152,10 @@ dl {
   gap: 12px;
 }
 
+.settings-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .recording-metadata {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -164,6 +169,43 @@ dt {
   border: 1px solid #cbd7d2;
   border-radius: 8px;
   background: #f6f8f7;
+}
+
+.settings-form {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-form label {
+  font-weight: 700;
+}
+
+.field-row {
+  flex-wrap: wrap;
+}
+
+input {
+  width: min(100%, 340px);
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #9aa9a5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #172026;
+  font: inherit;
+}
+
+input:focus {
+  border-color: #246b61;
+  outline: 3px solid #cfe3df;
+}
+
+.settings-message {
+  padding: 12px;
+  border: 1px solid #cbd7d2;
+  border-radius: 8px;
+  background: #f6f8f7;
+  color: #52615e;
 }
 
 .actions {
@@ -208,13 +250,19 @@ button:disabled {
 
 @media (max-width: 640px) {
   .app-header,
-  .actions {
+  .actions,
+  .field-row {
     align-items: stretch;
     flex-direction: column;
   }
 
+  .settings-summary,
   .recording-metadata {
     grid-template-columns: 1fr;
+  }
+
+  input {
+    width: 100%;
   }
 
   .app-header h1 {

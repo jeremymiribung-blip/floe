@@ -2,37 +2,53 @@ import {
   Activity,
   Clipboard,
   Info,
+  KeyRound,
   Mic,
+  Save,
   Settings,
   Square,
+  Trash2,
   WandSparkles,
 } from "lucide-react";
+import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { formatRecordingInfo } from "./lib/recording";
 import {
+  clearGroqApiKey,
+  getAppSettings,
   getAppStatus,
+  getGroqApiKeyStatus,
   getLatestRecordingInfo,
   getRecordingStatus,
-  getSettingsStub,
   runManualTestStub,
+  saveAppSettings,
+  saveGroqApiKey,
   startRecording,
   stopRecording,
 } from "./lib/tauri";
 import { statusLabel } from "./lib/status";
 import type {
+  AppSettings,
   AppState,
   AppStatus,
+  GroqApiKeyStatus,
   ManualTestResult,
   RecordingError,
   RecordingInfo,
   RecordingStatus,
-  SettingsStub,
+  SettingsError,
 } from "./types/app";
 
 export default function App() {
   const [appState, setAppState] = useState<AppState>("loading");
   const [status, setStatus] = useState<AppStatus | null>(null);
-  const [settings, setSettings] = useState<SettingsStub | null>(null);
+  const [apiKeyStatus, setApiKeyStatus] = useState<GroqApiKeyStatus | null>(
+    null,
+  );
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
+  const [hotkeyLabelInput, setHotkeyLabelInput] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [manualResult, setManualResult] = useState<ManualTestResult | null>(
     null,
   );
@@ -44,14 +60,30 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([getAppStatus(), getSettingsStub(), getRecordingStatus()])
-      .then(([appStatus, settingsStub, currentRecordingStatus]) => {
-        setStatus(appStatus);
-        setSettings(settingsStub);
-        setRecordingStatus(currentRecordingStatus);
-        setLatestRecording(currentRecordingStatus.latestRecording);
-        setAppState(currentRecordingStatus.isRecording ? "recording" : "ready");
-      })
+    Promise.all([
+      getAppStatus(),
+      getGroqApiKeyStatus(),
+      getAppSettings(),
+      getRecordingStatus(),
+    ])
+      .then(
+        ([
+          appStatus,
+          currentApiKeyStatus,
+          currentSettings,
+          currentRecordingStatus,
+        ]) => {
+          setStatus(appStatus);
+          setApiKeyStatus(currentApiKeyStatus);
+          setSettings(currentSettings);
+          setHotkeyLabelInput(currentSettings.hotkeyLabel);
+          setRecordingStatus(currentRecordingStatus);
+          setLatestRecording(currentRecordingStatus.latestRecording);
+          setAppState(
+            currentRecordingStatus.isRecording ? "recording" : "ready",
+          );
+        },
+      )
       .catch(() => {
         setError("Floe could not load setup state.");
         setAppState("error");
@@ -72,6 +104,69 @@ export default function App() {
     }
 
     return `The ${action} recording check failed.`;
+  }
+
+  function settingsErrorMessage(caught: unknown): string {
+    const settingsError = caught as Partial<SettingsError>;
+
+    if (typeof settingsError.message === "string") {
+      return settingsError.message;
+    }
+
+    return "Settings could not be saved.";
+  }
+
+  async function handleSaveGroqApiKey(event: FormEvent) {
+    event.preventDefault();
+
+    try {
+      setAppState("checking");
+      setError(null);
+      setSettingsMessage(null);
+      const nextStatus = await saveGroqApiKey(groqApiKeyInput);
+      setApiKeyStatus(nextStatus);
+      setGroqApiKeyInput("");
+      setSettingsMessage("Groq API key saved.");
+      setAppState("ready");
+    } catch (caught) {
+      setSettingsMessage(settingsErrorMessage(caught));
+      setAppState("error");
+    }
+  }
+
+  async function handleClearGroqApiKey() {
+    try {
+      setAppState("checking");
+      setError(null);
+      setSettingsMessage(null);
+      setApiKeyStatus(await clearGroqApiKey());
+      setGroqApiKeyInput("");
+      setSettingsMessage("Groq API key cleared.");
+      setAppState("ready");
+    } catch (caught) {
+      setSettingsMessage(settingsErrorMessage(caught));
+      setAppState("error");
+    }
+  }
+
+  async function handleSaveAppSettings(event: FormEvent) {
+    event.preventDefault();
+
+    try {
+      setAppState("checking");
+      setError(null);
+      setSettingsMessage(null);
+      const savedSettings = await saveAppSettings({
+        hotkeyLabel: hotkeyLabelInput,
+      });
+      setSettings(savedSettings);
+      setHotkeyLabelInput(savedSettings.hotkeyLabel);
+      setSettingsMessage("App settings saved.");
+      setAppState("ready");
+    } catch (caught) {
+      setSettingsMessage(settingsErrorMessage(caught));
+      setAppState("error");
+    }
   }
 
   async function handleManualTest(action: string) {
@@ -168,14 +263,16 @@ export default function App() {
             <p className="section-label">Settings</p>
             <h2>
               <Settings aria-hidden="true" />
-              Placeholder
+              Secure storage
             </h2>
           </div>
-          <dl>
+          <dl className="settings-summary">
             <div>
               <dt>Groq API key</dt>
               <dd>
-                {settings?.hasGroqApiKey ? "Configured" : "Not configured"}
+                {apiKeyStatus?.configured
+                  ? `Configured (${apiKeyStatus.maskedPreview})`
+                  : "Not configured"}
               </dd>
             </div>
             <div>
@@ -184,9 +281,51 @@ export default function App() {
             </div>
             <div>
               <dt>Secret storage</dt>
-              <dd>{settings?.storageLabel ?? "Loading"}</dd>
+              <dd>OS keychain</dd>
             </div>
           </dl>
+          <form className="settings-form" onSubmit={handleSaveGroqApiKey}>
+            <label htmlFor="groq-api-key">Groq API key</label>
+            <div className="field-row">
+              <input
+                id="groq-api-key"
+                type="password"
+                value={groqApiKeyInput}
+                autoComplete="off"
+                onChange={(event) => setGroqApiKeyInput(event.target.value)}
+              />
+              <button type="submit">
+                <KeyRound aria-hidden="true" />
+                Save key
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={handleClearGroqApiKey}
+              >
+                <Trash2 aria-hidden="true" />
+                Clear
+              </button>
+            </div>
+          </form>
+          <form className="settings-form" onSubmit={handleSaveAppSettings}>
+            <label htmlFor="hotkey-label">Global hotkey label</label>
+            <div className="field-row">
+              <input
+                id="hotkey-label"
+                type="text"
+                value={hotkeyLabelInput}
+                onChange={(event) => setHotkeyLabelInput(event.target.value)}
+              />
+              <button type="submit">
+                <Save aria-hidden="true" />
+                Save settings
+              </button>
+            </div>
+          </form>
+          {settingsMessage ? (
+            <p className="settings-message">{settingsMessage}</p>
+          ) : null}
         </section>
 
         <section className="manual-panel">

@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AppSettings,
   AppStatus,
+  GroqApiKeyStatus,
   ManualTestResult,
   RecordingError,
   RecordingInfo,
   RecordingStatus,
-  SettingsStub,
 } from "../types/app";
 
 const browserStatus: AppStatus = {
@@ -15,10 +16,12 @@ const browserStatus: AppStatus = {
     "Initial scaffold is ready. Runtime transcription features are not implemented yet.",
 };
 
-const browserSettings: SettingsStub = {
-  hasGroqApiKey: false,
+let browserGroqApiKeyStatus: GroqApiKeyStatus = {
+  configured: false,
+  maskedPreview: null,
+};
+let browserAppSettings: AppSettings = {
   hotkeyLabel: "Not configured",
-  storageLabel: "Keychain storage not wired yet",
 };
 
 const browserSampleRate = 48_000;
@@ -36,6 +39,14 @@ function recordingError(
   message: string,
 ): RecordingError {
   return { code, message };
+}
+
+function maskBrowserApiKey(apiKey: string): string {
+  if (apiKey.length < 12) {
+    return "Configured key";
+  }
+
+  return `${apiKey.slice(0, 4)}...${apiKey.slice(-4)}`;
 }
 
 function currentBrowserRecordingStatus(): RecordingStatus {
@@ -70,12 +81,56 @@ export function getAppStatus(): Promise<AppStatus> {
   return invoke("get_app_status");
 }
 
-export function getSettingsStub(): Promise<SettingsStub> {
+export function saveGroqApiKey(apiKey: string): Promise<GroqApiKeyStatus> {
   if (!isTauriRuntime()) {
-    return Promise.resolve(browserSettings);
+    const trimmed = apiKey.trim();
+    browserGroqApiKeyStatus = {
+      configured: true,
+      maskedPreview: maskBrowserApiKey(trimmed),
+    };
+    return Promise.resolve(browserGroqApiKeyStatus);
   }
 
-  return invoke("get_settings_stub");
+  return invoke("save_groq_api_key", { apiKey });
+}
+
+export function clearGroqApiKey(): Promise<GroqApiKeyStatus> {
+  if (!isTauriRuntime()) {
+    browserGroqApiKeyStatus = {
+      configured: false,
+      maskedPreview: null,
+    };
+    return Promise.resolve(browserGroqApiKeyStatus);
+  }
+
+  return invoke("clear_groq_api_key");
+}
+
+export function getGroqApiKeyStatus(): Promise<GroqApiKeyStatus> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(browserGroqApiKeyStatus);
+  }
+
+  return invoke("get_groq_api_key_status");
+}
+
+export function getAppSettings(): Promise<AppSettings> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(browserAppSettings);
+  }
+
+  return invoke("get_app_settings");
+}
+
+export function saveAppSettings(settings: AppSettings): Promise<AppSettings> {
+  if (!isTauriRuntime()) {
+    browserAppSettings = {
+      hotkeyLabel: settings.hotkeyLabel.trim(),
+    };
+    return Promise.resolve(browserAppSettings);
+  }
+
+  return invoke("save_app_settings", { settings });
 }
 
 export function runManualTestStub(action: string): Promise<ManualTestResult> {
