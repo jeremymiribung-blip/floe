@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Default app capability",
   "windows": ["main"],
-  "permissions": ["core:default", "clipboard-manager:allow-write-text"]
+  "permissions": [
+    "core:default",
+    "clipboard-manager:allow-write-text",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister"
+  ]
 }

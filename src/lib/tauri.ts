@@ -16,7 +16,7 @@ const browserStatus: AppStatus = {
   appName: "Floe",
   status: "setup_only",
   message:
-    "Manual recording, transcription, clipboard copy, and paste checks are ready.",
+    "Push-to-talk recording, transcription, clipboard copy, and paste checks are ready.",
 };
 
 let browserGroqApiKeyStatus: GroqApiKeyStatus = {
@@ -24,7 +24,10 @@ let browserGroqApiKeyStatus: GroqApiKeyStatus = {
   maskedPreview: null,
 };
 let browserAppSettings: AppSettings = {
-  hotkeyLabel: "Not configured",
+  hotkey: {
+    accelerator: "Ctrl+Space",
+    label: "Ctrl+Space",
+  },
 };
 let browserClipboardText = "";
 
@@ -34,7 +37,7 @@ let browserRecordingStartedAtMs: number | null = null;
 let browserLatestRecording: RecordingInfo | null = null;
 let browserLastError: RecordingError | null = null;
 
-function isTauriRuntime(): boolean {
+export function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
@@ -143,7 +146,10 @@ export function getAppSettings(): Promise<AppSettings> {
 export function saveAppSettings(settings: AppSettings): Promise<AppSettings> {
   if (!isTauriRuntime()) {
     browserAppSettings = {
-      hotkeyLabel: settings.hotkeyLabel.trim(),
+      hotkey: {
+        accelerator: settings.hotkey.accelerator.trim(),
+        label: settings.hotkey.label.trim(),
+      },
     };
     return Promise.resolve(browserAppSettings);
   }
@@ -290,6 +296,14 @@ export function pasteText(text: string): Promise<void> {
   }
 
   return invoke("paste_text", { text });
+}
+
+export function pasteClipboard(): Promise<void> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve();
+  }
+
+  return invoke("paste_clipboard");
 }
 
 export function getBrowserClipboardTextForTest(): string {

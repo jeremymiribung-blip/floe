@@ -10,6 +10,9 @@ importers:
       "@tauri-apps/api":
         specifier: ^2.6.0
         version: 2.11.0
+      "@tauri-apps/plugin-global-shortcut":
+        specifier: 2.3.2
+        version: 2.3.2
       lucide-react:
         specifier: ^0.468.0
         version: 0.468.0(react@18.3.1)
@@ -1197,6 +1200,12 @@ packages:
       }
     engines: { node: ">= 10" }
     hasBin: true
+
+  "@tauri-apps/plugin-global-shortcut@2.3.2":
+    resolution:
+      {
+        integrity: sha512-UReHNXrLvpEjylE4jb4oCYiy96uRykPUthoCQCmRXYrd5hs5X9DrW+qOn7GLW57EJN4tdK8bgK5twBTz2NOxzA==,
+      }
 
   "@types/babel__core@7.20.5":
     resolution:
@@ -3149,6 +3158,10 @@ snapshots:
       "@tauri-apps/cli-win32-arm64-msvc": 2.11.2
       "@tauri-apps/cli-win32-ia32-msvc": 2.11.2
       "@tauri-apps/cli-win32-x64-msvc": 2.11.2
+
+  "@tauri-apps/plugin-global-shortcut@2.3.2":
+    dependencies:
+      "@tauri-apps/api": 2.11.0
 
   "@types/babel__core@7.20.5":
     dependencies:

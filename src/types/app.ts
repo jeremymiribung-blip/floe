@@ -1,4 +1,11 @@
-export type AppState = "loading" | "ready" | "checking" | "recording" | "error";
+export type AppState =
+  | "idle"
+  | "recording"
+  | "transcribing"
+  | "cleaning"
+  | "pasting"
+  | "pasted"
+  | "error";
 
 export interface AppStatus {
   appName: "Floe";
@@ -12,7 +19,12 @@ export interface GroqApiKeyStatus {
 }
 
 export interface AppSettings {
-  hotkeyLabel: string;
+  hotkey: HotkeySettings;
+}
+
+export interface HotkeySettings {
+  accelerator: string;
+  label: string;
 }
 
 export interface SettingsError {

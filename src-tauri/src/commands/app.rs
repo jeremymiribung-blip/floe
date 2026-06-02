@@ -20,7 +20,8 @@ pub fn get_app_status() -> AppStatus {
     AppStatus {
         app_name: "Floe",
         status: "setup_only",
-        message: "Manual recording, transcription, clipboard copy, and paste checks are ready.",
+        message:
+            "Push-to-talk recording, transcription, clipboard copy, and paste checks are ready.",
     }
 }
 

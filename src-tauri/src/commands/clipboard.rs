@@ -93,6 +93,13 @@ pub fn paste_text(app: AppHandle, text: String) -> Result<(), ClipboardError> {
     paste_text_with(&clipboard, &paste_simulator, &text, std::thread::sleep)
 }
 
+#[tauri::command]
+pub fn paste_clipboard() -> Result<(), ClipboardError> {
+    let paste_simulator = EnigoPasteSimulator;
+
+    paste_clipboard_with(&paste_simulator)
+}
+
 fn copy_text_to_clipboard_with(
     clipboard: &impl TextClipboard,
     text: &str,
@@ -108,6 +115,10 @@ fn paste_text_with(
 ) -> Result<(), ClipboardError> {
     clipboard.write_text(text)?;
     delay(CLIPBOARD_SETTLE_DELAY);
+    paste_simulator.paste_shortcut(current_paste_shortcut())
+}
+
+fn paste_clipboard_with(paste_simulator: &impl PasteSimulator) -> Result<(), ClipboardError> {
     paste_simulator.paste_shortcut(current_paste_shortcut())
 }
 
@@ -161,9 +172,10 @@ mod tests {
     };
 
     use super::{
-        clipboard_unavailable_error, copy_text_to_clipboard_with, paste_shortcut_for_target_os,
-        paste_text_with, paste_unavailable_error, ClipboardError, ClipboardErrorCode,
-        PasteModifier, PasteShortcut, PasteSimulator, TextClipboard, CLIPBOARD_SETTLE_DELAY,
+        clipboard_unavailable_error, copy_text_to_clipboard_with, paste_clipboard_with,
+        paste_shortcut_for_target_os, paste_text_with, paste_unavailable_error, ClipboardError,
+        ClipboardErrorCode, PasteModifier, PasteShortcut, PasteSimulator, TextClipboard,
+        CLIPBOARD_SETTLE_DELAY,
     };
 
     #[derive(Default)]
@@ -239,6 +251,15 @@ mod tests {
 
         assert_eq!(error.code, ClipboardErrorCode::PasteUnavailable);
         assert_eq!(clipboard.text.borrow().as_deref(), Some("still copied"));
+    }
+
+    #[test]
+    fn paste_clipboard_sends_shortcut_without_touching_clipboard_text() {
+        let paste_simulator = FakePasteSimulator::default();
+
+        paste_clipboard_with(&paste_simulator).unwrap();
+
+        assert_eq!(paste_simulator.shortcuts.borrow().len(), 1);
     }
 
     #[test]

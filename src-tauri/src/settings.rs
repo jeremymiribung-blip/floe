@@ -5,8 +5,10 @@ use serde::{Deserialize, Serialize};
 
 const KEYRING_SERVICE: &str = "com.floe.app";
 const GROQ_API_KEY_USER: &str = "groq-api-key";
-const DEFAULT_HOTKEY_LABEL: &str = "Not configured";
+const DEFAULT_HOTKEY_ACCELERATOR: &str = "Ctrl+Space";
+const DEFAULT_HOTKEY_LABEL: &str = "Ctrl+Space";
 const MAX_GROQ_API_KEY_LEN: usize = 256;
+const MAX_HOTKEY_ACCELERATOR_LEN: usize = 80;
 const MAX_HOTKEY_LABEL_LEN: usize = 80;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -19,13 +21,30 @@ pub struct GroqApiKeyStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
-    pub hotkey_label: String,
+    #[serde(default)]
+    pub hotkey: HotkeySettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HotkeySettings {
+    pub accelerator: String,
+    pub label: String,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            hotkey_label: DEFAULT_HOTKEY_LABEL.to_string(),
+            hotkey: HotkeySettings::default(),
+        }
+    }
+}
+
+impl Default for HotkeySettings {
+    fn default() -> Self {
+        Self {
+            accelerator: DEFAULT_HOTKEY_ACCELERATOR.to_string(),
+            label: DEFAULT_HOTKEY_LABEL.to_string(),
         }
     }
 }
@@ -215,9 +234,13 @@ fn validate_groq_api_key(api_key: &str) -> Result<String, SettingsError> {
 }
 
 fn validate_app_settings(settings: AppSettings) -> Result<AppSettings, SettingsError> {
-    let hotkey_label = settings.hotkey_label.trim();
+    let hotkey_accelerator = settings.hotkey.accelerator.trim();
+    let hotkey_label = settings.hotkey.label.trim();
 
-    if hotkey_label.is_empty()
+    if hotkey_accelerator.is_empty()
+        || hotkey_accelerator.len() > MAX_HOTKEY_ACCELERATOR_LEN
+        || hotkey_accelerator.chars().any(char::is_control)
+        || hotkey_label.is_empty()
         || hotkey_label.len() > MAX_HOTKEY_LABEL_LEN
         || hotkey_label.chars().any(char::is_control)
     {
@@ -228,7 +251,10 @@ fn validate_app_settings(settings: AppSettings) -> Result<AppSettings, SettingsE
     }
 
     Ok(AppSettings {
-        hotkey_label: hotkey_label.to_string(),
+        hotkey: HotkeySettings {
+            accelerator: hotkey_accelerator.to_string(),
+            label: hotkey_label.to_string(),
+        },
     })
 }
 
@@ -269,8 +295,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        mask_api_key, AppSettings, GroqApiKeyStatus, SecretStore, SettingsError, SettingsErrorCode,
-        SettingsManager,
+        mask_api_key, AppSettings, GroqApiKeyStatus, HotkeySettings, SecretStore, SettingsError,
+        SettingsErrorCode, SettingsManager,
     };
 
     #[derive(Default)]
@@ -376,14 +402,46 @@ mod tests {
     }
 
     #[test]
-    fn app_settings_validation_rejects_invalid_hotkey_labels() {
+    fn app_settings_default_hotkey_is_push_to_talk_shortcut() {
         let manager = test_manager();
 
-        for hotkey_label in ["", "   ", "Ctrl\nSpace"] {
+        let settings = manager
+            .get_app_settings()
+            .expect("default settings should load");
+
+        assert_eq!(
+            settings.hotkey,
+            HotkeySettings {
+                accelerator: "Ctrl+Space".to_string(),
+                label: "Ctrl+Space".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn app_settings_validation_rejects_invalid_hotkeys() {
+        let manager = test_manager();
+
+        for hotkey in [
+            HotkeySettings {
+                accelerator: "".to_string(),
+                label: "Ctrl+Space".to_string(),
+            },
+            HotkeySettings {
+                accelerator: "Ctrl+Space".to_string(),
+                label: "   ".to_string(),
+            },
+            HotkeySettings {
+                accelerator: "Ctrl\nSpace".to_string(),
+                label: "Ctrl+Space".to_string(),
+            },
+            HotkeySettings {
+                accelerator: "Ctrl+Space".to_string(),
+                label: "Ctrl\nSpace".to_string(),
+            },
+        ] {
             let error = manager
-                .save_app_settings(AppSettings {
-                    hotkey_label: hotkey_label.to_string(),
-                })
+                .save_app_settings(AppSettings { hotkey })
                 .expect_err("invalid settings should fail");
 
             assert_eq!(error.code, SettingsErrorCode::InvalidAppSettings);
@@ -392,7 +450,10 @@ mod tests {
         let too_long = "x".repeat(81);
         let error = manager
             .save_app_settings(AppSettings {
-                hotkey_label: too_long,
+                hotkey: HotkeySettings {
+                    accelerator: "Ctrl+Space".to_string(),
+                    label: too_long,
+                },
             })
             .expect_err("too-long settings should fail");
 
@@ -400,16 +461,20 @@ mod tests {
     }
 
     #[test]
-    fn app_settings_save_trims_valid_hotkey_label() {
+    fn app_settings_save_trims_valid_hotkey() {
         let manager = test_manager();
 
         let saved = manager
             .save_app_settings(AppSettings {
-                hotkey_label: "  Ctrl+Space  ".to_string(),
+                hotkey: HotkeySettings {
+                    accelerator: "  Ctrl+Space  ".to_string(),
+                    label: "  Ctrl+Space  ".to_string(),
+                },
             })
             .expect("valid settings should save");
 
-        assert_eq!(saved.hotkey_label, "Ctrl+Space");
+        assert_eq!(saved.hotkey.accelerator, "Ctrl+Space");
+        assert_eq!(saved.hotkey.label, "Ctrl+Space");
         assert_eq!(manager.get_app_settings().unwrap(), saved);
     }
 

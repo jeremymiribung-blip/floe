@@ -33,6 +33,41 @@ describe("browser transcription fallback", () => {
   });
 });
 
+describe("browser settings fallback", () => {
+  afterEach(() => {
+    vi.resetModules();
+  });
+
+  it("uses a customization-ready default hotkey", async () => {
+    const { getAppSettings } = await import("./tauri");
+
+    await expect(getAppSettings()).resolves.toEqual({
+      hotkey: {
+        accelerator: "Ctrl+Space",
+        label: "Ctrl+Space",
+      },
+    });
+  });
+
+  it("saves trimmed hotkey settings", async () => {
+    const { getAppSettings, saveAppSettings } = await import("./tauri");
+
+    await saveAppSettings({
+      hotkey: {
+        accelerator: "  Ctrl+Space  ",
+        label: "  Ctrl+Space  ",
+      },
+    });
+
+    await expect(getAppSettings()).resolves.toEqual({
+      hotkey: {
+        accelerator: "Ctrl+Space",
+        label: "Ctrl+Space",
+      },
+    });
+  });
+});
+
 describe("browser clipboard fallback", () => {
   afterEach(() => {
     vi.resetModules();
@@ -54,5 +89,18 @@ describe("browser clipboard fallback", () => {
     await pasteText("pasted text");
 
     expect(getBrowserClipboardTextForTest()).toBe("pasted text");
+  });
+
+  it("pasteClipboard leaves existing browser clipboard text alone", async () => {
+    const {
+      copyTextToClipboard,
+      getBrowserClipboardTextForTest,
+      pasteClipboard,
+    } = await import("./tauri");
+
+    await copyTextToClipboard("already copied");
+    await pasteClipboard();
+
+    expect(getBrowserClipboardTextForTest()).toBe("already copied");
   });
 });

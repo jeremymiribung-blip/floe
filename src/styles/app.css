@@ -90,13 +90,15 @@ dd {
   background: #6f7b7a;
 }
 
-.status-pill-ready span {
+.status-pill-idle span,
+.status-pill-pasted span {
   background: #2f8f63;
 }
 
-.status-pill-checking span,
-.status-pill-loading span,
-.status-pill-recording span {
+.status-pill-recording span,
+.status-pill-transcribing span,
+.status-pill-cleaning span,
+.status-pill-pasting span {
   background: #ad7d18;
 }
 

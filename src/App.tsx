@@ -5,16 +5,17 @@ import {
   Info,
   KeyRound,
   Mic,
-  Save,
   Settings,
   Square,
   Trash2,
   WandSparkles,
 } from "lucide-react";
+import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatRecordingInfo } from "./lib/recording";
 import { cleanupTranscript } from "./lib/transcriptCleanup";
+import { PushToTalkController } from "./lib/pushToTalk";
 import {
   clearGroqApiKey,
   copyTextToClipboard,
@@ -23,8 +24,8 @@ import {
   getGroqApiKeyStatus,
   getLatestRecordingInfo,
   getRecordingStatus,
-  pasteText,
-  saveAppSettings,
+  isTauriRuntime,
+  pasteClipboard,
   saveGroqApiKey,
   startRecording,
   stopRecording,
@@ -45,14 +46,13 @@ import type {
 } from "./types/app";
 
 export default function App() {
-  const [appState, setAppState] = useState<AppState>("loading");
+  const [appState, setAppState] = useState<AppState>("idle");
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [apiKeyStatus, setApiKeyStatus] = useState<GroqApiKeyStatus | null>(
     null,
   );
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
-  const [hotkeyLabelInput, setHotkeyLabelInput] = useState("");
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [recordingStatus, setRecordingStatus] =
     useState<RecordingStatus | null>(null);
@@ -61,6 +61,32 @@ export default function App() {
   );
   const [latestTranscript, setLatestTranscript] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pushToTalkController = useRef<PushToTalkController | null>(null);
+  const manualTranscriptionInFlight = useRef(false);
+  const hotkeyAccelerator = settings?.hotkey.accelerator;
+  const hotkeyLabel = settings?.hotkey.label;
+
+  if (pushToTalkController.current === null) {
+    pushToTalkController.current = new PushToTalkController(
+      {
+        startRecording,
+        stopRecording,
+        getRecordingStatus,
+        transcribeLatestRecording,
+        cleanupTranscript,
+        copyTextToClipboard,
+        pasteClipboard,
+      },
+      {
+        onStateChange: setAppState,
+        onErrorChange: setError,
+        onRecordingStatusChange: applyRecordingStatus,
+        onLatestRecordingChange: setLatestRecording,
+        onTranscriptChange: setLatestTranscript,
+        errorMessage: pushToTalkErrorMessage,
+      },
+    );
+  }
 
   useEffect(() => {
     Promise.all([
@@ -79,11 +105,10 @@ export default function App() {
           setStatus(appStatus);
           setApiKeyStatus(currentApiKeyStatus);
           setSettings(currentSettings);
-          setHotkeyLabelInput(currentSettings.hotkeyLabel);
           setRecordingStatus(currentRecordingStatus);
           setLatestRecording(currentRecordingStatus.latestRecording);
           setAppState(
-            currentRecordingStatus.isRecording ? "recording" : "ready",
+            currentRecordingStatus.isRecording ? "recording" : "idle",
           );
         },
       )
@@ -93,10 +118,44 @@ export default function App() {
       });
   }, []);
 
+  useEffect(() => {
+    if (!hotkeyAccelerator || !hotkeyLabel || !isTauriRuntime()) {
+      return;
+    }
+
+    let isActive = true;
+
+    register(hotkeyAccelerator, (event) => {
+      if (event.shortcut !== hotkeyAccelerator) {
+        return;
+      }
+
+      void pushToTalkController.current?.handleShortcutState(event.state);
+    })
+      .then(() => {
+        if (isActive) {
+          setError(null);
+        }
+      })
+      .catch(() => {
+        if (isActive) {
+          setError(
+            `Floe could not register ${hotkeyLabel}. Manual controls are still available.`,
+          );
+          setAppState("error");
+        }
+      });
+
+    return () => {
+      isActive = false;
+      void unregister(hotkeyAccelerator);
+    };
+  }, [hotkeyAccelerator, hotkeyLabel]);
+
   function applyRecordingStatus(nextStatus: RecordingStatus) {
     setRecordingStatus(nextStatus);
     setLatestRecording(nextStatus.latestRecording);
-    setAppState(nextStatus.isRecording ? "recording" : "ready");
+    setAppState(nextStatus.isRecording ? "recording" : "idle");
   }
 
   function recordingErrorMessage(action: string, caught: unknown): string {
@@ -143,18 +202,36 @@ export default function App() {
     return "Floe could not complete the clipboard action.";
   }
 
+  function pushToTalkErrorMessage(caught: unknown): string {
+    const maybeClipboardError = caught as Partial<ClipboardError>;
+
+    if (
+      maybeClipboardError.code === "clipboardUnavailable" ||
+      maybeClipboardError.code === "pasteUnavailable"
+    ) {
+      return clipboardErrorMessage(caught);
+    }
+
+    const maybeTranscriptionError = caught as Partial<GroqTranscriptionError>;
+
+    if (typeof maybeTranscriptionError.code === "string") {
+      return transcriptionErrorMessage(caught);
+    }
+
+    return recordingErrorMessage("push-to-talk", caught);
+  }
+
   async function handleSaveGroqApiKey(event: FormEvent) {
     event.preventDefault();
 
     try {
-      setAppState("checking");
       setError(null);
       setSettingsMessage(null);
       const nextStatus = await saveGroqApiKey(groqApiKeyInput);
       setApiKeyStatus(nextStatus);
       setGroqApiKeyInput("");
       setSettingsMessage("Groq API key saved.");
-      setAppState("ready");
+      setAppState("idle");
     } catch (caught) {
       setSettingsMessage(settingsErrorMessage(caught));
       setAppState("error");
@@ -163,33 +240,12 @@ export default function App() {
 
   async function handleClearGroqApiKey() {
     try {
-      setAppState("checking");
       setError(null);
       setSettingsMessage(null);
       setApiKeyStatus(await clearGroqApiKey());
       setGroqApiKeyInput("");
       setSettingsMessage("Groq API key cleared.");
-      setAppState("ready");
-    } catch (caught) {
-      setSettingsMessage(settingsErrorMessage(caught));
-      setAppState("error");
-    }
-  }
-
-  async function handleSaveAppSettings(event: FormEvent) {
-    event.preventDefault();
-
-    try {
-      setAppState("checking");
-      setError(null);
-      setSettingsMessage(null);
-      const savedSettings = await saveAppSettings({
-        hotkeyLabel: hotkeyLabelInput,
-      });
-      setSettings(savedSettings);
-      setHotkeyLabelInput(savedSettings.hotkeyLabel);
-      setSettingsMessage("App settings saved.");
-      setAppState("ready");
+      setAppState("idle");
     } catch (caught) {
       setSettingsMessage(settingsErrorMessage(caught));
       setAppState("error");
@@ -197,8 +253,11 @@ export default function App() {
   }
 
   async function handleStartRecording() {
+    if (isRecording || isFlowBusy) {
+      return;
+    }
+
     try {
-      setAppState("checking");
       setError(null);
       setLatestTranscript(null);
       applyRecordingStatus(await startRecording());
@@ -210,7 +269,6 @@ export default function App() {
 
   async function handleStopRecording() {
     try {
-      setAppState("checking");
       setError(null);
       const info = await stopRecording();
       setLatestRecording(info);
@@ -223,7 +281,6 @@ export default function App() {
 
   async function handleRefreshRecordingStatus() {
     try {
-      setAppState("checking");
       setError(null);
       applyRecordingStatus(await getRecordingStatus());
     } catch (caught) {
@@ -234,7 +291,6 @@ export default function App() {
 
   async function handleLatestRecordingInfo() {
     try {
-      setAppState("checking");
       setError(null);
       setLatestRecording(await getLatestRecordingInfo());
       applyRecordingStatus(await getRecordingStatus());
@@ -245,20 +301,36 @@ export default function App() {
   }
 
   async function handleTranscribeLatestRecording() {
+    if (isRecording || isFlowBusy || manualTranscriptionInFlight.current) {
+      return;
+    }
+
+    manualTranscriptionInFlight.current = true;
+
     try {
-      setAppState("checking");
       setError(null);
+      setAppState("transcribing");
       const transcription = await transcribeLatestRecording();
-      const finalText = cleanupTranscript(transcription.text);
+      setAppState("cleaning");
+      let finalText = transcription.text;
+
+      try {
+        finalText = cleanupTranscript(transcription.text);
+      } catch {
+        finalText = transcription.text;
+      }
+
       setLatestTranscript(finalText);
 
       if (finalText.trim().length === 0) {
-        setAppState("ready");
+        setAppState("idle");
         return;
       }
 
-      await pasteText(finalText);
-      setAppState("ready");
+      setAppState("pasting");
+      await copyTextToClipboard(finalText);
+      await pasteClipboard();
+      setAppState("pasted");
     } catch (caught) {
       const maybeClipboardError = caught as Partial<ClipboardError>;
       setError(
@@ -268,6 +340,8 @@ export default function App() {
           : transcriptionErrorMessage(caught),
       );
       setAppState("error");
+    } finally {
+      manualTranscriptionInFlight.current = false;
     }
   }
 
@@ -277,10 +351,9 @@ export default function App() {
     }
 
     try {
-      setAppState("checking");
       setError(null);
       await copyTextToClipboard(latestTranscript);
-      setAppState("ready");
+      setAppState("pasted");
     } catch (caught) {
       setError(clipboardErrorMessage(caught));
       setAppState("error");
@@ -293,10 +366,11 @@ export default function App() {
     }
 
     try {
-      setAppState("checking");
       setError(null);
-      await pasteText(latestTranscript);
-      setAppState("ready");
+      setAppState("pasting");
+      await copyTextToClipboard(latestTranscript);
+      await pasteClipboard();
+      setAppState("pasted");
     } catch (caught) {
       setError(clipboardErrorMessage(caught));
       setAppState("error");
@@ -304,6 +378,10 @@ export default function App() {
   }
 
   const isRecording = recordingStatus?.isRecording ?? false;
+  const isFlowBusy =
+    appState === "transcribing" ||
+    appState === "cleaning" ||
+    appState === "pasting";
   const safeLatestRecording =
     latestRecording ?? recordingStatus?.latestRecording ?? null;
   const hasPasteableTranscript =
@@ -326,7 +404,7 @@ export default function App() {
         <section className="status-panel" aria-live="polite">
           <div>
             <p className="section-label">Status</p>
-            <h2>{status?.appName ?? "Floe"} manual flow</h2>
+            <h2>{status?.appName ?? "Floe"} push-to-talk flow</h2>
           </div>
           <p>{error ?? status?.message ?? "Loading setup stubs..."}</p>
         </section>
@@ -350,7 +428,7 @@ export default function App() {
             </div>
             <div>
               <dt>Global hotkey</dt>
-              <dd>{settings?.hotkeyLabel ?? "Loading"}</dd>
+              <dd>{settings?.hotkey.label ?? "Loading"}</dd>
             </div>
             <div>
               <dt>Secret storage</dt>
@@ -381,21 +459,6 @@ export default function App() {
               </button>
             </div>
           </form>
-          <form className="settings-form" onSubmit={handleSaveAppSettings}>
-            <label htmlFor="hotkey-label">Global hotkey label</label>
-            <div className="field-row">
-              <input
-                id="hotkey-label"
-                type="text"
-                value={hotkeyLabelInput}
-                onChange={(event) => setHotkeyLabelInput(event.target.value)}
-              />
-              <button type="submit">
-                <Save aria-hidden="true" />
-                Save settings
-              </button>
-            </div>
-          </form>
           {settingsMessage ? (
             <p className="settings-message">{settingsMessage}</p>
           ) : null}
@@ -412,7 +475,7 @@ export default function App() {
           <div className="actions">
             <button
               type="button"
-              disabled={isRecording}
+              disabled={isRecording || isFlowBusy}
               onClick={handleStartRecording}
             >
               <Mic aria-hidden="true" />
@@ -472,7 +535,7 @@ export default function App() {
             <button
               className="secondary-button"
               type="button"
-              disabled={isRecording}
+              disabled={isRecording || isFlowBusy}
               onClick={handleTranscribeLatestRecording}
             >
               <WandSparkles aria-hidden="true" />
@@ -480,7 +543,7 @@ export default function App() {
             </button>
             <button
               type="button"
-              disabled={!hasPasteableTranscript}
+              disabled={!hasPasteableTranscript || isFlowBusy}
               onClick={handleCopyLatestTranscript}
             >
               <Copy aria-hidden="true" />
@@ -488,21 +551,13 @@ export default function App() {
             </button>
             <button
               type="button"
-              disabled={!hasPasteableTranscript}
+              disabled={!hasPasteableTranscript || isFlowBusy}
               onClick={handlePasteLatestTranscript}
             >
               <Clipboard aria-hidden="true" />
               Paste transcript
             </button>
           </div>
-          <button
-            className="secondary-action"
-            type="button"
-            disabled
-            aria-disabled="true"
-          >
-            Push-to-talk coming later
-          </button>
         </section>
       </div>
     </main>

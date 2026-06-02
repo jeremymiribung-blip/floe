@@ -1,10 +1,12 @@
 import type { AppState } from "../types/app";
 
 const statusLabels: Record<AppState, string> = {
-  loading: "Loading",
-  ready: "Ready",
-  checking: "Checking",
+  idle: "Idle",
   recording: "Recording",
+  transcribing: "Transcribing",
+  cleaning: "Cleaning",
+  pasting: "Pasting",
+  pasted: "Pasted",
   error: "Needs attention",
 };
 
