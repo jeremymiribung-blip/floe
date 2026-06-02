@@ -44,6 +44,7 @@ export type RecordingErrorCode =
   | "deviceDisconnected"
   | "streamBuildFailed"
   | "streamPlayFailed"
+  | "wavEncodingFailed"
   | "internal";
 
 export interface RecordingError {
@@ -57,6 +58,8 @@ export interface RecordingInfo {
   outputChannels: 1;
   durationMs: number;
   sampleCount: number;
+  wavByteCount: number;
+  wavBitsPerSample: 16;
   startedAtMs: number;
   endedAtMs: number;
   maxDurationReached: boolean;

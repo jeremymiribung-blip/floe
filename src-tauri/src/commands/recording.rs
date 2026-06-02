@@ -29,3 +29,10 @@ pub fn get_latest_recording_info(
 ) -> Result<Option<RecordingInfo>, RecordingError> {
     manager.get_latest_recording_info()
 }
+
+#[tauri::command]
+pub fn get_latest_recording_wav_bytes(
+    manager: State<'_, RecordingManager>,
+) -> Result<Option<Vec<u8>>, RecordingError> {
+    manager.get_latest_recording_wav_bytes()
+}

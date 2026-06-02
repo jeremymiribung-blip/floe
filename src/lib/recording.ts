@@ -24,6 +24,8 @@ export function formatRecordingInfo(info: RecordingInfo): string {
     `${info.sampleRate} Hz`,
     `${info.inputChannels}->${info.outputChannels} channel`,
     `${info.sampleCount} samples`,
+    `${info.wavByteCount} WAV bytes`,
+    `${info.wavBitsPerSample}-bit PCM`,
     endReasonLabels[info.endedReason],
   ].join(" | ");
 }

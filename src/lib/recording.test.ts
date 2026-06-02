@@ -15,6 +15,8 @@ describe("recording helpers", () => {
       outputChannels: 1,
       durationMs: 2_500,
       sampleCount: 120_000,
+      wavByteCount: 240_044,
+      wavBitsPerSample: 16,
       startedAtMs: 1_000,
       endedAtMs: 3_500,
       maxDurationReached: false,
@@ -22,7 +24,7 @@ describe("recording helpers", () => {
     };
 
     expect(formatRecordingInfo(info)).toBe(
-      "2s | 48000 Hz | 2->1 channel | 120000 samples | Stopped manually",
+      "2s | 48000 Hz | 2->1 channel | 120000 samples | 240044 WAV bytes | 16-bit PCM | Stopped manually",
     );
   });
 });

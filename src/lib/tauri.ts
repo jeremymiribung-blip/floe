@@ -193,6 +193,9 @@ export function stopRecording(): Promise<RecordingInfo> {
       outputChannels: 1,
       durationMs,
       sampleCount: Math.floor((durationMs / 1000) * browserSampleRate),
+      wavByteCount:
+        44 + Math.floor((durationMs / 1000) * browserSampleRate) * 2,
+      wavBitsPerSample: 16,
       startedAtMs: browserRecordingStartedAtMs,
       endedAtMs: browserRecordingStartedAtMs + durationMs,
       maxDurationReached: durationMs >= browserMaxDurationSeconds * 1000,
@@ -224,4 +227,12 @@ export function getLatestRecordingInfo(): Promise<RecordingInfo | null> {
   }
 
   return invoke("get_latest_recording_info");
+}
+
+export function getLatestRecordingWavBytes(): Promise<number[] | null> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(null);
+  }
+
+  return invoke("get_latest_recording_wav_bytes");
 }

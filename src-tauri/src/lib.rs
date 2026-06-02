@@ -25,6 +25,7 @@ pub fn run() {
             commands::recording::stop_recording,
             commands::recording::get_recording_status,
             commands::recording::get_latest_recording_info,
+            commands::recording::get_latest_recording_wav_bytes,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Floe");
