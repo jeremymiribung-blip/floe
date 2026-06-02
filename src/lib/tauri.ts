@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   AppStatus,
+  GroqTranscription,
+  GroqTranscriptionError,
   GroqApiKeyStatus,
   ManualTestResult,
   RecordingError,
@@ -38,6 +40,13 @@ function recordingError(
   code: RecordingError["code"],
   message: string,
 ): RecordingError {
+  return { code, message };
+}
+
+function transcriptionError(
+  code: GroqTranscriptionError["code"],
+  message: string,
+): GroqTranscriptionError {
   return { code, message };
 }
 
@@ -235,4 +244,23 @@ export function getLatestRecordingWavBytes(): Promise<number[] | null> {
   }
 
   return invoke("get_latest_recording_wav_bytes");
+}
+
+export function transcribeLatestRecording(): Promise<GroqTranscription> {
+  if (!isTauriRuntime()) {
+    if (browserLatestRecording === null) {
+      return Promise.reject(
+        transcriptionError(
+          "emptyAudio",
+          "Record audio before requesting a transcription.",
+        ),
+      );
+    }
+
+    return Promise.resolve({
+      text: "Mock transcript from the latest manual recording.",
+    });
+  }
+
+  return invoke("transcribe_latest_recording");
 }

@@ -121,6 +121,10 @@ impl SettingsManager {
         }
     }
 
+    pub fn get_groq_api_key_secret(&self) -> Result<Option<String>, SettingsError> {
+        self.secret_store.get()
+    }
+
     pub fn get_app_settings(&self) -> Result<AppSettings, SettingsError> {
         self.app_settings_store.load()
     }

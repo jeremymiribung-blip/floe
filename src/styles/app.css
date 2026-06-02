@@ -171,6 +171,20 @@ dt {
   background: #f6f8f7;
 }
 
+.transcript-result {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #b8cec8;
+  border-radius: 8px;
+  background: #f3faf8;
+}
+
+.transcript-result p:last-child {
+  color: #172026;
+  white-space: pre-wrap;
+}
+
 .settings-form {
   display: grid;
   gap: 8px;

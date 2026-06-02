@@ -25,6 +25,7 @@ import {
   saveGroqApiKey,
   startRecording,
   stopRecording,
+  transcribeLatestRecording,
 } from "./lib/tauri";
 import { statusLabel } from "./lib/status";
 import type {
@@ -32,6 +33,7 @@ import type {
   AppState,
   AppStatus,
   GroqApiKeyStatus,
+  GroqTranscriptionError,
   ManualTestResult,
   RecordingError,
   RecordingInfo,
@@ -57,6 +59,7 @@ export default function App() {
   const [latestRecording, setLatestRecording] = useState<RecordingInfo | null>(
     null,
   );
+  const [latestTranscript, setLatestTranscript] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -114,6 +117,16 @@ export default function App() {
     }
 
     return "Settings could not be saved.";
+  }
+
+  function transcriptionErrorMessage(caught: unknown): string {
+    const transcriptionError = caught as Partial<GroqTranscriptionError>;
+
+    if (typeof transcriptionError.message === "string") {
+      return transcriptionError.message;
+    }
+
+    return "The transcription request failed.";
   }
 
   async function handleSaveGroqApiKey(event: FormEvent) {
@@ -186,6 +199,7 @@ export default function App() {
       setAppState("checking");
       setError(null);
       setManualResult(null);
+      setLatestTranscript(null);
       applyRecordingStatus(await startRecording());
     } catch (caught) {
       setError(recordingErrorMessage("start", caught));
@@ -225,6 +239,20 @@ export default function App() {
       applyRecordingStatus(await getRecordingStatus());
     } catch (caught) {
       setError(recordingErrorMessage("latest info", caught));
+      setAppState("error");
+    }
+  }
+
+  async function handleTranscribeLatestRecording() {
+    try {
+      setAppState("checking");
+      setError(null);
+      setManualResult(null);
+      const transcription = await transcribeLatestRecording();
+      setLatestTranscript(transcription.text);
+      setAppState("ready");
+    } catch (caught) {
+      setError(transcriptionErrorMessage(caught));
       setAppState("error");
     }
   }
@@ -388,14 +416,22 @@ export default function App() {
             </p>
           ) : null}
 
+          {latestTranscript !== null ? (
+            <div className="transcript-result">
+              <p className="section-label">Transcript</p>
+              <p>{latestTranscript || "No speech detected."}</p>
+            </div>
+          ) : null}
+
           <div className="actions">
             <button
               className="secondary-button"
               type="button"
-              onClick={() => handleManualTest("transcription")}
+              disabled={isRecording}
+              onClick={handleTranscribeLatestRecording}
             >
               <WandSparkles aria-hidden="true" />
-              Transcription stub
+              Transcribe latest
             </button>
             <button type="button" onClick={() => handleManualTest("paste")}>
               <Clipboard aria-hidden="true" />

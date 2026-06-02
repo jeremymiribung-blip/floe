@@ -78,3 +78,24 @@ export interface RecordingStatus {
   latestRecording: RecordingInfo | null;
   lastError: RecordingError | null;
 }
+
+export type GroqTranscriptionErrorCode =
+  | "missingApiKey"
+  | "invalidApiKey"
+  | "rateLimit"
+  | "timeout"
+  | "apiUnreachable"
+  | "malformedResponse"
+  | "unsupportedAudio"
+  | "invalidRequest"
+  | "emptyAudio"
+  | "serverError";
+
+export interface GroqTranscription {
+  text: string;
+}
+
+export interface GroqTranscriptionError {
+  code: GroqTranscriptionErrorCode;
+  message: string;
+}

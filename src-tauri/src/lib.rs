@@ -1,4 +1,5 @@
 mod commands;
+mod providers;
 mod recording;
 mod settings;
 
@@ -26,6 +27,7 @@ pub fn run() {
             commands::recording::get_recording_status,
             commands::recording::get_latest_recording_info,
             commands::recording::get_latest_recording_wav_bytes,
+            commands::transcription::transcribe_latest_recording,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Floe");
