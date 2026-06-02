@@ -13,6 +13,7 @@ import {
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { formatRecordingInfo } from "./lib/recording";
+import { cleanupTranscript } from "./lib/transcriptCleanup";
 import {
   clearGroqApiKey,
   getAppSettings,
@@ -249,7 +250,7 @@ export default function App() {
       setError(null);
       setManualResult(null);
       const transcription = await transcribeLatestRecording();
-      setLatestTranscript(transcription.text);
+      setLatestTranscript(cleanupTranscript(transcription.text));
       setAppState("ready");
     } catch (caught) {
       setError(transcriptionErrorMessage(caught));
