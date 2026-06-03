@@ -17,6 +17,25 @@
         "height": 680,
         "resizable": true,
         "visible": false
+      },
+      {
+        "label": "recording-bubble",
+        "title": "",
+        "url": "index.html",
+        "width": 160,
+        "height": 80,
+        "minWidth": 160,
+        "minHeight": 80,
+        "maxWidth": 160,
+        "maxHeight": 80,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false,
+        "shadow": false
       }
     ],
     "security": {

@@ -6,6 +6,8 @@ import { StatusView } from "./components/StatusView";
 import { PushToTalkController } from "./lib/pushToTalk";
 import { statusLabel } from "./lib/status";
 import {
+  bubbleHide,
+  bubbleShow,
   cleanupTranscript,
   clearCerebrasApiKey,
   clearGroqApiKey,
@@ -266,6 +268,14 @@ export default function App() {
     appState === "recording";
   const statusText =
     error && appState === "error" ? "Error" : statusLabel(appState);
+
+  useEffect(() => {
+    if (appState === "recording") {
+      void bubbleShow();
+    } else {
+      void bubbleHide();
+    }
+  }, [appState]);
 
   return (
     <AppShell>

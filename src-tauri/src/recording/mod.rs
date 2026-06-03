@@ -1,15 +1,23 @@
 use std::{
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread::JoinHandle,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
 
+use crate::audio::{fold_level, normalize_rms, LevelMeter, EMIT_INTERVAL_MS};
+
 pub const MAX_RECORDING_DURATION_SECONDS: u64 = 120;
 const OUTPUT_CHANNELS: u16 = 1;
 
 type SharedBuffer = Arc<Mutex<RecordingBuffer>>;
+type LevelEmitterFn = Box<dyn Fn(f32) + Send + Sync>;
+type SharedLevelEmitter = Arc<Mutex<LevelEmitterFn>>;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +86,13 @@ pub struct RecordingManager {
     backend: Box<dyn RecordingInput>,
     state: Mutex<ManagerState>,
     max_duration: Duration,
+    emitter: Mutex<Option<LevelEmitterHandle>>,
+    emit_level: SharedLevelEmitter,
+}
+
+struct LevelEmitterHandle {
+    stop: Arc<AtomicBool>,
+    join: Option<JoinHandle<()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +112,22 @@ struct ManagerState {
 struct ActiveRecording {
     _stream: Box<dyn RecordingStream>,
     buffer: SharedBuffer,
+    meter: Arc<LevelMeter>,
+}
+
+impl LevelEmitterHandle {
+    fn stop_and_join(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.join.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for LevelEmitterHandle {
+    fn drop(&mut self) {
+        self.stop_and_join();
+    }
 }
 
 struct CompletedRecording {
@@ -112,6 +143,7 @@ pub trait RecordingInput: Send + Sync + 'static {
 pub struct StartedRecording {
     stream: Box<dyn RecordingStream>,
     buffer: SharedBuffer,
+    meter: Arc<LevelMeter>,
 }
 
 pub trait RecordingStream: Send + 'static {}
@@ -130,10 +162,22 @@ impl RecordingManager {
     }
 
     pub fn new(backend: Box<dyn RecordingInput>) -> Self {
+        Self::new_with_emitter(backend, Box::new(no_op_emit))
+    }
+
+    pub fn new_with_emitter(backend: Box<dyn RecordingInput>, emit_level: LevelEmitterFn) -> Self {
         Self {
             backend,
             state: Mutex::new(ManagerState::default()),
             max_duration: Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            emitter: Mutex::new(None),
+            emit_level: Arc::new(Mutex::new(emit_level)),
+        }
+    }
+
+    pub fn set_level_emitter(&self, emit_level: LevelEmitterFn) {
+        if let Ok(mut slot) = self.emit_level.lock() {
+            *slot = emit_level;
         }
     }
 
@@ -153,15 +197,24 @@ impl RecordingManager {
         }
 
         let started = self.backend.start_recording(self.max_duration)?;
+        let meter = Arc::clone(&started.meter);
 
-        let mut state = self.lock_state()?;
-        state.last_error = None;
-        state.active = Some(ActiveRecording {
-            _stream: started.stream,
-            buffer: started.buffer,
-        });
+        {
+            let mut state = self.lock_state()?;
+            state.last_error = None;
+            state.active = Some(ActiveRecording {
+                _stream: started.stream,
+                buffer: started.buffer,
+                meter: Arc::clone(&meter),
+            });
+        }
 
-        Ok(self.status_from_state(&state))
+        self.start_level_emitter(meter)?;
+
+        Ok({
+            let state = self.lock_state()?;
+            self.status_from_state(&state)
+        })
     }
 
     pub fn stop_recording(&self) -> Result<RecordingInfo, RecordingError> {
@@ -175,6 +228,8 @@ impl RecordingManager {
             state.last_error = Some(error.clone());
             return Err(error);
         };
+
+        self.stop_level_emitter_and_reset(&active.meter);
 
         let completed = finalize_active(active, RecordingEndReason::Manual)?;
         let info = completed.info.clone();
@@ -190,6 +245,8 @@ impl RecordingManager {
         let Some(active) = state.active.take() else {
             return Ok(ShutdownRecordingResult::Idle);
         };
+
+        self.stop_level_emitter_and_reset(&active.meter);
 
         match finalize_active(active, RecordingEndReason::Shutdown) {
             Ok(completed) => {
@@ -256,6 +313,7 @@ impl RecordingManager {
         }
 
         if let Some(active) = state.active.take() {
+            self.stop_level_emitter_and_reset(&active.meter);
             match finalize_active(active, RecordingEndReason::Manual) {
                 Ok(completed) => {
                     if completed.info.ended_reason == RecordingEndReason::DeviceDisconnected {
@@ -317,6 +375,43 @@ impl RecordingManager {
             last_error,
         }
     }
+
+    fn start_level_emitter(&self, meter: Arc<LevelMeter>) -> Result<(), RecordingError> {
+        let emit_level = Arc::clone(&self.emit_level);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_signal = Arc::clone(&stop);
+        let meter_for_thread = Arc::clone(&meter);
+
+        let join = std::thread::Builder::new()
+            .name("floe-recording-level".to_string())
+            .spawn(move || {
+                level_emitter_loop(meter_for_thread, stop_signal, emit_level);
+            })
+            .map_err(|_| internal_error())?;
+
+        let mut slot = self.emitter.lock().map_err(|_| internal_error())?;
+        *slot = Some(LevelEmitterHandle {
+            stop,
+            join: Some(join),
+        });
+
+        Ok(())
+    }
+
+    fn stop_level_emitter_and_reset(&self, meter: &Arc<LevelMeter>) {
+        if let Ok(mut slot) = self.emitter.lock() {
+            if let Some(mut handle) = slot.take() {
+                handle.stop_and_join();
+            }
+        }
+
+        meter.store(0.0);
+
+        if let Ok(emit_slot) = self.emit_level.lock() {
+            (emit_slot)(0.0);
+        }
+    }
 }
 
 impl RecordingInput for CpalInputBackend {
@@ -332,6 +427,7 @@ impl RecordingInput for CpalInputBackend {
         let supported_config = device.default_input_config().map_err(map_config_error)?;
         let sample_rate = supported_config.sample_rate();
         let input_channels = supported_config.channels();
+        let meter = Arc::new(LevelMeter::new());
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             sample_rate,
             input_channels,
@@ -349,30 +445,62 @@ impl RecordingInput for CpalInputBackend {
 
         let sample_format = supported_config.sample_format();
         let stream = match sample_format {
-            cpal::SampleFormat::F32 => {
-                build_input_stream::<f32>(&device, &stream_config, &buffer, err_fn)
-            }
-            cpal::SampleFormat::F64 => {
-                build_input_stream::<f64>(&device, &stream_config, &buffer, err_fn)
-            }
-            cpal::SampleFormat::I16 => {
-                build_input_stream::<i16>(&device, &stream_config, &buffer, err_fn)
-            }
-            cpal::SampleFormat::U16 => {
-                build_input_stream::<u16>(&device, &stream_config, &buffer, err_fn)
-            }
-            cpal::SampleFormat::I8 => {
-                build_input_stream::<i8>(&device, &stream_config, &buffer, err_fn)
-            }
-            cpal::SampleFormat::U8 => {
-                build_input_stream::<u8>(&device, &stream_config, &buffer, err_fn)
-            }
-            cpal::SampleFormat::I32 => {
-                build_input_stream::<i32>(&device, &stream_config, &buffer, err_fn)
-            }
-            cpal::SampleFormat::U32 => {
-                build_input_stream::<u32>(&device, &stream_config, &buffer, err_fn)
-            }
+            cpal::SampleFormat::F32 => build_input_stream::<f32>(
+                &device,
+                &stream_config,
+                &buffer,
+                Arc::clone(&meter),
+                err_fn,
+            ),
+            cpal::SampleFormat::F64 => build_input_stream::<f64>(
+                &device,
+                &stream_config,
+                &buffer,
+                Arc::clone(&meter),
+                err_fn,
+            ),
+            cpal::SampleFormat::I16 => build_input_stream::<i16>(
+                &device,
+                &stream_config,
+                &buffer,
+                Arc::clone(&meter),
+                err_fn,
+            ),
+            cpal::SampleFormat::U16 => build_input_stream::<u16>(
+                &device,
+                &stream_config,
+                &buffer,
+                Arc::clone(&meter),
+                err_fn,
+            ),
+            cpal::SampleFormat::I8 => build_input_stream::<i8>(
+                &device,
+                &stream_config,
+                &buffer,
+                Arc::clone(&meter),
+                err_fn,
+            ),
+            cpal::SampleFormat::U8 => build_input_stream::<u8>(
+                &device,
+                &stream_config,
+                &buffer,
+                Arc::clone(&meter),
+                err_fn,
+            ),
+            cpal::SampleFormat::I32 => build_input_stream::<i32>(
+                &device,
+                &stream_config,
+                &buffer,
+                Arc::clone(&meter),
+                err_fn,
+            ),
+            cpal::SampleFormat::U32 => build_input_stream::<u32>(
+                &device,
+                &stream_config,
+                &buffer,
+                Arc::clone(&meter),
+                err_fn,
+            ),
             _ => Err(recording_error(
                 RecordingErrorCode::UnsupportedSampleFormat,
                 "The default input device uses an unsupported sample format.",
@@ -390,6 +518,7 @@ impl RecordingInput for CpalInputBackend {
         Ok(StartedRecording {
             stream: Box::new(CpalRecordingStream { _stream: stream }),
             buffer,
+            meter,
         })
     }
 }
@@ -398,18 +527,20 @@ fn build_input_stream<T>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     buffer: &SharedBuffer,
+    meter: Arc<LevelMeter>,
     err_fn: impl FnMut(cpal::StreamError) + Send + 'static,
 ) -> Result<cpal::Stream, RecordingError>
 where
     T: AudioSample + cpal::SizedSample + Send + 'static,
 {
     let data_buffer = Arc::clone(buffer);
+    let data_meter = meter;
     device
         .build_input_stream(
             config,
             move |data: &[T], _info: &cpal::InputCallbackInfo| {
                 if let Ok(mut buffer) = data_buffer.lock() {
-                    buffer.append_interleaved(data);
+                    buffer.append_interleaved(data, &data_meter);
                 }
             },
             err_fn,
@@ -518,7 +649,7 @@ impl RecordingBuffer {
         }
     }
 
-    fn append_interleaved<T: AudioSample>(&mut self, input: &[T]) {
+    fn append_interleaved<T: AudioSample>(&mut self, input: &[T], level_meter: &LevelMeter) {
         if self.is_finished() || input.is_empty() || self.input_channels == 0 {
             return;
         }
@@ -528,9 +659,20 @@ impl RecordingBuffer {
         let available_frames = input.len() / channels;
         let frames_to_take = available_frames.min(available_samples);
 
+        let mut sum_squares: f64 = 0.0;
+        let mut frame_count: usize = 0;
         for frame in input.chunks_exact(channels).take(frames_to_take) {
             let sum: f32 = frame.iter().map(|sample| sample.to_mono_value()).sum();
-            self.samples.push(sum / self.input_channels as f32);
+            let mono = sum / self.input_channels as f32;
+            let mono_f64 = mono as f64;
+            sum_squares += mono_f64 * mono_f64;
+            frame_count += 1;
+            self.samples.push(mono);
+        }
+
+        if frame_count > 0 {
+            let rms = ((sum_squares / frame_count as f64).sqrt() as f32).clamp(0.0, 1.0);
+            level_meter.store(rms);
         }
 
         if self.samples.len() >= self.max_samples {
@@ -794,7 +936,11 @@ fn finalize_active(
     active: ActiveRecording,
     default_reason: RecordingEndReason,
 ) -> Result<CompletedRecording, RecordingError> {
-    let ActiveRecording { _stream, buffer } = active;
+    let ActiveRecording {
+        _stream,
+        buffer,
+        meter: _,
+    } = active;
     drop(_stream);
 
     let mut buffer = buffer.lock().map_err(|_| {
@@ -849,6 +995,35 @@ fn recording_error(code: RecordingErrorCode, message: &'static str) -> Recording
     }
 }
 
+fn internal_error() -> RecordingError {
+    recording_error(
+        RecordingErrorCode::Internal,
+        "Recording level emitter could not be started.",
+    )
+}
+
+fn level_emitter_loop(
+    meter: Arc<LevelMeter>,
+    stop: Arc<AtomicBool>,
+    emit_level: SharedLevelEmitter,
+) {
+    let mut smoothed: f32 = 0.0;
+
+    while !stop.load(Ordering::SeqCst) {
+        let raw = meter.load();
+        let normalized = normalize_rms(raw);
+        smoothed = fold_level(smoothed, normalized);
+
+        if let Ok(emit) = emit_level.lock() {
+            (emit)(smoothed);
+        }
+
+        std::thread::sleep(Duration::from_millis(EMIT_INTERVAL_MS));
+    }
+}
+
+fn no_op_emit(_level: f32) {}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -866,9 +1041,10 @@ mod tests {
     };
 
     use super::{
-        encode_pcm16_wav, float_to_pcm16, read_u16_le, read_u32_le, RecordingBuffer,
-        RecordingEndReason, RecordingErrorCode, RecordingInput, RecordingManager, RecordingStream,
-        ShutdownRecordingResult, StartedRecording, MAX_RECORDING_DURATION_SECONDS, WAV_HEADER_LEN,
+        encode_pcm16_wav, float_to_pcm16, normalize_rms, read_u16_le, read_u32_le, LevelMeter,
+        RecordingBuffer, RecordingEndReason, RecordingErrorCode, RecordingInput, RecordingManager,
+        RecordingStream, ShutdownRecordingResult, StartedRecording, MAX_RECORDING_DURATION_SECONDS,
+        WAV_HEADER_LEN,
     };
 
     struct FakeStream;
@@ -877,6 +1053,7 @@ mod tests {
 
     struct FakeBackend {
         buffer: Arc<Mutex<RecordingBuffer>>,
+        meter: Arc<LevelMeter>,
     }
 
     impl RecordingInput for FakeBackend {
@@ -887,6 +1064,7 @@ mod tests {
             Ok(StartedRecording {
                 stream: Box::new(FakeStream),
                 buffer: Arc::clone(&self.buffer),
+                meter: Arc::clone(&self.meter),
             })
         }
     }
@@ -894,8 +1072,9 @@ mod tests {
     #[test]
     fn mono_input_keeps_samples() {
         let mut buffer = RecordingBuffer::new(48_000, 1, Duration::from_secs(1), 1000);
+        let meter = LevelMeter::new();
 
-        buffer.append_interleaved(&[0.25_f32, -0.5, 1.0]);
+        buffer.append_interleaved(&[0.25_f32, -0.5, 1.0], &meter);
 
         assert_eq!(buffer.samples, vec![0.25, -0.5, 1.0]);
     }
@@ -903,8 +1082,9 @@ mod tests {
     #[test]
     fn stereo_input_is_averaged_to_mono() {
         let mut buffer = RecordingBuffer::new(48_000, 2, Duration::from_secs(1), 1000);
+        let meter = LevelMeter::new();
 
-        buffer.append_interleaved(&[1.0_f32, -1.0, 0.5, 0.25]);
+        buffer.append_interleaved(&[1.0_f32, -1.0, 0.5, 0.25], &meter);
 
         assert_eq!(buffer.samples, vec![0.0, 0.375]);
     }
@@ -912,14 +1092,16 @@ mod tests {
     #[test]
     fn integer_samples_are_normalized() {
         let mut signed = RecordingBuffer::new(48_000, 1, Duration::from_secs(1), 1000);
-        signed.append_interleaved(&[i16::MIN, 0, i16::MAX]);
+        let meter = LevelMeter::new();
+        signed.append_interleaved(&[i16::MIN, 0, i16::MAX], &meter);
 
         assert_eq!(signed.samples[0], -1.0);
         assert_eq!(signed.samples[1], 0.0);
         assert_eq!(signed.samples[2], 1.0);
 
         let mut unsigned = RecordingBuffer::new(48_000, 1, Duration::from_secs(1), 1000);
-        unsigned.append_interleaved(&[u8::MIN, u8::MAX]);
+        let meter = LevelMeter::new();
+        unsigned.append_interleaved(&[u8::MIN, u8::MAX], &meter);
 
         assert_eq!(unsigned.samples[0], -1.0);
         assert_eq!(unsigned.samples[1], 1.0);
@@ -928,8 +1110,9 @@ mod tests {
     #[test]
     fn sample_cap_is_enforced() {
         let mut buffer = RecordingBuffer::new(10, 1, Duration::from_secs(2), 1000);
+        let meter = LevelMeter::new();
 
-        buffer.append_interleaved(&[0.2_f32; 25]);
+        buffer.append_interleaved(&[0.2_f32; 25], &meter);
 
         assert_eq!(buffer.samples.len(), 20);
         assert!(buffer.is_finished());
@@ -939,7 +1122,8 @@ mod tests {
     #[test]
     fn completed_info_tracks_duration_and_sample_count() {
         let mut buffer = RecordingBuffer::new(1_000, 2, Duration::from_secs(1), 10_000);
-        buffer.append_interleaved(&[0.5_f32, 0.5, 0.25, 0.25, 1.0, -1.0]);
+        let meter = LevelMeter::new();
+        buffer.append_interleaved(&[0.5_f32, 0.5, 0.25, 0.25, 1.0, -1.0], &meter);
 
         let completed = buffer
             .into_completed(RecordingEndReason::Manual)
@@ -1014,10 +1198,14 @@ mod tests {
         )));
         let manager = RecordingManager::new(Box::new(FakeBackend {
             buffer: Arc::clone(&buffer),
+            meter: Arc::new(LevelMeter::new()),
         }));
 
         manager.start_recording().expect("start succeeds");
-        buffer.lock().unwrap().append_interleaved(&[0.0_f32, 1.0]);
+        buffer
+            .lock()
+            .unwrap()
+            .append_interleaved(&[0.0_f32, 1.0], &LevelMeter::new());
         let info = manager.stop_recording().expect("stop succeeds");
         let wav = manager
             .get_latest_recording_wav_bytes()
@@ -1040,6 +1228,7 @@ mod tests {
         )));
         let manager = RecordingManager::new(Box::new(FakeBackend {
             buffer: Arc::clone(&buffer),
+            meter: Arc::new(LevelMeter::new()),
         }));
 
         manager.start_recording().expect("first start succeeds");
@@ -1048,7 +1237,10 @@ mod tests {
             .expect_err("second start should fail");
         assert_eq!(start_error.code, RecordingErrorCode::AlreadyRecording);
 
-        buffer.lock().unwrap().append_interleaved(&[0.5_f32]);
+        buffer
+            .lock()
+            .unwrap()
+            .append_interleaved(&[0.5_f32], &LevelMeter::new());
         manager.stop_recording().expect("stop succeeds");
         let stop_error = manager
             .stop_recording()
@@ -1064,7 +1256,10 @@ mod tests {
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
             1000,
         )));
-        let manager = RecordingManager::new(Box::new(FakeBackend { buffer }));
+        let manager = RecordingManager::new(Box::new(FakeBackend {
+            buffer,
+            meter: Arc::new(LevelMeter::new()),
+        }));
 
         manager.start_recording().expect("start succeeds");
         let error = manager
@@ -1082,7 +1277,7 @@ mod tests {
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
             1000,
         );
-        latest_buffer.append_interleaved(&[0.5_f32]);
+        latest_buffer.append_interleaved(&[0.5_f32], &LevelMeter::new());
         let previous_latest = latest_buffer
             .into_completed(RecordingEndReason::Manual)
             .expect("latest fixture should complete");
@@ -1094,6 +1289,7 @@ mod tests {
         )));
         let manager = RecordingManager::new(Box::new(FakeBackend {
             buffer: Arc::clone(&empty_buffer),
+            meter: Arc::new(LevelMeter::new()),
         }));
         manager.state.lock().unwrap().latest = Some(previous_latest);
 
@@ -1121,13 +1317,14 @@ mod tests {
         )));
         let manager = RecordingManager::new(Box::new(FakeBackend {
             buffer: Arc::clone(&buffer),
+            meter: Arc::new(LevelMeter::new()),
         }));
 
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
             .unwrap()
-            .append_interleaved(&[0.25_f32, 0.25, 0.25]);
+            .append_interleaved(&[0.25_f32, 0.25, 0.25], &LevelMeter::new());
 
         let info = manager.stop_recording().expect("stop succeeds");
 
@@ -1146,12 +1343,13 @@ mod tests {
         )));
         let manager = RecordingManager::new(Box::new(FakeBackend {
             buffer: Arc::clone(&buffer),
+            meter: Arc::new(LevelMeter::new()),
         }));
 
         manager.start_recording().expect("start succeeds");
         {
             let mut buffer = buffer.lock().unwrap();
-            buffer.append_interleaved(&[0.25_f32, 0.25]);
+            buffer.append_interleaved(&[0.25_f32, 0.25], &LevelMeter::new());
             buffer.mark_device_disconnected();
         }
 
@@ -1176,7 +1374,10 @@ mod tests {
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
             1000,
         )));
-        let manager = RecordingManager::new(Box::new(FakeBackend { buffer }));
+        let manager = RecordingManager::new(Box::new(FakeBackend {
+            buffer,
+            meter: Arc::new(LevelMeter::new()),
+        }));
 
         assert_eq!(
             manager.stop_for_shutdown().unwrap(),
@@ -1196,7 +1397,10 @@ mod tests {
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
             1000,
         )));
-        let manager = RecordingManager::new(Box::new(FakeBackend { buffer }));
+        let manager = RecordingManager::new(Box::new(FakeBackend {
+            buffer,
+            meter: Arc::new(LevelMeter::new()),
+        }));
 
         manager.start_recording().expect("start succeeds");
 
@@ -1220,10 +1424,14 @@ mod tests {
         )));
         let manager = RecordingManager::new(Box::new(FakeBackend {
             buffer: Arc::clone(&buffer),
+            meter: Arc::new(LevelMeter::new()),
         }));
 
         manager.start_recording().expect("start succeeds");
-        buffer.lock().unwrap().append_interleaved(&[0.5_f32, 0.25]);
+        buffer
+            .lock()
+            .unwrap()
+            .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
 
         assert_eq!(
             manager.stop_for_shutdown().unwrap(),
@@ -1252,13 +1460,14 @@ mod tests {
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
             2000,
         );
-        active.append_interleaved(&[0.5_f32]);
+        active.append_interleaved(&[0.5_f32], &LevelMeter::new());
         let completed = active
             .into_completed(RecordingEndReason::Manual)
             .expect("latest fixture should complete");
         let buffer = Arc::new(Mutex::new(latest));
         let manager = RecordingManager::new(Box::new(FakeBackend {
             buffer: Arc::clone(&buffer),
+            meter: Arc::new(LevelMeter::new()),
         }));
         manager.state.lock().unwrap().latest = Some(completed);
 
@@ -1275,5 +1484,51 @@ mod tests {
 
         assert_eq!(latest.ended_reason, RecordingEndReason::Manual);
         assert_eq!(latest.sample_count, 1);
+    }
+
+    #[test]
+    fn append_interleaved_updates_level_meter_for_silence() {
+        let mut buffer = RecordingBuffer::new(48_000, 1, Duration::from_secs(1), 1000);
+        let meter = LevelMeter::new();
+
+        buffer.append_interleaved(&[0.0_f32; 256], &meter);
+
+        assert_eq!(meter.load(), 0.0);
+    }
+
+    #[test]
+    fn append_interleaved_updates_level_meter_for_signal() {
+        let mut buffer = RecordingBuffer::new(48_000, 1, Duration::from_secs(1), 1000);
+        let meter = LevelMeter::new();
+        let samples: Vec<f32> = (0..512)
+            .map(|index| if index % 2 == 0 { 0.5 } else { -0.5 })
+            .collect();
+        let expected_rms = 0.5_f32;
+
+        buffer.append_interleaved(&samples, &meter);
+
+        let actual = meter.load();
+        assert!(
+            (actual - expected_rms).abs() < 0.01,
+            "expected ~{expected_rms} got {actual}"
+        );
+    }
+
+    #[test]
+    fn append_interleaved_keeps_existing_samples_alongside_level() {
+        let mut buffer = RecordingBuffer::new(48_000, 1, Duration::from_secs(1), 1000);
+        let meter = LevelMeter::new();
+
+        buffer.append_interleaved(&[0.5_f32, -0.5, 0.5, -0.5], &meter);
+
+        assert_eq!(buffer.samples, vec![0.5, -0.5, 0.5, -0.5]);
+        assert!(meter.load() > 0.0);
+    }
+
+    #[test]
+    fn normalize_rms_maps_quiet_signal_above_zero() {
+        let normalized = normalize_rms(0.05);
+        assert!(normalized > 0.0);
+        assert!(normalized < 1.0);
     }
 }

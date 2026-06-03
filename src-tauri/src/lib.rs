@@ -1,3 +1,4 @@
+mod audio;
 mod cleanup;
 mod commands;
 mod lifecycle;
@@ -17,13 +18,23 @@ pub fn run() {
         .manage(recording::RecordingManager::with_cpal())
         .manage(system::hotkey::HotkeyManager::default())
         .setup(|app| {
-            use tauri::Manager;
+            use tauri::{Emitter, Manager};
 
             let is_background_launch = system::startup::is_background_launch_from_env();
             let config_dir = app.path().app_config_dir()?;
             app.manage(settings::SettingsManager::new(config_dir));
             system::tray::setup_tray(app)?;
             system::hotkey::register_startup_hotkey(app.handle());
+
+            if let Some(manager) = app.try_state::<recording::RecordingManager>() {
+                let emit_app = app.handle().clone();
+                manager.set_level_emitter(Box::new(move |level: f32| {
+                    let _ = emit_app.emit(
+                        audio::RECORDING_LEVEL_EVENT,
+                        audio::RecordingLevelPayload { level },
+                    );
+                }));
+            }
 
             if is_background_launch {
                 lifecycle::log_lifecycle(
@@ -38,7 +49,15 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if system::window::is_main_window(window) {
+                if system::overlay::is_overlay_window(window) {
+                    api.prevent_close();
+                    if window.hide().is_err() {
+                        lifecycle::log_lifecycle(
+                            lifecycle::LifecycleLevel::Warn,
+                            "overlay_hide_failed",
+                        );
+                    }
+                } else if system::window::is_main_window(window) {
                     system::window::handle_main_window_close_request(window, api);
                 }
             }
@@ -73,6 +92,8 @@ pub fn run() {
             commands::clipboard::copy_text_to_clipboard,
             commands::clipboard::paste_text,
             commands::clipboard::paste_clipboard,
+            commands::bubble::bubble_show,
+            commands::bubble::bubble_hide,
         ]);
 
     match builder.build(tauri::generate_context!()) {

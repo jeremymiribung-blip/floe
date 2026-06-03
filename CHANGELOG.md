@@ -6,6 +6,7 @@ All notable changes to Floe will be documented in this file.
 
 ### Added
 
+- Minimal recording bubble: a frameless, always-on-top overlay with a volume-reactive audio bar visualization, shown only while recording. Amplitude is derived locally from the same microphone stream that feeds Groq STT; no extra microphone capture and no audio is sent to any provider.
 - Initial setup-only Tauri 2, React, TypeScript, Vite, and Rust scaffold.
 - Minimal Floe UI with a status indicator, settings placeholder, and manual-test placeholder buttons.
 - Stub-only Tauri commands for app status, settings, and manual-test checks.

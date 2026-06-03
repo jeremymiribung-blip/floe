@@ -1,4 +1,5 @@
 pub mod app;
+pub mod bubble;
 pub mod cleanup;
 pub mod clipboard;
 pub mod hotkey;

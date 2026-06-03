@@ -569,6 +569,26 @@ export function pasteClipboard(): Promise<void> {
   return invoke("paste_clipboard");
 }
 
+export interface RecordingLevelPayload {
+  level: number;
+}
+
+export function bubbleShow(): Promise<void> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve();
+  }
+
+  return invoke("bubble_show");
+}
+
+export function bubbleHide(): Promise<void> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve();
+  }
+
+  return invoke("bubble_hide");
+}
+
 export function getBrowserClipboardTextForTest(): string {
   if (isTauriRuntime()) {
     throw clipboardError(
