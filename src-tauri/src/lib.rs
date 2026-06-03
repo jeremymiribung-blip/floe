@@ -17,10 +17,17 @@ pub fn run() {
 
             let config_dir = app.path().app_config_dir()?;
             app.manage(settings::SettingsManager::new(config_dir));
-            lifecycle::setup_tray(app)?;
+            system::tray::setup_tray(app)?;
             system::hotkey::register_startup_hotkey(app.handle());
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if system::window::is_main_window(window) {
+                    system::window::handle_main_window_close_request(window, api);
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_status,

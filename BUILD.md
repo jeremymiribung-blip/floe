@@ -232,6 +232,7 @@ Installer artifacts are ignored by Git because `src-tauri/target/` is ignored.
 - If macOS builds fail during signing or notarization, verify the Apple Developer certificate, provisioning settings, keychain access, and notarization credentials.
 - If global hotkeys do not work in a packaged macOS build, check Privacy & Security permissions for Accessibility and Input Monitoring.
 - If a hotkey does not register on Windows/Linux, the OS or desktop environment may already reserve it; reset to default or choose another combination from Settings.
+- If Floe appears to vanish after clicking the window close button, the process is still running in the system tray so the global hotkey remains active. Use the tray `Quit` menu item to fully exit. On Linux desktops without an AppIndicator extension, the tray icon may not be visible; the process can still be ended through the OS task manager.
 - Do not log raw transcripts, raw audio, full API keys, auth headers, private keys, or signing secrets while debugging builds.
 
 ## Future GitHub Actions Release Automation
