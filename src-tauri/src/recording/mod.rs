@@ -48,6 +48,7 @@ pub enum RecordingEndReason {
     Manual,
     MaxDuration,
     DeviceDisconnected,
+    Shutdown,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -77,6 +78,13 @@ pub struct RecordingManager {
     backend: Box<dyn RecordingInput>,
     state: Mutex<ManagerState>,
     max_duration: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownRecordingResult {
+    Idle,
+    Finalized,
+    DiscardedEmpty,
 }
 
 #[derive(Default)]
@@ -174,6 +182,30 @@ impl RecordingManager {
         state.last_error = None;
 
         Ok(info)
+    }
+
+    pub fn stop_for_shutdown(&self) -> Result<ShutdownRecordingResult, RecordingError> {
+        let mut state = self.lock_state()?;
+
+        let Some(active) = state.active.take() else {
+            return Ok(ShutdownRecordingResult::Idle);
+        };
+
+        match finalize_active(active, RecordingEndReason::Shutdown) {
+            Ok(completed) => {
+                state.latest = Some(completed);
+                state.last_error = None;
+                Ok(ShutdownRecordingResult::Finalized)
+            }
+            Err(error) if error.code == RecordingErrorCode::EmptyRecording => {
+                state.last_error = None;
+                Ok(ShutdownRecordingResult::DiscardedEmpty)
+            }
+            Err(error) => {
+                state.last_error = Some(error.clone());
+                Err(error)
+            }
+        }
     }
 
     pub fn get_recording_status(&self) -> Result<RecordingStatus, RecordingError> {
@@ -836,7 +868,7 @@ mod tests {
     use super::{
         encode_pcm16_wav, float_to_pcm16, read_u16_le, read_u32_le, RecordingBuffer,
         RecordingEndReason, RecordingErrorCode, RecordingInput, RecordingManager, RecordingStream,
-        StartedRecording, MAX_RECORDING_DURATION_SECONDS, WAV_HEADER_LEN,
+        ShutdownRecordingResult, StartedRecording, MAX_RECORDING_DURATION_SECONDS, WAV_HEADER_LEN,
     };
 
     struct FakeStream;
@@ -1083,5 +1115,114 @@ mod tests {
             status.last_error.unwrap().code,
             RecordingErrorCode::DeviceDisconnected
         );
+    }
+
+    #[test]
+    fn shutdown_when_idle_is_idempotent() {
+        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        )));
+        let manager = RecordingManager::new(Box::new(FakeBackend { buffer }));
+
+        assert_eq!(
+            manager.stop_for_shutdown().unwrap(),
+            ShutdownRecordingResult::Idle
+        );
+        assert_eq!(
+            manager.stop_for_shutdown().unwrap(),
+            ShutdownRecordingResult::Idle
+        );
+    }
+
+    #[test]
+    fn shutdown_discards_empty_active_recording_without_error() {
+        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        )));
+        let manager = RecordingManager::new(Box::new(FakeBackend { buffer }));
+
+        manager.start_recording().expect("start succeeds");
+
+        assert_eq!(
+            manager.stop_for_shutdown().unwrap(),
+            ShutdownRecordingResult::DiscardedEmpty
+        );
+        let status = manager.get_recording_status().unwrap();
+        assert!(!status.is_recording);
+        assert!(status.latest_recording.is_none());
+        assert!(status.last_error.is_none());
+    }
+
+    #[test]
+    fn shutdown_finalizes_captured_samples_with_shutdown_reason() {
+        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        )));
+        let manager = RecordingManager::new(Box::new(FakeBackend {
+            buffer: Arc::clone(&buffer),
+        }));
+
+        manager.start_recording().expect("start succeeds");
+        buffer.lock().unwrap().append_interleaved(&[0.5_f32, 0.25]);
+
+        assert_eq!(
+            manager.stop_for_shutdown().unwrap(),
+            ShutdownRecordingResult::Finalized
+        );
+        let latest = manager
+            .get_latest_recording_info()
+            .unwrap()
+            .expect("shutdown recording exists");
+
+        assert_eq!(latest.ended_reason, RecordingEndReason::Shutdown);
+        assert_eq!(latest.sample_count, 2);
+    }
+
+    #[test]
+    fn shutdown_empty_recording_preserves_previous_latest_recording() {
+        let latest = RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        );
+        let mut active = RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            2000,
+        );
+        active.append_interleaved(&[0.5_f32]);
+        let completed = active
+            .into_completed(RecordingEndReason::Manual)
+            .expect("latest fixture should complete");
+        let buffer = Arc::new(Mutex::new(latest));
+        let manager = RecordingManager::new(Box::new(FakeBackend {
+            buffer: Arc::clone(&buffer),
+        }));
+        manager.state.lock().unwrap().latest = Some(completed);
+
+        manager.start_recording().expect("start succeeds");
+
+        assert_eq!(
+            manager.stop_for_shutdown().unwrap(),
+            ShutdownRecordingResult::DiscardedEmpty
+        );
+        let latest = manager
+            .get_latest_recording_info()
+            .unwrap()
+            .expect("previous latest remains");
+
+        assert_eq!(latest.ended_reason, RecordingEndReason::Manual);
+        assert_eq!(latest.sample_count, 1);
     }
 }

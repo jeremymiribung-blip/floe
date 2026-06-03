@@ -44,7 +44,8 @@ export interface ManualTestResult {
 export type RecordingEndReason =
   | "manual"
   | "maxDuration"
-  | "deviceDisconnected";
+  | "deviceDisconnected"
+  | "shutdown";
 
 export type RecordingErrorCode =
   | "noInputDevice"

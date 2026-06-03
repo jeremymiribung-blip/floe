@@ -10,6 +10,7 @@ import {
   Trash2,
   WandSparkles,
 } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -61,6 +62,7 @@ export default function App() {
   );
   const [latestTranscript, setLatestTranscript] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const settingsPanelRef = useRef<HTMLElement | null>(null);
   const pushToTalkController = useRef<PushToTalkController | null>(null);
   const manualTranscriptionInFlight = useRef(false);
   const hotkeyAccelerator = settings?.hotkey.accelerator;
@@ -151,6 +153,41 @@ export default function App() {
       void unregister(hotkeyAccelerator);
     };
   }, [hotkeyAccelerator, hotkeyLabel]);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    let isActive = true;
+    let unlisten: (() => void) | null = null;
+
+    listen("floe-show-settings", () => {
+      const panel = settingsPanelRef.current;
+
+      if (!panel) {
+        return;
+      }
+
+      panel.scrollIntoView({ block: "start", behavior: "smooth" });
+      panel.focus({ preventScroll: true });
+    })
+      .then((nextUnlisten) => {
+        if (isActive) {
+          unlisten = nextUnlisten;
+        } else {
+          nextUnlisten();
+        }
+      })
+      .catch(() => {
+        // Tray settings is a convenience path; setup failure should not block the app.
+      });
+
+    return () => {
+      isActive = false;
+      unlisten?.();
+    };
+  }, []);
 
   function applyRecordingStatus(nextStatus: RecordingStatus) {
     setRecordingStatus(nextStatus);
@@ -409,7 +446,11 @@ export default function App() {
           <p>{error ?? status?.message ?? "Loading setup stubs..."}</p>
         </section>
 
-        <section className="settings-panel">
+        <section
+          className="settings-panel"
+          ref={settingsPanelRef}
+          tabIndex={-1}
+        >
           <div>
             <p className="section-label">Settings</p>
             <h2>

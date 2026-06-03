@@ -18,7 +18,7 @@ pub struct GroqApiKeyStatus {
     pub masked_preview: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     #[serde(default)]
@@ -30,14 +30,6 @@ pub struct AppSettings {
 pub struct HotkeySettings {
     pub accelerator: String,
     pub label: String,
-}
-
-impl Default for AppSettings {
-    fn default() -> Self {
-        Self {
-            hotkey: HotkeySettings::default(),
-        }
-    }
 }
 
 impl Default for HotkeySettings {

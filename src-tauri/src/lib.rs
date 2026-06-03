@@ -1,10 +1,11 @@
 mod commands;
+mod lifecycle;
 mod providers;
 mod recording;
 mod settings;
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(recording::RecordingManager::with_cpal())
@@ -13,6 +14,7 @@ pub fn run() {
 
             let config_dir = app.path().app_config_dir()?;
             app.manage(settings::SettingsManager::new(config_dir));
+            lifecycle::setup_tray(app)?;
 
             Ok(())
         })
@@ -33,7 +35,19 @@ pub fn run() {
             commands::clipboard::copy_text_to_clipboard,
             commands::clipboard::paste_text,
             commands::clipboard::paste_clipboard,
-        ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Floe");
+        ]);
+
+    match builder.build(tauri::generate_context!()) {
+        Ok(app) => {
+            lifecycle::log_lifecycle(lifecycle::LifecycleLevel::Info, "app_started");
+            app.run(|app, event| {
+                if let tauri::RunEvent::ExitRequested { .. } = event {
+                    lifecycle::cleanup_before_exit(app);
+                }
+            });
+        }
+        Err(_error) => {
+            lifecycle::log_lifecycle(lifecycle::LifecycleLevel::Error, "app_build_failed");
+        }
+    }
 }

@@ -4,6 +4,7 @@ const endReasonLabels: Record<RecordingEndReason, string> = {
   manual: "Stopped manually",
   maxDuration: "Stopped at max duration",
   deviceDisconnected: "Device disconnected",
+  shutdown: "Stopped during shutdown",
 };
 
 export function formatDurationMs(durationMs: number): string {
