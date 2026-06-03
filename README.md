@@ -117,3 +117,9 @@ GitHub Actions runs frontend formatting, linting, tests, builds, Rust formatting
 ## Security Notes
 
 Never commit secrets or temporary audio files. `.env` files are ignored and should only be used for local development metadata, not production Groq keys.
+
+Enable GitHub secret scanning and push protection in the repository security settings when those features are available for the repository plan. If GitHub secret scanning is unavailable for a private repository, run a local scan before pushing:
+
+```powershell
+gitleaks detect --source . --redact --no-git
+```
