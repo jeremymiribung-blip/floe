@@ -991,6 +991,20 @@ mod tests {
     }
 
     #[test]
+    fn wav_encoding_rejects_invalid_format_parameters() {
+        let sample_rate_error =
+            encode_pcm16_wav(&[0.0], 0, 1).expect_err("zero sample rate should fail");
+        let channels_error =
+            encode_pcm16_wav(&[0.0], 48_000, 0).expect_err("zero channels should fail");
+
+        assert_eq!(
+            sample_rate_error.code,
+            RecordingErrorCode::WavEncodingFailed
+        );
+        assert_eq!(channels_error.code, RecordingErrorCode::WavEncodingFailed);
+    }
+
+    #[test]
     fn manager_returns_latest_wav_bytes_without_disk_export() {
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             8_000,
@@ -1058,6 +1072,43 @@ mod tests {
             .expect_err("empty stop should fail");
 
         assert_eq!(error.code, RecordingErrorCode::EmptyRecording);
+    }
+
+    #[test]
+    fn empty_stop_preserves_previous_latest_recording() {
+        let mut latest_buffer = RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        );
+        latest_buffer.append_interleaved(&[0.5_f32]);
+        let previous_latest = latest_buffer
+            .into_completed(RecordingEndReason::Manual)
+            .expect("latest fixture should complete");
+        let empty_buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            2000,
+        )));
+        let manager = RecordingManager::new(Box::new(FakeBackend {
+            buffer: Arc::clone(&empty_buffer),
+        }));
+        manager.state.lock().unwrap().latest = Some(previous_latest);
+
+        manager.start_recording().expect("start succeeds");
+        let error = manager
+            .stop_recording()
+            .expect_err("empty stop should fail");
+        let latest = manager
+            .get_latest_recording_info()
+            .unwrap()
+            .expect("previous latest should remain");
+
+        assert_eq!(error.code, RecordingErrorCode::EmptyRecording);
+        assert_eq!(latest.started_at_ms, 1000);
+        assert_eq!(latest.sample_count, 1);
     }
 
     #[test]

@@ -31,6 +31,28 @@ describe("browser transcription fallback", () => {
       text: "Mock transcript from the latest manual recording.",
     });
   });
+
+  it("rejects empty browser recordings without creating a latest recording", async () => {
+    const { getLatestRecordingInfo, startRecording, stopRecording } =
+      await import("./tauri");
+
+    await startRecording();
+
+    await expect(stopRecording()).rejects.toMatchObject({
+      code: "emptyRecording",
+    });
+    await expect(getLatestRecordingInfo()).resolves.toBeNull();
+  });
+
+  it("rejects overlapping browser recording starts", async () => {
+    const { startRecording } = await import("./tauri");
+
+    await startRecording();
+
+    await expect(startRecording()).rejects.toMatchObject({
+      code: "alreadyRecording",
+    });
+  });
 });
 
 describe("browser settings fallback", () => {
@@ -64,6 +86,33 @@ describe("browser settings fallback", () => {
         accelerator: "Ctrl+Space",
         label: "Ctrl+Space",
       },
+    });
+  });
+
+  it("masks and clears browser Groq API key status without exposing the full key", async () => {
+    const { clearGroqApiKey, getGroqApiKeyStatus, saveGroqApiKey } =
+      await import("./tauri");
+
+    await expect(saveGroqApiKey("  gsk_12345678abcd  ")).resolves.toEqual({
+      configured: true,
+      maskedPreview: "gsk_...abcd",
+    });
+    await expect(getGroqApiKeyStatus()).resolves.toEqual({
+      configured: true,
+      maskedPreview: "gsk_...abcd",
+    });
+    await expect(clearGroqApiKey()).resolves.toEqual({
+      configured: false,
+      maskedPreview: null,
+    });
+  });
+
+  it("uses a generic browser mask for short Groq API keys", async () => {
+    const { saveGroqApiKey } = await import("./tauri");
+
+    await expect(saveGroqApiKey("short")).resolves.toEqual({
+      configured: true,
+      maskedPreview: "Configured key",
     });
   });
 });

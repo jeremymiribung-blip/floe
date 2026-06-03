@@ -134,8 +134,10 @@ function createHarness(options: HarnessOptions = {}) {
     controller,
     copyTextToClipboard,
     errors,
+    getRecordingStatus,
     pasteClipboard,
     startRecording,
+    stopRecording,
     states,
     transcripts,
     transcribeLatestRecording,
@@ -183,6 +185,93 @@ describe("PushToTalkController", () => {
       "pasting",
       "pasted",
     ]);
+  });
+
+  it("finishes when release arrives before start resolves", async () => {
+    let resolveStart: (status: RecordingStatus) => void = () => undefined;
+    const startPromise = new Promise<RecordingStatus>((resolve) => {
+      resolveStart = resolve;
+    });
+    const harness = createHarness({
+      startRecording: async () => {
+        harness.calls.push("start");
+        return startPromise;
+      },
+    });
+
+    const press = harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+    resolveStart(recordingStatus);
+    await press;
+
+    expect(harness.calls).toEqual([
+      "start",
+      "stop",
+      "status",
+      "transcribe",
+      "clean",
+      "copy:raw transcript.",
+      "paste",
+    ]);
+    expect(lastState(harness.states)).toBe("pasted");
+  });
+
+  it("reports start failures without stopping or transcribing", async () => {
+    const harness = createHarness({
+      startRecording: async () => {
+        throw new Error("start failed");
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(harness.stopRecording).not.toHaveBeenCalled();
+    expect(harness.transcribeLatestRecording).not.toHaveBeenCalled();
+    expect(harness.errors).toContain("start failed");
+    expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("continues transcription when stopped status refresh fails", async () => {
+    const harness = createHarness({
+      getRecordingStatus: async () => {
+        throw new Error("status failed");
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.getRecordingStatus).toHaveBeenCalledTimes(1);
+    expect(harness.calls).toEqual([
+      "start",
+      "stop",
+      "transcribe",
+      "clean",
+      "copy:raw transcript.",
+      "paste",
+    ]);
+    expect(lastState(harness.states)).toBe("pasted");
+  });
+
+  it("skips clipboard work for an empty cleaned transcript", async () => {
+    const harness = createHarness({
+      transcribeLatestRecording: async () => {
+        harness.calls.push("transcribe");
+        return { text: "   " };
+      },
+      cleanupTranscript: (transcript) => {
+        harness.calls.push("clean");
+        return transcript.trim();
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.copyTextToClipboard).not.toHaveBeenCalled();
+    expect(harness.pasteClipboard).not.toHaveBeenCalled();
+    expect(harness.transcripts).toEqual([null, ""]);
+    expect(lastState(harness.states)).toBe("idle");
   });
 
   it("pastes nothing when transcription fails", async () => {

@@ -79,7 +79,8 @@ fn empty_audio_error() -> GroqTranscriptionError {
 mod tests {
     use super::{latest_wav_bytes, map_settings_error};
     use crate::{
-        providers::groq::GroqTranscriptionErrorCode,
+        providers::groq::{GroqTranscriptionError, GroqTranscriptionErrorCode},
+        recording::{RecordingError, RecordingErrorCode},
         settings::{SettingsError, SettingsErrorCode},
     };
 
@@ -105,5 +106,35 @@ mod tests {
         });
 
         assert_eq!(error.code, GroqTranscriptionErrorCode::MissingApiKey);
+    }
+
+    #[test]
+    fn non_secret_settings_errors_map_to_server_error() {
+        let error = map_settings_error(SettingsError {
+            code: SettingsErrorCode::AppSettingsUnavailable,
+            message: "settings failed".to_string(),
+        });
+
+        assert_eq!(error.code, GroqTranscriptionErrorCode::ServerError);
+        assert!(!error.message.contains("settings failed"));
+    }
+
+    #[test]
+    fn recording_errors_map_to_transcription_errors_without_details() {
+        let empty: GroqTranscriptionError = RecordingError {
+            code: RecordingErrorCode::EmptyRecording,
+            message: "raw recording detail".to_string(),
+        }
+        .into();
+        let internal: GroqTranscriptionError = RecordingError {
+            code: RecordingErrorCode::Internal,
+            message: "raw recording detail".to_string(),
+        }
+        .into();
+
+        assert_eq!(empty.code, GroqTranscriptionErrorCode::EmptyAudio);
+        assert_eq!(internal.code, GroqTranscriptionErrorCode::ServerError);
+        assert!(!empty.message.contains("raw recording detail"));
+        assert!(!internal.message.contains("raw recording detail"));
     }
 }

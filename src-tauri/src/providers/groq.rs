@@ -377,6 +377,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mapped_error_messages_do_not_expose_api_key_or_response_body() {
+        let api_key = "gsk_super_secret_test_key";
+        let server = MockServer::start(vec![MockResponse::json(
+            401,
+            r#"{"error":"gsk_super_secret_test_key was rejected"}"#,
+        )]);
+        let client = test_client(server.base_url());
+
+        let error = client
+            .transcribe_wav(api_key, minimal_wav())
+            .await
+            .expect_err("invalid key should fail");
+
+        assert_eq!(error.code, GroqTranscriptionErrorCode::InvalidApiKey);
+        assert!(!error.message.contains(api_key));
+        assert!(!error
+            .message
+            .contains("gsk_super_secret_test_key was rejected"));
+        assert_eq!(server.request_count(), 1);
+    }
+
+    #[tokio::test]
     async fn invalid_request_is_not_retried() {
         let server = MockServer::start(vec![MockResponse::json(400, r#"{"error":"bad"}"#)]);
         let client = test_client(server.base_url());
@@ -440,6 +462,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rate_limit_retries_until_success() {
+        let server = MockServer::start(vec![
+            MockResponse::json(429, r#"{"error":"rate limited"}"#),
+            MockResponse::json(200, r#"{"text":"ok after rate limit"}"#),
+        ]);
+        let client = test_client(server.base_url());
+
+        let result = client
+            .transcribe_wav("gsk_test_key", minimal_wav())
+            .await
+            .expect("rate-limit retry should succeed");
+
+        assert_eq!(result.text, "ok after rate limit");
+        assert_eq!(server.request_count(), 2);
+        assert!(server
+            .requests()
+            .iter()
+            .all(|request| request.starts_with(&format!("POST {TRANSCRIPTIONS_PATH} HTTP/1.1"))));
+    }
+
+    #[tokio::test]
     async fn request_timeout_status_retries_with_bounded_attempts() {
         let server = MockServer::start(vec![
             MockResponse::json(408, r#"{"error":"request timeout"}"#),
@@ -455,6 +498,23 @@ mod tests {
 
         assert_eq!(error.code, GroqTranscriptionErrorCode::Timeout);
         assert_eq!(server.request_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn request_timeout_status_retries_until_success() {
+        let server = MockServer::start(vec![
+            MockResponse::json(408, r#"{"error":"request timeout"}"#),
+            MockResponse::json(200, r#"{"text":"ok after timeout"}"#),
+        ]);
+        let client = test_client(server.base_url());
+
+        let result = client
+            .transcribe_wav("gsk_test_key", minimal_wav())
+            .await
+            .expect("timeout-status retry should succeed");
+
+        assert_eq!(result.text, "ok after timeout");
+        assert_eq!(server.request_count(), 2);
     }
 
     #[tokio::test]

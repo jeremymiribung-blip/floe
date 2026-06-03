@@ -284,11 +284,11 @@ fn settings_error(code: SettingsErrorCode, message: &'static str) -> SettingsErr
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::{fs, sync::Mutex};
 
     use super::{
         mask_api_key, AppSettings, GroqApiKeyStatus, HotkeySettings, SecretStore, SettingsError,
-        SettingsErrorCode, SettingsManager,
+        SettingsErrorCode, SettingsManager, MAX_GROQ_API_KEY_LEN,
     };
 
     #[derive(Default)]
@@ -394,6 +394,50 @@ mod tests {
     }
 
     #[test]
+    fn saving_key_trims_secret_and_returns_only_masked_status() {
+        let manager = test_manager();
+        let full_key = "gsk_12345678abcd";
+
+        let status = manager
+            .save_groq_api_key(format!("  {full_key}  "))
+            .expect("key should save");
+        let serialized = serde_json::to_string(&status).expect("status should serialize");
+
+        assert_eq!(
+            manager.get_groq_api_key_secret().unwrap(),
+            Some(full_key.to_string())
+        );
+        assert_eq!(
+            status,
+            GroqApiKeyStatus {
+                configured: true,
+                masked_preview: Some("gsk_...abcd".to_string()),
+            }
+        );
+        assert!(serialized.contains("gsk_...abcd"));
+        assert!(!serialized.contains(full_key));
+    }
+
+    #[test]
+    fn invalid_keys_are_rejected_without_storing_secret() {
+        let manager = test_manager();
+
+        for api_key in [
+            String::new(),
+            "   ".to_string(),
+            "gsk_valid_prefix\nwith_control".to_string(),
+            "x".repeat(MAX_GROQ_API_KEY_LEN + 1),
+        ] {
+            let error = manager
+                .save_groq_api_key(api_key)
+                .expect_err("invalid key should fail");
+
+            assert_eq!(error.code, SettingsErrorCode::InvalidGroqApiKey);
+            assert_eq!(manager.get_groq_api_key_secret().unwrap(), None);
+        }
+    }
+
+    #[test]
     fn app_settings_default_hotkey_is_push_to_talk_shortcut() {
         let manager = test_manager();
 
@@ -408,6 +452,34 @@ mod tests {
                 label: "Ctrl+Space".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn app_settings_loads_default_hotkey_from_legacy_empty_file() {
+        let path = unique_settings_path();
+        fs::write(&path, "{}").expect("legacy settings should write");
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let settings = manager
+            .get_app_settings()
+            .expect("legacy settings should load with defaults");
+
+        assert_eq!(settings.hotkey, HotkeySettings::default());
+    }
+
+    #[test]
+    fn corrupt_app_settings_file_returns_settings_error() {
+        let path = unique_settings_path();
+        fs::write(&path, "{not valid json").expect("corrupt settings should write");
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let error = manager
+            .get_app_settings()
+            .expect_err("corrupt settings should fail");
+
+        assert_eq!(error.code, SettingsErrorCode::AppSettingsUnavailable);
     }
 
     #[test]
