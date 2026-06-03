@@ -5,6 +5,7 @@ import type {
   GroqTranscription,
   RecordingInfo,
   RecordingStatus,
+  TranscriptCleanupResult,
 } from "../types/app";
 
 const latestRecording: RecordingInfo = {
@@ -50,7 +51,7 @@ interface HarnessOptions {
   stopRecording?: () => Promise<RecordingInfo>;
   getRecordingStatus?: () => Promise<RecordingStatus>;
   transcribeLatestRecording?: () => Promise<GroqTranscription>;
-  cleanupTranscript?: (transcript: string) => string;
+  cleanupTranscript?: (transcript: string) => Promise<TranscriptCleanupResult>;
   copyTextToClipboard?: (text: string) => Promise<void>;
   pasteClipboard?: () => Promise<void>;
 }
@@ -91,9 +92,13 @@ function createHarness(options: HarnessOptions = {}) {
   );
   const cleanupTranscript = vi.fn(
     options.cleanupTranscript ??
-      ((transcript: string) => {
+      (async (transcript: string) => {
         calls.push("clean");
-        return `${transcript}.`;
+        return {
+          text: `${transcript}.`,
+          mode: "fast" as const,
+          warning: null,
+        };
       }),
   );
   const copyTextToClipboard = vi.fn(
@@ -260,8 +265,11 @@ describe("PushToTalkController", () => {
         return { text: "   " };
       },
       cleanupTranscript: (transcript) => {
-        harness.calls.push("clean");
-        return transcript.trim();
+        return Promise.resolve({
+          text: transcript.trim(),
+          mode: "fast",
+          warning: null,
+        });
       },
     });
 
@@ -272,6 +280,29 @@ describe("PushToTalkController", () => {
     expect(harness.pasteClipboard).not.toHaveBeenCalled();
     expect(harness.transcripts).toEqual([null, ""]);
     expect(lastState(harness.states)).toBe("idle");
+  });
+
+  it("surfaces cleanup warnings while still pasting fallback text", async () => {
+    const harness = createHarness({
+      cleanupTranscript: async (transcript) => {
+        harness.calls.push("clean");
+        return {
+          text: `${transcript}.`,
+          mode: "fast",
+          warning: "Cerebras failed. Floe used Fast cleanup instead.",
+        };
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.copyTextToClipboard).toHaveBeenCalledWith("raw transcript.");
+    expect(harness.pasteClipboard).toHaveBeenCalledTimes(1);
+    expect(harness.errors).toContain(
+      "Cerebras failed. Floe used Fast cleanup instead.",
+    );
+    expect(lastState(harness.states)).toBe("pasted");
   });
 
   it("pastes nothing when transcription fails", async () => {
@@ -292,7 +323,7 @@ describe("PushToTalkController", () => {
 
   it("pastes the raw transcript when cleanup fails", async () => {
     const harness = createHarness({
-      cleanupTranscript: () => {
+      cleanupTranscript: async () => {
         throw new Error("cleanup failed");
       },
     });

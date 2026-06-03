@@ -3,6 +3,7 @@ import type {
   GroqTranscription,
   RecordingInfo,
   RecordingStatus,
+  TranscriptCleanupResult,
 } from "../types/app";
 
 export type ShortcutState = "Pressed" | "Released";
@@ -12,7 +13,7 @@ export interface PushToTalkDependencies {
   stopRecording: () => Promise<RecordingInfo>;
   getRecordingStatus: () => Promise<RecordingStatus>;
   transcribeLatestRecording: () => Promise<GroqTranscription>;
-  cleanupTranscript: (transcript: string) => string;
+  cleanupTranscript: (transcript: string) => Promise<TranscriptCleanupResult>;
   copyTextToClipboard: (text: string) => Promise<void>;
   pasteClipboard: () => Promise<void>;
 }
@@ -119,7 +120,9 @@ export class PushToTalkController {
       const transcription = await this.dependencies.transcribeLatestRecording();
 
       this.callbacks.onStateChange("cleaning");
-      const finalText = this.cleanTranscriptOrUseRaw(transcription.text);
+      const cleanup = await this.cleanTranscriptOrUseRaw(transcription.text);
+      const finalText = cleanup.text;
+      this.callbacks.onErrorChange(cleanup.warning);
       this.callbacks.onTranscriptChange(finalText);
 
       if (finalText.trim().length === 0) {
@@ -140,11 +143,17 @@ export class PushToTalkController {
     }
   }
 
-  private cleanTranscriptOrUseRaw(transcript: string): string {
+  private async cleanTranscriptOrUseRaw(
+    transcript: string,
+  ): Promise<TranscriptCleanupResult> {
     try {
-      return this.dependencies.cleanupTranscript(transcript);
+      return await this.dependencies.cleanupTranscript(transcript);
     } catch {
-      return transcript;
+      return {
+        text: transcript,
+        mode: "raw",
+        warning: "Cleanup failed. Floe pasted the raw transcript instead.",
+      };
     }
   }
 

@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { cleanupTranscript as cleanupTranscriptLocal } from "./transcriptCleanup";
 import type {
   AppSettings,
   AppStatus,
+  CerebrasApiKeyStatus,
   ClipboardError,
+  CleanupMode,
   GroqTranscription,
   GroqTranscriptionError,
   GroqApiKeyStatus,
@@ -10,6 +13,8 @@ import type {
   RecordingError,
   RecordingInfo,
   RecordingStatus,
+  SettingsError,
+  TranscriptCleanupResult,
 } from "../types/app";
 
 const browserStatus: AppStatus = {
@@ -23,11 +28,16 @@ let browserGroqApiKeyStatus: GroqApiKeyStatus = {
   configured: false,
   maskedPreview: null,
 };
+let browserCerebrasApiKeyStatus: CerebrasApiKeyStatus = {
+  configured: false,
+  maskedPreview: null,
+};
 let browserAppSettings: AppSettings = {
   hotkey: {
     accelerator: "Ctrl+Space",
     label: "Ctrl+Space",
   },
+  cleanupMode: "fast",
 };
 let browserClipboardText = "";
 
@@ -59,6 +69,13 @@ function clipboardError(
   code: ClipboardError["code"],
   message: string,
 ): ClipboardError {
+  return { code, message };
+}
+
+function settingsError(
+  code: SettingsError["code"],
+  message: string,
+): SettingsError {
   return { code, message };
 }
 
@@ -135,6 +152,49 @@ export function getGroqApiKeyStatus(): Promise<GroqApiKeyStatus> {
   return invoke("get_groq_api_key_status");
 }
 
+export function saveCerebrasApiKey(
+  apiKey: string,
+): Promise<CerebrasApiKeyStatus> {
+  if (!isTauriRuntime()) {
+    const trimmed = apiKey.trim();
+    browserCerebrasApiKeyStatus = {
+      configured: true,
+      maskedPreview: maskBrowserApiKey(trimmed),
+    };
+    return Promise.resolve(browserCerebrasApiKeyStatus);
+  }
+
+  return invoke("save_cerebras_api_key", { apiKey });
+}
+
+export function clearCerebrasApiKey(): Promise<CerebrasApiKeyStatus> {
+  if (!isTauriRuntime()) {
+    browserCerebrasApiKeyStatus = {
+      configured: false,
+      maskedPreview: null,
+    };
+
+    if (browserAppSettings.cleanupMode === "clean") {
+      browserAppSettings = {
+        ...browserAppSettings,
+        cleanupMode: "fast",
+      };
+    }
+
+    return Promise.resolve(browserCerebrasApiKeyStatus);
+  }
+
+  return invoke("clear_cerebras_api_key");
+}
+
+export function getCerebrasApiKeyStatus(): Promise<CerebrasApiKeyStatus> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(browserCerebrasApiKeyStatus);
+  }
+
+  return invoke("get_cerebras_api_key_status");
+}
+
 export function getAppSettings(): Promise<AppSettings> {
   if (!isTauriRuntime()) {
     return Promise.resolve(browserAppSettings);
@@ -150,11 +210,46 @@ export function saveAppSettings(settings: AppSettings): Promise<AppSettings> {
         accelerator: settings.hotkey.accelerator.trim(),
         label: settings.hotkey.label.trim(),
       },
+      cleanupMode: settings.cleanupMode,
     };
     return Promise.resolve(browserAppSettings);
   }
 
   return invoke("save_app_settings", { settings });
+}
+
+export function getCleanupMode(): Promise<CleanupMode> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(browserAppSettings.cleanupMode);
+  }
+
+  return invoke("get_cleanup_mode");
+}
+
+export function setCleanupMode(cleanupMode: CleanupMode): Promise<CleanupMode> {
+  if (!isTauriRuntime()) {
+    if (cleanupMode === "clean" && !browserCerebrasApiKeyStatus.configured) {
+      browserAppSettings = {
+        ...browserAppSettings,
+        cleanupMode: "fast",
+      };
+
+      return Promise.reject(
+        settingsError(
+          "missingCerebrasApiKey",
+          "Save a Cerebras API key before enabling Clean cleanup. Floe kept Fast cleanup selected.",
+        ),
+      );
+    }
+
+    browserAppSettings = {
+      ...browserAppSettings,
+      cleanupMode,
+    };
+    return Promise.resolve(cleanupMode);
+  }
+
+  return invoke("set_cleanup_mode", { cleanupMode });
 }
 
 export function runManualTestStub(action: string): Promise<ManualTestResult> {
@@ -278,6 +373,41 @@ export function transcribeLatestRecording(): Promise<GroqTranscription> {
   }
 
   return invoke("transcribe_latest_recording");
+}
+
+export function cleanupTranscript(
+  transcript: string,
+): Promise<TranscriptCleanupResult> {
+  if (!isTauriRuntime()) {
+    const mode = browserAppSettings.cleanupMode;
+
+    if (mode === "raw") {
+      return Promise.resolve({
+        text: transcript,
+        mode,
+        warning: null,
+      });
+    }
+
+    if (mode === "clean" && browserCerebrasApiKeyStatus.configured) {
+      return Promise.resolve({
+        text: cleanupTranscriptLocal(transcript),
+        mode,
+        warning: null,
+      });
+    }
+
+    return Promise.resolve({
+      text: cleanupTranscriptLocal(transcript),
+      mode: "fast",
+      warning:
+        mode === "clean"
+          ? "Clean cleanup needs a Cerebras API key. Floe used Fast cleanup instead."
+          : null,
+    });
+  }
+
+  return invoke("cleanup_transcript", { transcript });
 }
 
 export function copyTextToClipboard(text: string): Promise<void> {

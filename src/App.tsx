@@ -15,19 +15,24 @@ import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { formatRecordingInfo } from "./lib/recording";
-import { cleanupTranscript } from "./lib/transcriptCleanup";
 import { PushToTalkController } from "./lib/pushToTalk";
 import {
+  cleanupTranscript,
+  clearCerebrasApiKey,
   clearGroqApiKey,
   copyTextToClipboard,
   getAppSettings,
   getAppStatus,
+  getCerebrasApiKeyStatus,
+  getCleanupMode,
   getGroqApiKeyStatus,
   getLatestRecordingInfo,
   getRecordingStatus,
   isTauriRuntime,
   pasteClipboard,
+  saveCerebrasApiKey,
   saveGroqApiKey,
+  setCleanupMode,
   startRecording,
   stopRecording,
   transcribeLatestRecording,
@@ -37,7 +42,9 @@ import type {
   AppSettings,
   AppState,
   AppStatus,
+  CerebrasApiKeyStatus,
   ClipboardError,
+  CleanupMode,
   GroqApiKeyStatus,
   GroqTranscriptionError,
   RecordingError,
@@ -52,8 +59,11 @@ export default function App() {
   const [apiKeyStatus, setApiKeyStatus] = useState<GroqApiKeyStatus | null>(
     null,
   );
+  const [cerebrasApiKeyStatus, setCerebrasApiKeyStatus] =
+    useState<CerebrasApiKeyStatus | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
+  const [cerebrasApiKeyInput, setCerebrasApiKeyInput] = useState("");
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [recordingStatus, setRecordingStatus] =
     useState<RecordingStatus | null>(null);
@@ -94,6 +104,7 @@ export default function App() {
     Promise.all([
       getAppStatus(),
       getGroqApiKeyStatus(),
+      getCerebrasApiKeyStatus(),
       getAppSettings(),
       getRecordingStatus(),
     ])
@@ -101,11 +112,13 @@ export default function App() {
         ([
           appStatus,
           currentApiKeyStatus,
+          currentCerebrasApiKeyStatus,
           currentSettings,
           currentRecordingStatus,
         ]) => {
           setStatus(appStatus);
           setApiKeyStatus(currentApiKeyStatus);
+          setCerebrasApiKeyStatus(currentCerebrasApiKeyStatus);
           setSettings(currentSettings);
           setRecordingStatus(currentRecordingStatus);
           setLatestRecording(currentRecordingStatus.latestRecording);
@@ -258,6 +271,16 @@ export default function App() {
     return recordingErrorMessage("push-to-talk", caught);
   }
 
+  function cleanupModeLabel(cleanupMode: CleanupMode): string {
+    const labels: Record<CleanupMode, string> = {
+      raw: "Raw",
+      fast: "Fast",
+      clean: "Clean",
+    };
+
+    return labels[cleanupMode];
+  }
+
   async function handleSaveGroqApiKey(event: FormEvent) {
     event.preventDefault();
 
@@ -284,6 +307,80 @@ export default function App() {
       setSettingsMessage("Groq API key cleared.");
       setAppState("idle");
     } catch (caught) {
+      setSettingsMessage(settingsErrorMessage(caught));
+      setAppState("error");
+    }
+  }
+
+  async function handleSaveCerebrasApiKey(event: FormEvent) {
+    event.preventDefault();
+
+    try {
+      setError(null);
+      setSettingsMessage(null);
+      const nextStatus = await saveCerebrasApiKey(cerebrasApiKeyInput);
+      setCerebrasApiKeyStatus(nextStatus);
+      setCerebrasApiKeyInput("");
+      setSettingsMessage("Cerebras API key saved.");
+      setAppState("idle");
+    } catch (caught) {
+      setSettingsMessage(settingsErrorMessage(caught));
+      setAppState("error");
+    }
+  }
+
+  async function handleClearCerebrasApiKey() {
+    try {
+      setError(null);
+      setSettingsMessage(null);
+      setCerebrasApiKeyStatus(await clearCerebrasApiKey());
+      setCerebrasApiKeyInput("");
+      setSettings((currentSettings) =>
+        currentSettings
+          ? {
+              ...currentSettings,
+              cleanupMode:
+                currentSettings.cleanupMode === "clean"
+                  ? "fast"
+                  : currentSettings.cleanupMode,
+            }
+          : currentSettings,
+      );
+      setSettingsMessage("Cerebras API key cleared.");
+      setAppState("idle");
+    } catch (caught) {
+      setSettingsMessage(settingsErrorMessage(caught));
+      setAppState("error");
+    }
+  }
+
+  async function handleCleanupModeChange(cleanupMode: CleanupMode) {
+    try {
+      setError(null);
+      setSettingsMessage(null);
+      const savedMode = await setCleanupMode(cleanupMode);
+      setSettings((currentSettings) =>
+        currentSettings
+          ? {
+              ...currentSettings,
+              cleanupMode: savedMode,
+            }
+          : currentSettings,
+      );
+      setSettingsMessage(`Cleanup mode set to ${cleanupModeLabel(savedMode)}.`);
+      setAppState("idle");
+    } catch (caught) {
+      const fallbackMode = await getCleanupMode().catch(
+        () => "fast" as CleanupMode,
+      );
+      setSettings((currentSettings) =>
+        currentSettings
+          ? {
+              ...currentSettings,
+              cleanupMode: fallbackMode,
+            }
+          : currentSettings,
+      );
       setSettingsMessage(settingsErrorMessage(caught));
       setAppState("error");
     }
@@ -349,13 +446,13 @@ export default function App() {
       setAppState("transcribing");
       const transcription = await transcribeLatestRecording();
       setAppState("cleaning");
-      let finalText = transcription.text;
-
-      try {
-        finalText = cleanupTranscript(transcription.text);
-      } catch {
-        finalText = transcription.text;
-      }
+      const cleanup = await cleanupTranscript(transcription.text).catch(() => ({
+        text: transcription.text,
+        mode: "raw" as CleanupMode,
+        warning: "Cleanup failed. Floe pasted the raw transcript instead.",
+      }));
+      const finalText = cleanup.text;
+      setError(cleanup.warning);
 
       setLatestTranscript(finalText);
 
@@ -468,6 +565,22 @@ export default function App() {
               </dd>
             </div>
             <div>
+              <dt>Cerebras API key</dt>
+              <dd>
+                {cerebrasApiKeyStatus?.configured
+                  ? `Configured (${cerebrasApiKeyStatus.maskedPreview})`
+                  : "Not configured"}
+              </dd>
+            </div>
+            <div>
+              <dt>Cleanup mode</dt>
+              <dd>
+                {settings?.cleanupMode
+                  ? cleanupModeLabel(settings.cleanupMode)
+                  : "Loading"}
+              </dd>
+            </div>
+            <div>
               <dt>Global hotkey</dt>
               <dd>{settings?.hotkey.label ?? "Loading"}</dd>
             </div>
@@ -500,6 +613,48 @@ export default function App() {
               </button>
             </div>
           </form>
+          <form className="settings-form" onSubmit={handleSaveCerebrasApiKey}>
+            <label htmlFor="cerebras-api-key">Cerebras API key</label>
+            <div className="field-row">
+              <input
+                id="cerebras-api-key"
+                type="password"
+                value={cerebrasApiKeyInput}
+                autoComplete="off"
+                onChange={(event) => setCerebrasApiKeyInput(event.target.value)}
+              />
+              <button type="submit">
+                <KeyRound aria-hidden="true" />
+                Save key
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={handleClearCerebrasApiKey}
+              >
+                <Trash2 aria-hidden="true" />
+                Clear
+              </button>
+            </div>
+          </form>
+          <div className="settings-form">
+            <label htmlFor="cleanup-mode">Cleanup mode</label>
+            <div className="field-row">
+              <select
+                id="cleanup-mode"
+                value={settings?.cleanupMode ?? "fast"}
+                onChange={(event) =>
+                  void handleCleanupModeChange(
+                    event.target.value as CleanupMode,
+                  )
+                }
+              >
+                <option value="raw">Raw</option>
+                <option value="fast">Fast</option>
+                <option value="clean">Clean</option>
+              </select>
+            </div>
+          </div>
           {settingsMessage ? (
             <p className="settings-message">{settingsMessage}</p>
           ) : null}

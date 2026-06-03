@@ -1,3 +1,4 @@
+mod cleanup;
 mod commands;
 mod lifecycle;
 mod providers;
@@ -24,14 +25,20 @@ pub fn run() {
             commands::settings::save_groq_api_key,
             commands::settings::clear_groq_api_key,
             commands::settings::get_groq_api_key_status,
+            commands::settings::save_cerebras_api_key,
+            commands::settings::clear_cerebras_api_key,
+            commands::settings::get_cerebras_api_key_status,
             commands::settings::get_app_settings,
             commands::settings::save_app_settings,
+            commands::settings::get_cleanup_mode,
+            commands::settings::set_cleanup_mode,
             commands::recording::start_recording,
             commands::recording::stop_recording,
             commands::recording::get_recording_status,
             commands::recording::get_latest_recording_info,
             commands::recording::get_latest_recording_wav_bytes,
             commands::transcription::transcribe_latest_recording,
+            commands::cleanup::cleanup_transcript,
             commands::clipboard::copy_text_to_clipboard,
             commands::clipboard::paste_text,
             commands::clipboard::paste_clipboard,

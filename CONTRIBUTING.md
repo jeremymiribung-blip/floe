@@ -35,7 +35,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Tests must not call Groq, require real API keys, or require a real microphone in CI.
+Tests must not call Groq or Cerebras, require real API keys, or require a real microphone in CI.
 
 ## Secrets
 
@@ -51,9 +51,11 @@ gitleaks detect --source . --redact --no-git
 
 Treat any finding as sensitive until it has been reviewed and rotated if needed.
 
-## V1 Boundaries
+## Transcription and Cleanup Boundaries
 
-V1 uses exactly one Groq Speech-to-Text request after recording stops. Do not add streaming, chunking, realtime partial transcripts, transcript merging, or LLM cleanup.
+Floe uses exactly one Groq Speech-to-Text request after recording stops. Do not add streaming, chunking, realtime partial transcripts, or transcript merging.
+
+Fast cleanup is local and remains the default. Clean cleanup is optional, disabled by default, and may send transcript text only to Cerebras when explicitly enabled. Audio is never sent to Cerebras.
 
 ## Pull Requests
 

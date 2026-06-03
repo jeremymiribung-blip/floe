@@ -200,7 +200,8 @@ dt {
   flex-wrap: wrap;
 }
 
-input {
+input,
+select {
   width: min(100%, 340px);
   min-height: 42px;
   padding: 0 12px;
@@ -211,7 +212,8 @@ input {
   font: inherit;
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: #246b61;
   outline: 3px solid #cfe3df;
 }
@@ -277,7 +279,8 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  input {
+  input,
+  select {
     width: 100%;
   }
 

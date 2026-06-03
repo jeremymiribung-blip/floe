@@ -68,6 +68,7 @@ describe("browser settings fallback", () => {
         accelerator: "Ctrl+Space",
         label: "Ctrl+Space",
       },
+      cleanupMode: "fast",
     });
   });
 
@@ -79,6 +80,7 @@ describe("browser settings fallback", () => {
         accelerator: "  Ctrl+Space  ",
         label: "  Ctrl+Space  ",
       },
+      cleanupMode: "raw",
     });
 
     await expect(getAppSettings()).resolves.toEqual({
@@ -86,6 +88,7 @@ describe("browser settings fallback", () => {
         accelerator: "Ctrl+Space",
         label: "Ctrl+Space",
       },
+      cleanupMode: "raw",
     });
   });
 
@@ -113,6 +116,61 @@ describe("browser settings fallback", () => {
     await expect(saveGroqApiKey("short")).resolves.toEqual({
       configured: true,
       maskedPreview: "Configured key",
+    });
+  });
+
+  it("masks and clears browser Cerebras API key status without exposing the full key", async () => {
+    const { clearCerebrasApiKey, getCerebrasApiKeyStatus, saveCerebrasApiKey } =
+      await import("./tauri");
+
+    await expect(saveCerebrasApiKey("  csk_12345678abcd  ")).resolves.toEqual({
+      configured: true,
+      maskedPreview: "csk_...abcd",
+    });
+    await expect(getCerebrasApiKeyStatus()).resolves.toEqual({
+      configured: true,
+      maskedPreview: "csk_...abcd",
+    });
+    await expect(clearCerebrasApiKey()).resolves.toEqual({
+      configured: false,
+      maskedPreview: null,
+    });
+  });
+
+  it("persists cleanup mode and falls back to Fast when Clean has no key", async () => {
+    const { cleanupTranscript, getCleanupMode, setCleanupMode } =
+      await import("./tauri");
+
+    await expect(setCleanupMode("raw")).resolves.toBe("raw");
+    await expect(getCleanupMode()).resolves.toBe("raw");
+    await expect(cleanupTranscript("raw text")).resolves.toEqual({
+      text: "raw text",
+      mode: "raw",
+      warning: null,
+    });
+
+    await expect(setCleanupMode("clean")).rejects.toMatchObject({
+      code: "missingCerebrasApiKey",
+    });
+    await expect(getCleanupMode()).resolves.toBe("fast");
+    await expect(cleanupTranscript("fast text")).resolves.toEqual({
+      text: "Fast text.",
+      mode: "fast",
+      warning: null,
+    });
+  });
+
+  it("uses offline mock Clean cleanup when a browser Cerebras key exists", async () => {
+    const { cleanupTranscript, saveCerebrasApiKey, setCleanupMode } =
+      await import("./tauri");
+
+    await saveCerebrasApiKey("csk_12345678abcd");
+    await expect(setCleanupMode("clean")).resolves.toBe("clean");
+
+    await expect(cleanupTranscript("clean text")).resolves.toEqual({
+      text: "Clean text.",
+      mode: "clean",
+      warning: null,
     });
   });
 });
