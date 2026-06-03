@@ -290,7 +290,7 @@ describe("PushToTalkController", () => {
     expect(harness.copyTextToClipboard).not.toHaveBeenCalled();
     expect(harness.pasteClipboard).not.toHaveBeenCalled();
     expect(harness.transcripts).toEqual([null, ""]);
-    expect(lastState(harness.states)).toBe("idle");
+    expect(lastState(harness.states)).toBe("ready");
   });
 
   it("surfaces cleanup warnings while still pasting fallback text", async () => {
@@ -368,6 +368,33 @@ describe("PushToTalkController", () => {
     expect(harness.copyTextToClipboard).toHaveBeenCalledWith("raw transcript.");
     expect(harness.errors).toContain("paste failed");
     expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("transitions to copied when paste automation is blocked", async () => {
+    const harness = createHarness({
+      pasteClipboard: async () => {
+        const error = new Error(
+          "Transcript copied to clipboard, but Floe could not send the paste shortcut. Paste manually with Command+V or Control+V.",
+        ) as Error & { code?: string };
+        error.code = "pasteUnavailable";
+        throw error;
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.calls).toEqual([
+      "start",
+      "stop",
+      "status",
+      "transcribe",
+      "clean",
+      "copy:raw transcript.",
+    ]);
+    expect(harness.copyTextToClipboard).toHaveBeenCalledWith("raw transcript.");
+    expect(harness.errors).toContain(null);
+    expect(lastState(harness.states)).toBe("copied");
   });
 
   it("prevents concurrent transcriptions", async () => {

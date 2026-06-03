@@ -1,11 +1,12 @@
 export type AppState =
   | "idle"
-  | "capturing_hotkey"
+  | "ready"
   | "recording"
   | "transcribing"
   | "cleaning"
   | "pasting"
   | "pasted"
+  | "copied"
   | "error";
 
 export interface AppStatus {

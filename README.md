@@ -37,7 +37,7 @@ Floe does not include streaming, rolling transcription, audio chunking, overlap 
 ## Current Scaffold Scope
 
 - Minimal Tauri 2 app named Floe.
-- React status screen, secure settings controls, configurable hotkey controls, cleanup mode controls, manual recording controls, and transcript copy/paste actions.
+- React UI with a status view (wordmark, current state, current hotkey) and a settings view (`API Keys`, `Hotkey`, `Privacy`).
 - Rust commands for app status, secure settings, recording checks, Groq transcription, transcript cleanup, clipboard writes, and paste automation.
 - Tauri 2 global shortcut registration with press/release events for push-to-talk.
 - GitHub Actions CI for frontend and Rust checks.
@@ -79,15 +79,13 @@ pnpm tauri:dev
 ## Manual Test Flow
 
 1. Run `pnpm tauri:dev`.
-2. Save a Groq API key in the settings panel.
-3. Confirm the global hotkey shows as registered in Settings.
+2. Save a Groq API key in Settings, then save a Cerebras API key if you want to test Cerebras cleanup.
+3. Confirm the global hotkey appears as the current shortcut on the status view.
 4. Focus a target text field in another app.
 5. Hold the configured global hotkey, speak briefly, then release it.
-6. Confirm the cleaned transcript appears in Floe and is pasted into the focused target.
-7. If the OS blocks paste automation, Floe keeps the transcript on the clipboard. Paste manually with Command+V on macOS or Control+V on Windows/Linux.
-8. Use `Change hotkey` in Settings, press a new key combination, and confirm Floe re-registers it.
-9. Use `Reset default` to restore the platform default.
-10. Switch cleanup mode to `Raw`, `Fast`, and `Clean` to verify the selected behavior. `Clean` requires a saved Cerebras API key and falls back to `Fast` with a warning if Cerebras cleanup fails.
+6. Confirm the cleaned transcript is pasted into the focused target.
+7. If the OS blocks paste automation, Floe shows `Copied` on the status view. Paste manually with Command+V on macOS or Control+V on Windows/Linux.
+8. Use `Change` in the Hotkey section, press a new key combination, and confirm Floe re-registers it. `Reset` restores the platform default.
 
 Useful checks:
 
@@ -112,6 +110,10 @@ Change the hotkey from Settings with `Change hotkey`, then press the new shortcu
 
 Hotkey settings are stored separately from API keys. API keys remain in the OS keychain; the hotkey and cleanup mode are non-secret app settings.
 
+## Tray and Window Lifecycle
+
+Floe is a background push-to-talk utility. The window close button (X on Windows/Linux, red close button on macOS, and `Cmd+W`) hides Floe to the system tray instead of quitting. The global hotkey keeps working while the window is hidden, and the tray icon stays active. The tray menu offers `Show Floe`, `Hide Floe`, `Settings`, and `Quit`. Use the tray `Quit` to fully exit Floe; `Cmd+Q` on macOS also exits through the same shutdown path. On Linux desktops without a system tray, Floe falls back to keeping the process running but the tray icon may not be visible.
+
 ## API Keys and Cleanup Settings
 
 Groq and Cerebras API keys are stored through the operating system keychain using the Rust `keyring` crate. Each provider uses a separate keychain entry. Non-secret app settings, including cleanup mode and global hotkey, are stored separately in Floe's app config directory.
@@ -126,7 +128,7 @@ Cleanup modes:
 - `Fast`: use local cleanup. This is the default.
 - `Clean`: use Cerebras AI cleanup after Groq STT. Only transcript text is sent to Cerebras; audio is never sent.
 
-If `Clean` is selected without a Cerebras API key, Floe shows a friendly error and keeps `Fast` selected. If Cerebras cleanup fails, Floe pastes Fast-cleaned text and shows a warning.
+The UI does not expose the cleanup mode. If `Clean` is active and the Cerebras key is missing or the Cerebras request fails, Floe pastes Fast-cleaned text and the status view surfaces a short error or warning.
 
 ## Troubleshooting
 
@@ -136,6 +138,7 @@ If `Clean` is selected without a Cerebras API key, Floe shows a friendly error a
 - If the hotkey does not register, choose a less common shortcut; another app or the OS may already own it.
 - On macOS, allow Floe in Privacy & Security settings if global shortcuts or paste automation are blocked. Depending on the OS version, Accessibility and Input Monitoring permissions may be relevant.
 - On Windows/Linux, desktop environments and input methods can reserve shortcuts. Try `Control+Alt+Shift+Space` or another three-key combination if registration fails.
+- If clicking the window X seems to make Floe disappear, look in the system tray. Floe stays alive in the tray so the global hotkey keeps working. Use the tray `Quit` menu to fully exit. On Linux desktops without an AppIndicator extension, the tray icon may not be visible; use the OS task manager to quit if needed.
 
 ## Testing and CI
 

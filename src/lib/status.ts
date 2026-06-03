@@ -1,14 +1,15 @@
 import type { AppState } from "../types/app";
 
 const statusLabels: Record<AppState, string> = {
-  idle: "Idle",
-  capturing_hotkey: "Capturing hotkey",
+  idle: "Ready",
+  ready: "Ready",
   recording: "Recording",
   transcribing: "Transcribing",
   cleaning: "Cleaning",
   pasting: "Pasting",
   pasted: "Pasted",
-  error: "Needs attention",
+  copied: "Copied",
+  error: "Error",
 };
 
 export function statusLabel(state: AppState): string {
