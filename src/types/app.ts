@@ -55,6 +55,16 @@ export interface HotkeyError {
   message: string;
 }
 
+export interface StartAtLoginStatus {
+  enabled: boolean;
+  available: boolean;
+}
+
+export interface StartAtLoginError {
+  code: "enableFailed" | "disableFailed" | "unavailable";
+  message: string;
+}
+
 export interface GlobalHotkeyEvent {
   state: "Pressed" | "Released";
 }

@@ -6,6 +6,8 @@ Floe keeps audio in memory by default and sends one complete Groq Speech-to-Text
 
 The packaged app registers a configurable global push-to-talk hotkey through the Tauri 2 global shortcut plugin. The default is `CommandOrControl+Shift+Space` on macOS and `Control+Shift+Space` on Windows/Linux.
 
+Floe also supports optional Start at login through the Tauri 2 autostart plugin. When enabled, the installed app launches with `--background`, creates the tray icon, registers the configured hotkey, and keeps the main window hidden until the user chooses tray `Show Floe`.
+
 ## Project Build Overview
 
 Floe uses `corepack pnpm run tauri:build` for the default Tauri build and `corepack pnpm exec tauri build --bundles <target>` when selecting one bundle type explicitly. Tauri first runs `corepack pnpm build`, which runs `tsc && vite build` and writes frontend assets to `dist/`. Tauri then compiles the Rust app in `src-tauri/` and hands the release binary to the platform bundler.
@@ -43,6 +45,7 @@ Verified project configuration:
 | Bundle active            | `true`                                                                                                                                                |
 | Bundle targets           | `all`                                                                                                                                                 |
 | Icons                    | `src-tauri/icons/32x32.png`, `src-tauri/icons/128x128.png`, `src-tauri/icons/128x128@2x.png`, `src-tauri/icons/icon.icns`, `src-tauri/icons/icon.ico` |
+| Autostart launch arg     | `--background`                                                                                                                                        |
 | Windows installer target | `nsis` for `.exe`, optional `msi`                                                                                                                     |
 | macOS targets            | `app`, `dmg`                                                                                                                                          |
 | Linux targets            | `deb`, `rpm`                                                                                                                                          |
@@ -232,6 +235,7 @@ Installer artifacts are ignored by Git because `src-tauri/target/` is ignored.
 - If macOS builds fail during signing or notarization, verify the Apple Developer certificate, provisioning settings, keychain access, and notarization credentials.
 - If global hotkeys do not work in a packaged macOS build, check Privacy & Security permissions for Accessibility and Input Monitoring.
 - If a hotkey does not register on Windows/Linux, the OS or desktop environment may already reserve it; reset to default or choose another combination from Settings.
+- If Start at login does not launch Floe, confirm the installed app is still present, OS login item permissions allow it, and the desktop environment supports autostart. On Linux, tray visibility depends on AppIndicator/system tray support.
 - If Floe appears to vanish after clicking the window close button, the process is still running in the system tray so the global hotkey remains active. Use the tray `Quit` menu item to fully exit. On Linux desktops without an AppIndicator extension, the tray icon may not be visible; the process can still be ended through the OS task manager.
 - Do not log raw transcripts, raw audio, full API keys, auth headers, private keys, or signing secrets while debugging builds.
 

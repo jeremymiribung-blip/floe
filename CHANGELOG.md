@@ -14,6 +14,7 @@ All notable changes to Floe will be documented in this file.
 - Separate Cerebras API key storage and masked key status in settings.
 - Transcript cleanup command with Fast fallback warnings when Clean cleanup fails.
 - Reliable configurable global push-to-talk hotkey registration with startup fallback and settings controls.
+- Optional Start at login setting that launches Floe hidden in the background, creates the tray icon, and registers the global hotkey after user login.
 - Repository docs, issue templates, PR template, MIT license, `.env.example`, `.gitignore`, and GitHub Actions CI.
 
 ### Changed

@@ -1,16 +1,19 @@
 import { ApiKeyRow } from "./ApiKeyRow";
 import { HotkeyRow } from "./HotkeyRow";
 import { PrivacyNote } from "./PrivacyNote";
+import { StartAtLoginRow } from "./StartAtLoginRow";
 import type {
   CerebrasApiKeyStatus,
   GroqApiKeyStatus,
   HotkeyStatus,
+  StartAtLoginStatus,
 } from "../types/app";
 
 interface SettingsViewProps {
   groqStatus: GroqApiKeyStatus | null;
   cerebrasStatus: CerebrasApiKeyStatus | null;
   hotkeyStatus: HotkeyStatus | null;
+  startAtLoginStatus: StartAtLoginStatus | null;
   onClose: () => void;
   onSaveGroq: (value: string) => Promise<void> | void;
   onClearGroq: () => Promise<void> | void;
@@ -18,6 +21,7 @@ interface SettingsViewProps {
   onClearCerebras: () => Promise<void> | void;
   onChangeHotkey: (accelerator: string) => Promise<void> | void;
   onResetHotkey: () => Promise<void> | void;
+  onSetStartAtLogin: (enabled: boolean) => Promise<void> | void;
   busy?: boolean;
 }
 
@@ -25,6 +29,7 @@ export function SettingsView({
   groqStatus,
   cerebrasStatus,
   hotkeyStatus,
+  startAtLoginStatus,
   onClose,
   onSaveGroq,
   onClearGroq,
@@ -32,6 +37,7 @@ export function SettingsView({
   onClearCerebras,
   onChangeHotkey,
   onResetHotkey,
+  onSetStartAtLogin,
   busy = false,
 }: SettingsViewProps) {
   return (
@@ -73,6 +79,15 @@ export function SettingsView({
           hotkeyStatus={hotkeyStatus}
           onChange={onChangeHotkey}
           onReset={onResetHotkey}
+          disabled={busy}
+        />
+      </div>
+
+      <div className="settings-view__group">
+        <h2 className="settings-view__heading">Start at login</h2>
+        <StartAtLoginRow
+          status={startAtLoginStatus}
+          onChange={onSetStartAtLogin}
           disabled={busy}
         />
       </div>

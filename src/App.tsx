@@ -14,12 +14,14 @@ import {
   getGroqApiKeyStatus,
   getHotkeySettings,
   getRecordingStatus,
+  getStartAtLoginStatus,
   isTauriRuntime,
   pasteClipboard,
   resetHotkeyToDefault,
   saveCerebrasApiKey,
   saveGroqApiKey,
   setHotkey,
+  setStartAtLoginEnabled,
   startRecording,
   stopRecording,
   transcribeLatestRecording,
@@ -34,6 +36,8 @@ import type {
   HotkeyStatus,
   RecordingError,
   SettingsError,
+  StartAtLoginError,
+  StartAtLoginStatus,
 } from "./types/app";
 
 type View = "status" | "settings";
@@ -43,6 +47,8 @@ export default function App() {
   const [appState, setAppState] = useState<AppState>("ready");
   const [error, setError] = useState<string | null>(null);
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyStatus | null>(null);
+  const [startAtLoginStatus, setStartAtLoginStatus] =
+    useState<StartAtLoginStatus | null>(null);
   const [groqStatus, setGroqStatus] = useState<GroqApiKeyStatus | null>(null);
   const [cerebrasStatus, setCerebrasStatus] =
     useState<CerebrasApiKeyStatus | null>(null);
@@ -90,6 +96,15 @@ export default function App() {
       .catch(() => {
         setError("Floe could not load setup state.");
         setAppState("error");
+      });
+
+    getStartAtLoginStatus()
+      .then(setStartAtLoginStatus)
+      .catch(() => {
+        setStartAtLoginStatus({
+          enabled: false,
+          available: false,
+        });
       });
   }, []);
 
@@ -230,6 +245,19 @@ export default function App() {
     }
   }, []);
 
+  const handleSetStartAtLogin = useCallback(async (enabled: boolean) => {
+    try {
+      const next = await setStartAtLoginEnabled(enabled);
+      setStartAtLoginStatus(next);
+      setError(null);
+      setAppState("ready");
+    } catch (caught) {
+      setError(startAtLoginErrorMessage(caught, enabled));
+      setAppState("error");
+      throw caught;
+    }
+  }, []);
+
   const hotkeyLabel = hotkeyStatus?.configured.label ?? "Loading";
   const flowBusy =
     appState === "transcribing" ||
@@ -253,6 +281,7 @@ export default function App() {
           groqStatus={groqStatus}
           cerebrasStatus={cerebrasStatus}
           hotkeyStatus={hotkeyStatus}
+          startAtLoginStatus={startAtLoginStatus}
           onClose={() => setView("status")}
           onSaveGroq={handleSaveGroq}
           onClearGroq={handleClearGroq}
@@ -260,6 +289,7 @@ export default function App() {
           onClearCerebras={handleClearCerebras}
           onChangeHotkey={handleChangeHotkey}
           onResetHotkey={handleResetHotkey}
+          onSetStartAtLogin={handleSetStartAtLogin}
           busy={flowBusy}
         />
       )}
@@ -294,6 +324,26 @@ function hotkeyErrorMessage(caught: unknown): string {
   }
 
   return "Hotkey unavailable";
+}
+
+function startAtLoginErrorMessage(caught: unknown, enabling: boolean): string {
+  const startAtLoginError = caught as Partial<StartAtLoginError>;
+
+  if (
+    startAtLoginError.message === "Could not enable start at login" ||
+    startAtLoginError.message === "Could not disable start at login" ||
+    startAtLoginError.message === "Start at login unavailable"
+  ) {
+    return startAtLoginError.message;
+  }
+
+  if (startAtLoginError.code === "unavailable") {
+    return "Start at login unavailable";
+  }
+
+  return enabling
+    ? "Could not enable start at login"
+    : "Could not disable start at login";
 }
 
 function pushToTalkErrorMessage(caught: unknown): string {

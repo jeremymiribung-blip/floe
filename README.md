@@ -18,6 +18,7 @@ Floe aims to feel fast, private by default, and boringly reliable. The STT path 
 - Groq Speech-to-Text with `whisper-large-v3-turbo`
 - Optional Cerebras cleanup with `gpt-oss-120b`
 - OS keychain storage for Groq and Cerebras API keys
+- Tauri autostart integration for optional start-at-login
 
 ## Intended V1 Scope
 
@@ -37,9 +38,10 @@ Floe does not include streaming, rolling transcription, audio chunking, overlap 
 ## Current Scaffold Scope
 
 - Minimal Tauri 2 app named Floe.
-- React UI with a status view (wordmark, current state, current hotkey) and a settings view (`API Keys`, `Hotkey`, `Privacy`).
+- React UI with a status view (wordmark, current state, current hotkey) and a settings view (`API Keys`, `Hotkey`, `Start at login`, `Privacy`).
 - Rust commands for app status, secure settings, recording checks, Groq transcription, transcript cleanup, clipboard writes, and paste automation.
 - Tauri 2 global shortcut registration with press/release events for push-to-talk.
+- Optional start-at-login support that launches Floe hidden in the background.
 - GitHub Actions CI for frontend and Rust checks.
 
 ## Privacy Model
@@ -52,6 +54,7 @@ Floe does not include streaming, rolling transcription, audio chunking, overlap 
 - Fast mode uses local cleanup and remains the default.
 - Clean mode is optional, disabled by default, and may send transcript text to Cerebras.
 - API keys are stored locally in the OS keychain and kept separate by provider.
+- Enabling Start at login does not access the microphone, start recording, call Groq, call Cerebras, paste text, or send transcript data on startup.
 - Debug logging avoids raw audio, raw transcripts, full API keys, auth headers, and private transcripts.
 
 ## Setup
@@ -86,6 +89,7 @@ pnpm tauri:dev
 6. Confirm the cleaned transcript is pasted into the focused target.
 7. If the OS blocks paste automation, Floe shows `Copied` on the status view. Paste manually with Command+V on macOS or Control+V on Windows/Linux.
 8. Use `Change` in the Hotkey section, press a new key combination, and confirm Floe re-registers it. `Reset` restores the platform default.
+9. Enable `Start at login`, quit Floe from the tray, log out/in or restart, and confirm Floe starts hidden with the tray icon present and the hotkey active.
 
 Useful checks:
 
@@ -109,6 +113,14 @@ Floe uses the Tauri 2 global shortcut plugin and listens for both press and rele
 Change the hotkey from Settings with `Change hotkey`, then press the new shortcut. Press `Escape` or `Cancel` to leave the current shortcut unchanged. Floe validates the shortcut, registers it with the OS, saves it in non-secret app settings, and restores the previous working shortcut if the new one cannot be registered. `Reset default` restores the platform default.
 
 Hotkey settings are stored separately from API keys. API keys remain in the OS keychain; the hotkey and cleanup mode are non-secret app settings.
+
+## Start at Login
+
+Start at login is optional. When enabled from Settings, Floe registers with the operating system to launch after user login with a background startup argument. Floe starts hidden, creates the tray icon, initializes app state, and registers the configured global hotkey so push-to-talk is available immediately.
+
+Use the tray `Show Floe` menu item to open the main window after a background start. Use tray `Quit` to fully exit Floe. Disabling Start at login removes the OS autostart registration.
+
+Autostart behavior may depend on OS-specific login item permissions. On Linux, availability can vary by desktop environment and tray/AppIndicator support.
 
 ## Tray and Window Lifecycle
 
@@ -138,6 +150,7 @@ The UI does not expose the cleanup mode. If `Clean` is active and the Cerebras k
 - If the hotkey does not register, choose a less common shortcut; another app or the OS may already own it.
 - On macOS, allow Floe in Privacy & Security settings if global shortcuts or paste automation are blocked. Depending on the OS version, Accessibility and Input Monitoring permissions may be relevant.
 - On Windows/Linux, desktop environments and input methods can reserve shortcuts. Try `Control+Alt+Shift+Space` or another three-key combination if registration fails.
+- If Start at login is unavailable, check OS login item permissions and desktop environment support. Linux tray visibility depends on the desktop shell and AppIndicator support.
 - If clicking the window X seems to make Floe disappear, look in the system tray. Floe stays alive in the tray so the global hotkey keeps working. Use the tray `Quit` menu to fully exit. On Linux desktops without an AppIndicator extension, the tray icon may not be visible; use the OS task manager to quit if needed.
 
 ## Testing and CI

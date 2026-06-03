@@ -153,7 +153,8 @@ ul {
 }
 
 .key-row,
-.hotkey-row {
+.hotkey-row,
+.start-at-login-row {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -166,7 +167,8 @@ ul {
 }
 
 .key-row__field,
-.hotkey-row__field {
+.hotkey-row__field,
+.start-at-login-row__field {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -174,7 +176,8 @@ ul {
 }
 
 .key-row__status,
-.hotkey-row__value {
+.hotkey-row__value,
+.start-at-login-row__value {
   flex: 1 1 auto;
   min-width: 0;
   font-size: 14px;
@@ -206,7 +209,8 @@ ul {
 }
 
 .key-row__button,
-.hotkey-row__button {
+.hotkey-row__button,
+.start-at-login-row__toggle {
   height: 32px;
   padding: 0 12px;
   border: 1px solid #e5e5e5;
@@ -220,18 +224,21 @@ ul {
 }
 
 .key-row__button:hover:not(:disabled),
-.hotkey-row__button:hover:not(:disabled) {
+.hotkey-row__button:hover:not(:disabled),
+.start-at-login-row__toggle:hover:not(:disabled) {
   background: #f5f5f5;
 }
 
 .key-row__button:disabled,
-.hotkey-row__button:disabled {
+.hotkey-row__button:disabled,
+.start-at-login-row__toggle:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
 .key-row__button:focus-visible,
-.hotkey-row__button:focus-visible {
+.hotkey-row__button:focus-visible,
+.start-at-login-row__toggle:focus-visible {
   outline: none;
   border-color: #111111;
   box-shadow: 0 0 0 2px #f5f5f5;
@@ -251,7 +258,8 @@ ul {
 }
 
 .key-row__error,
-.hotkey-row__message {
+.hotkey-row__message,
+.start-at-login-row__message {
   font-size: 13px;
   color: #6b6b6b;
 }

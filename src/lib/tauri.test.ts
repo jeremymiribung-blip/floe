@@ -117,6 +117,28 @@ describe("browser settings fallback", () => {
     });
   });
 
+  it("gets and updates browser start at login status", async () => {
+    const { getStartAtLoginStatus, setStartAtLoginEnabled } =
+      await import("./tauri");
+
+    await expect(getStartAtLoginStatus()).resolves.toEqual({
+      enabled: false,
+      available: true,
+    });
+    await expect(setStartAtLoginEnabled(true)).resolves.toEqual({
+      enabled: true,
+      available: true,
+    });
+    await expect(getStartAtLoginStatus()).resolves.toEqual({
+      enabled: true,
+      available: true,
+    });
+    await expect(setStartAtLoginEnabled(false)).resolves.toEqual({
+      enabled: false,
+      available: true,
+    });
+  });
+
   it("masks and clears browser Groq API key status without exposing the full key", async () => {
     const { clearGroqApiKey, getGroqApiKeyStatus, saveGroqApiKey } =
       await import("./tauri");

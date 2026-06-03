@@ -16,6 +16,7 @@ import type {
   RecordingInfo,
   RecordingStatus,
   SettingsError,
+  StartAtLoginStatus,
   TranscriptCleanupResult,
 } from "../types/app";
 
@@ -43,6 +44,7 @@ let browserAppSettings: AppSettings = {
 };
 let browserHotkeyRegistered = true;
 let browserHotkeyRegistrationError: string | null = null;
+let browserStartAtLoginEnabled = false;
 let browserClipboardText = "";
 
 const browserSampleRate = 48_000;
@@ -321,6 +323,32 @@ export function unregisterGlobalHotkey(): Promise<HotkeyStatus> {
   }
 
   return invoke("unregister_global_hotkey");
+}
+
+export function getStartAtLoginStatus(): Promise<StartAtLoginStatus> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve({
+      enabled: browserStartAtLoginEnabled,
+      available: true,
+    });
+  }
+
+  return invoke("get_start_at_login_status");
+}
+
+export function setStartAtLoginEnabled(
+  enabled: boolean,
+): Promise<StartAtLoginStatus> {
+  if (!isTauriRuntime()) {
+    browserStartAtLoginEnabled = enabled;
+
+    return Promise.resolve({
+      enabled,
+      available: true,
+    });
+  }
+
+  return invoke("set_start_at_login_enabled", { enabled });
 }
 
 export function getCleanupMode(): Promise<CleanupMode> {
