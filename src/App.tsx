@@ -5,15 +5,16 @@ import {
   Info,
   KeyRound,
   Mic,
+  RotateCcw,
   Settings,
   Square,
   Trash2,
   WandSparkles,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
 import type { FormEvent } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { captureHotkey } from "./lib/hotkeyCapture";
 import { formatRecordingInfo } from "./lib/recording";
 import { PushToTalkController } from "./lib/pushToTalk";
 import {
@@ -26,13 +27,16 @@ import {
   getCerebrasApiKeyStatus,
   getCleanupMode,
   getGroqApiKeyStatus,
+  getHotkeySettings,
   getLatestRecordingInfo,
   getRecordingStatus,
   isTauriRuntime,
   pasteClipboard,
+  resetHotkeyToDefault,
   saveCerebrasApiKey,
   saveGroqApiKey,
   setCleanupMode,
+  setHotkey,
   startRecording,
   stopRecording,
   transcribeLatestRecording,
@@ -45,8 +49,11 @@ import type {
   CerebrasApiKeyStatus,
   ClipboardError,
   CleanupMode,
+  GlobalHotkeyEvent,
   GroqApiKeyStatus,
   GroqTranscriptionError,
+  HotkeyError,
+  HotkeyStatus,
   RecordingError,
   RecordingInfo,
   RecordingStatus,
@@ -65,6 +72,11 @@ export default function App() {
   const [groqApiKeyInput, setGroqApiKeyInput] = useState("");
   const [cerebrasApiKeyInput, setCerebrasApiKeyInput] = useState("");
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyStatus | null>(null);
+  const [isHotkeyCaptureActive, setIsHotkeyCaptureActive] = useState(false);
+  const [hotkeyCaptureMessage, setHotkeyCaptureMessage] = useState<
+    string | null
+  >(null);
   const [recordingStatus, setRecordingStatus] =
     useState<RecordingStatus | null>(null);
   const [latestRecording, setLatestRecording] = useState<RecordingInfo | null>(
@@ -75,8 +87,7 @@ export default function App() {
   const settingsPanelRef = useRef<HTMLElement | null>(null);
   const pushToTalkController = useRef<PushToTalkController | null>(null);
   const manualTranscriptionInFlight = useRef(false);
-  const hotkeyAccelerator = settings?.hotkey.accelerator;
-  const hotkeyLabel = settings?.hotkey.label;
+  const stateBeforeHotkeyCapture = useRef<AppState>("idle");
 
   if (pushToTalkController.current === null) {
     pushToTalkController.current = new PushToTalkController(
@@ -106,6 +117,7 @@ export default function App() {
       getGroqApiKeyStatus(),
       getCerebrasApiKeyStatus(),
       getAppSettings(),
+      getHotkeySettings(),
       getRecordingStatus(),
     ])
       .then(
@@ -114,16 +126,23 @@ export default function App() {
           currentApiKeyStatus,
           currentCerebrasApiKeyStatus,
           currentSettings,
+          currentHotkeyStatus,
           currentRecordingStatus,
         ]) => {
           setStatus(appStatus);
           setApiKeyStatus(currentApiKeyStatus);
           setCerebrasApiKeyStatus(currentCerebrasApiKeyStatus);
           setSettings(currentSettings);
+          setHotkeyStatus(currentHotkeyStatus);
           setRecordingStatus(currentRecordingStatus);
           setLatestRecording(currentRecordingStatus.latestRecording);
+          setError(currentHotkeyStatus.registrationError);
           setAppState(
-            currentRecordingStatus.isRecording ? "recording" : "idle",
+            !currentHotkeyStatus.isRegistered
+              ? "error"
+              : currentRecordingStatus.isRecording
+                ? "recording"
+                : "idle",
           );
         },
       )
@@ -134,38 +153,37 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!hotkeyAccelerator || !hotkeyLabel || !isTauriRuntime()) {
+    if (!isTauriRuntime()) {
       return;
     }
 
     let isActive = true;
+    let unlisten: (() => void) | null = null;
 
-    register(hotkeyAccelerator, (event) => {
-      if (event.shortcut !== hotkeyAccelerator) {
-        return;
-      }
-
-      void pushToTalkController.current?.handleShortcutState(event.state);
+    listen<GlobalHotkeyEvent>("floe-global-hotkey-state", (event) => {
+      void pushToTalkController.current?.handleShortcutState(
+        event.payload.state,
+      );
     })
-      .then(() => {
+      .then((nextUnlisten) => {
         if (isActive) {
-          setError(null);
+          unlisten = nextUnlisten;
+        } else {
+          nextUnlisten();
         }
       })
       .catch(() => {
         if (isActive) {
-          setError(
-            `Floe could not register ${hotkeyLabel}. Manual controls are still available.`,
-          );
+          setError("Floe could not listen for the global hotkey.");
           setAppState("error");
         }
       });
 
     return () => {
       isActive = false;
-      void unregister(hotkeyAccelerator);
+      unlisten?.();
     };
-  }, [hotkeyAccelerator, hotkeyLabel]);
+  }, []);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -211,6 +229,14 @@ export default function App() {
   function recordingErrorMessage(action: string, caught: unknown): string {
     const recordingError = caught as Partial<RecordingError>;
 
+    if (recordingError.code === "alreadyRecording") {
+      return "Recording is already active.";
+    }
+
+    if (action === "start" && typeof recordingError.message !== "string") {
+      return "Microphone recording could not start.";
+    }
+
     if (typeof recordingError.message === "string") {
       return recordingError.message;
     }
@@ -226,6 +252,28 @@ export default function App() {
     }
 
     return "Settings could not be saved.";
+  }
+
+  function hotkeyErrorMessage(caught: unknown): string {
+    const hotkeyError = caught as Partial<HotkeyError>;
+
+    if (hotkeyError.code === "alreadyInUse") {
+      return "This shortcut is already in use.";
+    }
+
+    if (hotkeyError.code === "unsupportedHotkey") {
+      return "This shortcut is not supported.";
+    }
+
+    if (hotkeyError.code === "registrationFailed") {
+      return "Hotkey could not be registered.";
+    }
+
+    if (typeof hotkeyError.message === "string") {
+      return hotkeyError.message;
+    }
+
+    return "Hotkey could not be registered.";
   }
 
   function transcriptionErrorMessage(caught: unknown): string {
@@ -386,8 +434,126 @@ export default function App() {
     }
   }
 
-  async function handleStartRecording() {
+  function beginHotkeyCapture() {
     if (isRecording || isFlowBusy) {
+      return;
+    }
+
+    stateBeforeHotkeyCapture.current = appState;
+    setError(null);
+    setSettingsMessage(null);
+    setHotkeyCaptureMessage("Press your new shortcut...");
+    setIsHotkeyCaptureActive(true);
+    setAppState("capturing_hotkey");
+  }
+
+  const cancelHotkeyCapture = useCallback(() => {
+    setIsHotkeyCaptureActive(false);
+    setHotkeyCaptureMessage(null);
+    setSettingsMessage("Hotkey change canceled.");
+    setAppState(stateBeforeHotkeyCapture.current);
+  }, []);
+
+  const saveCapturedHotkey = useCallback(async (accelerator: string) => {
+    try {
+      setHotkeyCaptureMessage("Saving shortcut...");
+      const nextStatus = await setHotkey(accelerator);
+      setHotkeyStatus(nextStatus);
+      setSettings((currentSettings) =>
+        currentSettings
+          ? {
+              ...currentSettings,
+              hotkey: nextStatus.configured,
+            }
+          : currentSettings,
+      );
+      setIsHotkeyCaptureActive(false);
+      setHotkeyCaptureMessage(null);
+      setSettingsMessage(
+        `Global hotkey set to ${nextStatus.configured.label}.`,
+      );
+      setAppState("idle");
+    } catch (caught) {
+      setIsHotkeyCaptureActive(false);
+      setHotkeyCaptureMessage(null);
+      const currentHotkeyStatus = await getHotkeySettings().catch(() => null);
+      if (currentHotkeyStatus) {
+        setHotkeyStatus(currentHotkeyStatus);
+      }
+      setSettingsMessage(hotkeyErrorMessage(caught));
+      setAppState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isHotkeyCaptureActive) {
+      return;
+    }
+
+    function handleCaptureKeydown(event: KeyboardEvent) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.key === "Escape") {
+        cancelHotkeyCapture();
+        return;
+      }
+
+      try {
+        const captured = captureHotkey(event);
+        void saveCapturedHotkey(captured.accelerator);
+      } catch (caught) {
+        setHotkeyCaptureMessage(
+          caught instanceof Error
+            ? caught.message
+            : "This shortcut is not supported.",
+        );
+      }
+    }
+
+    window.addEventListener("keydown", handleCaptureKeydown, true);
+
+    return () => {
+      window.removeEventListener("keydown", handleCaptureKeydown, true);
+    };
+  }, [cancelHotkeyCapture, isHotkeyCaptureActive, saveCapturedHotkey]);
+
+  async function handleResetHotkeyToDefault() {
+    if (isRecording || isFlowBusy) {
+      return;
+    }
+
+    try {
+      setError(null);
+      setSettingsMessage(null);
+      const nextStatus = await resetHotkeyToDefault();
+      setHotkeyStatus(nextStatus);
+      setSettings((currentSettings) =>
+        currentSettings
+          ? {
+              ...currentSettings,
+              hotkey: nextStatus.configured,
+            }
+          : currentSettings,
+      );
+      setSettingsMessage(
+        `Global hotkey reset to ${nextStatus.configured.label}.`,
+      );
+      setAppState("idle");
+    } catch (caught) {
+      setHotkeyStatus(await getHotkeySettings().catch(() => hotkeyStatus));
+      setSettingsMessage(hotkeyErrorMessage(caught));
+      setAppState("error");
+    }
+  }
+
+  async function handleStartRecording() {
+    if (isRecording) {
+      setError("Recording is already active.");
+      return;
+    }
+
+    if (isFlowBusy) {
       return;
     }
 
@@ -435,7 +601,13 @@ export default function App() {
   }
 
   async function handleTranscribeLatestRecording() {
-    if (isRecording || isFlowBusy || manualTranscriptionInFlight.current) {
+    if (manualTranscriptionInFlight.current || appState === "transcribing") {
+      setError("Transcription is already running.");
+      setAppState("error");
+      return;
+    }
+
+    if (isRecording || isFlowBusy) {
       return;
     }
 
@@ -513,6 +685,7 @@ export default function App() {
 
   const isRecording = recordingStatus?.isRecording ?? false;
   const isFlowBusy =
+    appState === "capturing_hotkey" ||
     appState === "transcribing" ||
     appState === "cleaning" ||
     appState === "pasting";
@@ -520,6 +693,13 @@ export default function App() {
     latestRecording ?? recordingStatus?.latestRecording ?? null;
   const hasPasteableTranscript =
     latestTranscript !== null && latestTranscript.trim().length > 0;
+  const currentHotkeyLabel =
+    hotkeyStatus?.configured.label ?? settings?.hotkey.label ?? "Loading";
+  const registeredHotkeyLabel =
+    hotkeyStatus?.registered?.label ?? "Not registered";
+  const hotkeyRegistrationStatus = hotkeyStatus?.isRegistered
+    ? `Registered (${registeredHotkeyLabel})`
+    : (hotkeyStatus?.registrationError ?? "Not registered");
 
   return (
     <main>
@@ -582,7 +762,11 @@ export default function App() {
             </div>
             <div>
               <dt>Global hotkey</dt>
-              <dd>{settings?.hotkey.label ?? "Loading"}</dd>
+              <dd>{currentHotkeyLabel}</dd>
+            </div>
+            <div>
+              <dt>Hotkey status</dt>
+              <dd>{hotkeyRegistrationStatus}</dd>
             </div>
             <div>
               <dt>Secret storage</dt>
@@ -637,6 +821,53 @@ export default function App() {
               </button>
             </div>
           </form>
+          <div className="settings-form">
+            <label htmlFor="global-hotkey">Global hotkey</label>
+            <div className="field-row">
+              <input
+                id="global-hotkey"
+                value={
+                  isHotkeyCaptureActive
+                    ? "Press your new shortcut..."
+                    : currentHotkeyLabel
+                }
+                readOnly
+              />
+              {isHotkeyCaptureActive ? (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={cancelHotkeyCapture}
+                >
+                  <Square aria-hidden="true" />
+                  Cancel
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={isRecording || isFlowBusy}
+                    onClick={beginHotkeyCapture}
+                  >
+                    <KeyRound aria-hidden="true" />
+                    Change hotkey
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={isRecording || isFlowBusy}
+                    onClick={handleResetHotkeyToDefault}
+                  >
+                    <RotateCcw aria-hidden="true" />
+                    Reset default
+                  </button>
+                </>
+              )}
+            </div>
+            {hotkeyCaptureMessage ? (
+              <p className="settings-message">{hotkeyCaptureMessage}</p>
+            ) : null}
+          </div>
           <div className="settings-form">
             <label htmlFor="cleanup-mode">Cleanup mode</label>
             <div className="field-row">

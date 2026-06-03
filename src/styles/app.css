@@ -96,6 +96,7 @@ dd {
 }
 
 .status-pill-recording span,
+.status-pill-capturing_hotkey span,
 .status-pill-transcribing span,
 .status-pill-cleaning span,
 .status-pill-pasting span {

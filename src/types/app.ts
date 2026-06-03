@@ -1,5 +1,6 @@
 export type AppState =
   | "idle"
+  | "capturing_hotkey"
   | "recording"
   | "transcribing"
   | "cleaning"
@@ -33,6 +34,28 @@ export interface AppSettings {
 export interface HotkeySettings {
   accelerator: string;
   label: string;
+}
+
+export interface HotkeyStatus {
+  configured: HotkeySettings;
+  registered: HotkeySettings | null;
+  isRegistered: boolean;
+  registrationError: string | null;
+}
+
+export interface HotkeyError {
+  code:
+    | "invalidHotkey"
+    | "unsupportedHotkey"
+    | "alreadyInUse"
+    | "registrationFailed"
+    | "unregisterFailed"
+    | "settingsUnavailable";
+  message: string;
+}
+
+export interface GlobalHotkeyEvent {
+  state: "Pressed" | "Released";
 }
 
 export interface SettingsError {

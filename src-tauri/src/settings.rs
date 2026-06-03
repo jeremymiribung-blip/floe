@@ -6,12 +6,8 @@ use serde::{Deserialize, Serialize};
 const KEYRING_SERVICE: &str = "com.floe.app";
 const GROQ_API_KEY_USER: &str = "groq-api-key";
 const CEREBRAS_API_KEY_USER: &str = "cerebras-api-key";
-const DEFAULT_HOTKEY_ACCELERATOR: &str = "Ctrl+Space";
-const DEFAULT_HOTKEY_LABEL: &str = "Ctrl+Space";
 const MAX_GROQ_API_KEY_LEN: usize = 256;
 const MAX_CEREBRAS_API_KEY_LEN: usize = 512;
-const MAX_HOTKEY_ACCELERATOR_LEN: usize = 80;
-const MAX_HOTKEY_LABEL_LEN: usize = 80;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -50,10 +46,7 @@ pub struct HotkeySettings {
 
 impl Default for HotkeySettings {
     fn default() -> Self {
-        Self {
-            accelerator: DEFAULT_HOTKEY_ACCELERATOR.to_string(),
-            label: DEFAULT_HOTKEY_LABEL.to_string(),
-        }
+        crate::system::hotkey::default_hotkey_settings()
     }
 }
 
@@ -341,29 +334,7 @@ fn validate_api_key(
 }
 
 fn validate_app_settings(settings: AppSettings) -> Result<AppSettings, SettingsError> {
-    let hotkey_accelerator = settings.hotkey.accelerator.trim();
-    let hotkey_label = settings.hotkey.label.trim();
-
-    if hotkey_accelerator.is_empty()
-        || hotkey_accelerator.len() > MAX_HOTKEY_ACCELERATOR_LEN
-        || hotkey_accelerator.chars().any(char::is_control)
-        || hotkey_label.is_empty()
-        || hotkey_label.len() > MAX_HOTKEY_LABEL_LEN
-        || hotkey_label.chars().any(char::is_control)
-    {
-        return Err(settings_error(
-            SettingsErrorCode::InvalidAppSettings,
-            "Enter a valid hotkey label.",
-        ));
-    }
-
-    Ok(AppSettings {
-        hotkey: HotkeySettings {
-            accelerator: hotkey_accelerator.to_string(),
-            label: hotkey_label.to_string(),
-        },
-        cleanup_mode: settings.cleanup_mode,
-    })
+    crate::system::hotkey::validate_app_hotkey_settings(settings)
 }
 
 fn status_from_secret(secret: Option<String>) -> ApiKeyStatus {
@@ -709,16 +680,12 @@ mod tests {
                 label: "Ctrl+Space".to_string(),
             },
             HotkeySettings {
-                accelerator: "Ctrl+Space".to_string(),
-                label: "   ".to_string(),
+                accelerator: "Control\nShift+Space".to_string(),
+                label: "Control+Shift+Space".to_string(),
             },
             HotkeySettings {
-                accelerator: "Ctrl\nSpace".to_string(),
-                label: "Ctrl+Space".to_string(),
-            },
-            HotkeySettings {
-                accelerator: "Ctrl+Space".to_string(),
-                label: "Ctrl\nSpace".to_string(),
+                accelerator: "Control+Space".to_string(),
+                label: "Control+Space".to_string(),
             },
         ] {
             let error = manager
@@ -735,8 +702,8 @@ mod tests {
         let error = manager
             .save_app_settings(AppSettings {
                 hotkey: HotkeySettings {
-                    accelerator: "Ctrl+Space".to_string(),
-                    label: too_long,
+                    accelerator: too_long,
+                    label: "Control+Shift+Space".to_string(),
                 },
                 cleanup_mode: CleanupMode::Fast,
             })
@@ -752,15 +719,15 @@ mod tests {
         let saved = manager
             .save_app_settings(AppSettings {
                 hotkey: HotkeySettings {
-                    accelerator: "  Ctrl+Space  ".to_string(),
-                    label: "  Ctrl+Space  ".to_string(),
+                    accelerator: "  Control+Shift+A  ".to_string(),
+                    label: "  Control+Shift+A  ".to_string(),
                 },
                 cleanup_mode: CleanupMode::Raw,
             })
             .expect("valid settings should save");
 
-        assert_eq!(saved.hotkey.accelerator, "Ctrl+Space");
-        assert_eq!(saved.hotkey.label, "Ctrl+Space");
+        assert_eq!(saved.hotkey.accelerator, "Control+Shift+KeyA");
+        assert_eq!(saved.hotkey.label, "Control+Shift+A");
         assert_eq!(saved.cleanup_mode, CleanupMode::Raw);
         assert_eq!(manager.get_app_settings().unwrap(), saved);
     }

@@ -65,8 +65,8 @@ describe("browser settings fallback", () => {
 
     await expect(getAppSettings()).resolves.toEqual({
       hotkey: {
-        accelerator: "Ctrl+Space",
-        label: "Ctrl+Space",
+        accelerator: "Control+Shift+Space",
+        label: "Control+Shift+Space",
       },
       cleanupMode: "fast",
     });
@@ -77,18 +77,43 @@ describe("browser settings fallback", () => {
 
     await saveAppSettings({
       hotkey: {
-        accelerator: "  Ctrl+Space  ",
-        label: "  Ctrl+Space  ",
+        accelerator: "  Control+Shift+KeyA  ",
+        label: "  Control+Shift+A  ",
       },
       cleanupMode: "raw",
     });
 
     await expect(getAppSettings()).resolves.toEqual({
       hotkey: {
-        accelerator: "Ctrl+Space",
-        label: "Ctrl+Space",
+        accelerator: "Control+Shift+KeyA",
+        label: "Control+Shift+A",
       },
       cleanupMode: "raw",
+    });
+  });
+
+  it("changes and resets browser hotkey settings", async () => {
+    const { getHotkeySettings, resetHotkeyToDefault, setHotkey } =
+      await import("./tauri");
+
+    await expect(setHotkey("Control+Shift+KeyB")).resolves.toMatchObject({
+      configured: {
+        accelerator: "Control+Shift+KeyB",
+        label: "Control+Shift+B",
+      },
+      isRegistered: true,
+    });
+    await expect(getHotkeySettings()).resolves.toMatchObject({
+      registered: {
+        accelerator: "Control+Shift+KeyB",
+        label: "Control+Shift+B",
+      },
+    });
+    await expect(resetHotkeyToDefault()).resolves.toMatchObject({
+      configured: {
+        accelerator: "Control+Shift+Space",
+        label: "Control+Shift+Space",
+      },
     });
   });
 

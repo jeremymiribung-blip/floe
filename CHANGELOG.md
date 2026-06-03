@@ -13,8 +13,5 @@ All notable changes to Floe will be documented in this file.
 - Optional cleanup modes: Raw, Fast, and Cerebras-powered Clean.
 - Separate Cerebras API key storage and masked key status in settings.
 - Transcript cleanup command with Fast fallback warnings when Clean cleanup fails.
+- Reliable configurable global push-to-talk hotkey registration with startup fallback and settings controls.
 - Repository docs, issue templates, PR template, MIT license, `.env.example`, `.gitignore`, and GitHub Actions CI.
-
-### Not Added Yet
-
-- Global hotkeys.

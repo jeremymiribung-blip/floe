@@ -6,6 +6,8 @@ import type {
   CerebrasApiKeyStatus,
   ClipboardError,
   CleanupMode,
+  HotkeyError,
+  HotkeyStatus,
   GroqTranscription,
   GroqTranscriptionError,
   GroqApiKeyStatus,
@@ -34,11 +36,13 @@ let browserCerebrasApiKeyStatus: CerebrasApiKeyStatus = {
 };
 let browserAppSettings: AppSettings = {
   hotkey: {
-    accelerator: "Ctrl+Space",
-    label: "Ctrl+Space",
+    accelerator: "Control+Shift+Space",
+    label: "Control+Shift+Space",
   },
   cleanupMode: "fast",
 };
+let browserHotkeyRegistered = true;
+let browserHotkeyRegistrationError: string | null = null;
 let browserClipboardText = "";
 
 const browserSampleRate = 48_000;
@@ -77,6 +81,48 @@ function settingsError(
   message: string,
 ): SettingsError {
   return { code, message };
+}
+
+function hotkeyError(code: HotkeyError["code"], message: string): HotkeyError {
+  return { code, message };
+}
+
+function browserHotkeyStatus(): HotkeyStatus {
+  return {
+    configured: browserAppSettings.hotkey,
+    registered: browserHotkeyRegistered ? browserAppSettings.hotkey : null,
+    isRegistered: browserHotkeyRegistered,
+    registrationError: browserHotkeyRegistrationError,
+  };
+}
+
+function normalizeBrowserHotkey(accelerator: string): AppSettings["hotkey"] {
+  const trimmed = accelerator.trim();
+
+  if (!trimmed) {
+    throw hotkeyError("invalidHotkey", "Enter a valid shortcut.");
+  }
+
+  if (!trimmed.includes("+")) {
+    throw hotkeyError("unsupportedHotkey", "This shortcut is not supported.");
+  }
+
+  const parts = trimmed
+    .split("+")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const key = parts[parts.length - 1] ?? "";
+
+  if (parts.length < 3 || !key) {
+    throw hotkeyError("unsupportedHotkey", "This shortcut is not supported.");
+  }
+
+  return {
+    accelerator: parts.join("+"),
+    label: parts
+      .map((part) => part.replace(/^Key/, "").replace(/^Digit/, ""))
+      .join("+"),
+  };
 }
 
 function maskBrowserApiKey(apiKey: string): string {
@@ -206,16 +252,75 @@ export function getAppSettings(): Promise<AppSettings> {
 export function saveAppSettings(settings: AppSettings): Promise<AppSettings> {
   if (!isTauriRuntime()) {
     browserAppSettings = {
-      hotkey: {
-        accelerator: settings.hotkey.accelerator.trim(),
-        label: settings.hotkey.label.trim(),
-      },
+      hotkey: normalizeBrowserHotkey(settings.hotkey.accelerator),
       cleanupMode: settings.cleanupMode,
     };
     return Promise.resolve(browserAppSettings);
   }
 
   return invoke("save_app_settings", { settings });
+}
+
+export function getHotkeySettings(): Promise<HotkeyStatus> {
+  if (!isTauriRuntime()) {
+    return Promise.resolve(browserHotkeyStatus());
+  }
+
+  return invoke("get_hotkey_settings");
+}
+
+export function setHotkey(accelerator: string): Promise<HotkeyStatus> {
+  if (!isTauriRuntime()) {
+    browserAppSettings = {
+      ...browserAppSettings,
+      hotkey: normalizeBrowserHotkey(accelerator),
+    };
+    browserHotkeyRegistered = true;
+    browserHotkeyRegistrationError = null;
+
+    return Promise.resolve(browserHotkeyStatus());
+  }
+
+  return invoke("set_hotkey", { accelerator });
+}
+
+export function resetHotkeyToDefault(): Promise<HotkeyStatus> {
+  if (!isTauriRuntime()) {
+    browserAppSettings = {
+      ...browserAppSettings,
+      hotkey: {
+        accelerator: "Control+Shift+Space",
+        label: "Control+Shift+Space",
+      },
+    };
+    browserHotkeyRegistered = true;
+    browserHotkeyRegistrationError = null;
+
+    return Promise.resolve(browserHotkeyStatus());
+  }
+
+  return invoke("reset_hotkey_to_default");
+}
+
+export function registerGlobalHotkey(): Promise<HotkeyStatus> {
+  if (!isTauriRuntime()) {
+    browserHotkeyRegistered = true;
+    browserHotkeyRegistrationError = null;
+
+    return Promise.resolve(browserHotkeyStatus());
+  }
+
+  return invoke("register_global_hotkey");
+}
+
+export function unregisterGlobalHotkey(): Promise<HotkeyStatus> {
+  if (!isTauriRuntime()) {
+    browserHotkeyRegistered = false;
+
+    return Promise.resolve(browserHotkeyStatus());
+  }
+
+  return invoke("unregister_global_hotkey");
 }
 
 export function getCleanupMode(): Promise<CleanupMode> {

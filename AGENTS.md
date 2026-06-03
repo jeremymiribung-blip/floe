@@ -8,5 +8,6 @@
 - Only transcript text may be sent to Cerebras when the user explicitly enables Clean cleanup.
 - Keep audio in memory only by default.
 - Keep secret and non-secret settings separate.
+- Keep the configurable push-to-talk hotkey in non-secret settings; default to CommandOrControl+Shift+Space on macOS and Control+Shift+Space on Windows/Linux.
 - Do not log raw transcripts, raw audio, full API keys, or auth headers.
 - Prefer small modules and focused tests.

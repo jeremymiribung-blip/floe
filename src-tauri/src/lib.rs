@@ -4,18 +4,21 @@ mod lifecycle;
 mod providers;
 mod recording;
 mod settings;
+mod system;
 
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(recording::RecordingManager::with_cpal())
+        .manage(system::hotkey::HotkeyManager::default())
         .setup(|app| {
             use tauri::Manager;
 
             let config_dir = app.path().app_config_dir()?;
             app.manage(settings::SettingsManager::new(config_dir));
             lifecycle::setup_tray(app)?;
+            system::hotkey::register_startup_hotkey(app.handle());
 
             Ok(())
         })
@@ -32,6 +35,11 @@ pub fn run() {
             commands::settings::save_app_settings,
             commands::settings::get_cleanup_mode,
             commands::settings::set_cleanup_mode,
+            commands::hotkey::get_hotkey_settings,
+            commands::hotkey::set_hotkey,
+            commands::hotkey::reset_hotkey_to_default,
+            commands::hotkey::register_global_hotkey,
+            commands::hotkey::unregister_global_hotkey,
             commands::recording::start_recording,
             commands::recording::stop_recording,
             commands::recording::get_recording_status,

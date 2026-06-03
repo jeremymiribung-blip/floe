@@ -4,6 +4,8 @@ This guide explains how to build release installers for Floe, a Tauri 2 desktop 
 
 Floe keeps audio in memory by default and sends one complete Groq Speech-to-Text request only after recording stops. Installer builds must not add streaming, transcript chunking, transcript merging, realtime partials, or any behavior that sends audio to Cerebras.
 
+The packaged app registers a configurable global push-to-talk hotkey through the Tauri 2 global shortcut plugin. The default is `CommandOrControl+Shift+Space` on macOS and `Control+Shift+Space` on Windows/Linux.
+
 ## Project Build Overview
 
 Floe uses `corepack pnpm run tauri:build` for the default Tauri build and `corepack pnpm exec tauri build --bundles <target>` when selecting one bundle type explicitly. Tauri first runs `corepack pnpm build`, which runs `tsc && vite build` and writes frontend assets to `dist/`. Tauri then compiles the Rust app in `src-tauri/` and hands the release binary to the platform bundler.
@@ -228,6 +230,8 @@ Installer artifacts are ignored by Git because `src-tauri/target/` is ignored.
 - If Linux builds fail with missing WebKitGTK, install the platform packages above and rerun `corepack pnpm exec tauri info`.
 - If Linux builds fail with audio or D-Bus headers, install `libasound2-dev` and `libdbus-1-dev` on Debian/Ubuntu or `alsa-lib-devel` and `dbus-devel` on Fedora/RHEL.
 - If macOS builds fail during signing or notarization, verify the Apple Developer certificate, provisioning settings, keychain access, and notarization credentials.
+- If global hotkeys do not work in a packaged macOS build, check Privacy & Security permissions for Accessibility and Input Monitoring.
+- If a hotkey does not register on Windows/Linux, the OS or desktop environment may already reserve it; reset to default or choose another combination from Settings.
 - Do not log raw transcripts, raw audio, full API keys, auth headers, private keys, or signing secrets while debugging builds.
 
 ## Future GitHub Actions Release Automation

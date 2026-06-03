@@ -168,6 +168,17 @@ describe("PushToTalkController", () => {
     expect(harness.states).toContain("recording");
   });
 
+  it("ignores release when no recording is active", async () => {
+    const harness = createHarness();
+
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.startRecording).not.toHaveBeenCalled();
+    expect(harness.stopRecording).not.toHaveBeenCalled();
+    expect(harness.transcribeLatestRecording).not.toHaveBeenCalled();
+    expect(harness.states).toEqual([]);
+  });
+
   it("stops, transcribes, cleans, copies, and pastes on release", async () => {
     const harness = createHarness();
 

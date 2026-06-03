@@ -6,7 +6,10 @@ use tauri::{
     App, AppHandle, Emitter, Manager, Runtime, WebviewWindow,
 };
 
-use crate::recording::{RecordingErrorCode, RecordingManager, ShutdownRecordingResult};
+use crate::{
+    recording::{RecordingErrorCode, RecordingManager, ShutdownRecordingResult},
+    system::hotkey,
+};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_SHOW_ID: &str = "tray-show-floe";
@@ -70,6 +73,8 @@ pub fn cleanup_before_exit<R: Runtime>(app: &AppHandle<R>) {
     }
 
     log_lifecycle(LifecycleLevel::Info, "shutdown_cleanup_started");
+
+    hotkey::unregister_shutdown_hotkey(app);
 
     match app.try_state::<RecordingManager>() {
         Some(manager) => match manager.stop_for_shutdown() {

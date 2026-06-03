@@ -2,7 +2,7 @@
 
 Floe is a minimal desktop push-to-talk transcription utility. Hold a global hotkey, speak, release it, and Floe sends the completed recording once to Groq Speech-to-Text, cleans the transcript according to the selected cleanup mode, copies it to the clipboard, and pastes it into the focused app.
 
-This repository is currently an early V1 implementation. The desktop shell, settings storage, manual recording, Groq transcription, clipboard writes, and paste automation are in place; global push-to-talk hotkeys are intentionally not implemented yet.
+This repository is currently an early V1 implementation. The desktop shell, settings storage, manual recording, configurable global push-to-talk hotkeys, Groq transcription, clipboard writes, and paste automation are in place.
 
 ## Product Goal
 
@@ -13,8 +13,8 @@ Floe aims to feel fast, private by default, and boringly reliable. The STT path 
 - Tauri 2
 - React, TypeScript, Vite
 - Rust backend
-- Future `cpal` microphone recording
-- Future in-memory 16-bit PCM WAV generation
+- `cpal` microphone recording
+- In-memory 16-bit PCM WAV generation
 - Groq Speech-to-Text with `whisper-large-v3-turbo`
 - Optional Cerebras cleanup with `gpt-oss-120b`
 - OS keychain storage for Groq and Cerebras API keys
@@ -37,9 +37,9 @@ Floe does not include streaming, rolling transcription, audio chunking, overlap 
 ## Current Scaffold Scope
 
 - Minimal Tauri 2 app named Floe.
-- React status screen, secure settings controls, cleanup mode controls, manual recording controls, and transcript copy/paste actions.
+- React status screen, secure settings controls, configurable hotkey controls, cleanup mode controls, manual recording controls, and transcript copy/paste actions.
 - Rust commands for app status, secure settings, recording checks, Groq transcription, transcript cleanup, clipboard writes, and paste automation.
-- No global hotkeys yet.
+- Tauri 2 global shortcut registration with press/release events for push-to-talk.
 - GitHub Actions CI for frontend and Rust checks.
 
 ## Privacy Model
@@ -80,12 +80,14 @@ pnpm tauri:dev
 
 1. Run `pnpm tauri:dev`.
 2. Save a Groq API key in the settings panel.
-3. Click `Start`, speak briefly, then click `Stop`.
+3. Confirm the global hotkey shows as registered in Settings.
 4. Focus a target text field in another app.
-5. Return to Floe and click `Transcribe + paste`.
+5. Hold the configured global hotkey, speak briefly, then release it.
 6. Confirm the cleaned transcript appears in Floe and is pasted into the focused target.
 7. If the OS blocks paste automation, Floe keeps the transcript on the clipboard. Paste manually with Command+V on macOS or Control+V on Windows/Linux.
-8. Switch cleanup mode to `Raw`, `Fast`, and `Clean` to verify the selected behavior. `Clean` requires a saved Cerebras API key and falls back to `Fast` with a warning if Cerebras cleanup fails.
+8. Use `Change hotkey` in Settings, press a new key combination, and confirm Floe re-registers it.
+9. Use `Reset default` to restore the platform default.
+10. Switch cleanup mode to `Raw`, `Fast`, and `Clean` to verify the selected behavior. `Clean` requires a saved Cerebras API key and falls back to `Fast` with a warning if Cerebras cleanup fails.
 
 Useful checks:
 
@@ -99,9 +101,20 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+## Hotkey Settings
+
+Floe uses the Tauri 2 global shortcut plugin and listens for both press and release events. The default push-to-talk hotkey is:
+
+- macOS: `CommandOrControl+Shift+Space` shown as `Command+Shift+Space`.
+- Windows/Linux: `Control+Shift+Space`.
+
+Change the hotkey from Settings with `Change hotkey`, then press the new shortcut. Press `Escape` or `Cancel` to leave the current shortcut unchanged. Floe validates the shortcut, registers it with the OS, saves it in non-secret app settings, and restores the previous working shortcut if the new one cannot be registered. `Reset default` restores the platform default.
+
+Hotkey settings are stored separately from API keys. API keys remain in the OS keychain; the hotkey and cleanup mode are non-secret app settings.
+
 ## API Keys and Cleanup Settings
 
-Groq and Cerebras API keys are stored through the operating system keychain using the Rust `keyring` crate. Each provider uses a separate keychain entry. Non-secret app settings, including cleanup mode, are stored separately in Floe's app config directory.
+Groq and Cerebras API keys are stored through the operating system keychain using the Rust `keyring` crate. Each provider uses a separate keychain entry. Non-secret app settings, including cleanup mode and global hotkey, are stored separately in Floe's app config directory.
 
 The frontend never receives a full API key. It only receives whether a key is configured and a masked preview such as `gsk_...abcd` or `csk_...abcd`.
 
@@ -120,6 +133,9 @@ If `Clean` is selected without a Cerebras API key, Floe shows a friendly error a
 - If `pnpm` is not on PATH, run commands through Corepack: `corepack pnpm ...`.
 - If `tauri:dev` fails on Linux, install the WebKitGTK and appindicator packages listed in `.github/workflows/ci.yml`.
 - If `Clean` is slower than expected, switch back to `Fast`; Clean depends on Cerebras availability, latency, rate limits, and key validity.
+- If the hotkey does not register, choose a less common shortcut; another app or the OS may already own it.
+- On macOS, allow Floe in Privacy & Security settings if global shortcuts or paste automation are blocked. Depending on the OS version, Accessibility and Input Monitoring permissions may be relevant.
+- On Windows/Linux, desktop environments and input methods can reserve shortcuts. Try `Control+Alt+Shift+Space` or another three-key combination if registration fails.
 
 ## Testing and CI
 
