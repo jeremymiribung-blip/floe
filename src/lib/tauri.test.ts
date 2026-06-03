@@ -68,7 +68,6 @@ describe("browser settings fallback", () => {
         accelerator: "Control+Shift+Space",
         label: "Control+Shift+Space",
       },
-      cleanupMode: "fast",
     });
   });
 
@@ -80,7 +79,6 @@ describe("browser settings fallback", () => {
         accelerator: "  Control+Shift+KeyA  ",
         label: "  Control+Shift+A  ",
       },
-      cleanupMode: "raw",
     });
 
     await expect(getAppSettings()).resolves.toEqual({
@@ -88,7 +86,6 @@ describe("browser settings fallback", () => {
         accelerator: "Control+Shift+KeyA",
         label: "Control+Shift+A",
       },
-      cleanupMode: "raw",
     });
   });
 
@@ -184,41 +181,32 @@ describe("browser settings fallback", () => {
     });
   });
 
-  it("persists cleanup mode and falls back to Fast when Clean has no key", async () => {
-    const { cleanupTranscript, getCleanupMode, setCleanupMode } =
-      await import("./tauri");
+  it("browser cleanupTranscript returns the raw transcript without invoking cleanup", async () => {
+    const { cleanupTranscript } = await import("./tauri");
 
-    await expect(setCleanupMode("raw")).resolves.toBe("raw");
-    await expect(getCleanupMode()).resolves.toBe("raw");
     await expect(cleanupTranscript("raw text")).resolves.toEqual({
       text: "raw text",
-      mode: "raw",
-      warning: null,
-    });
-
-    await expect(setCleanupMode("clean")).rejects.toMatchObject({
-      code: "missingCerebrasApiKey",
-    });
-    await expect(getCleanupMode()).resolves.toBe("fast");
-    await expect(cleanupTranscript("fast text")).resolves.toEqual({
-      text: "Fast text.",
-      mode: "fast",
-      warning: null,
     });
   });
 
-  it("uses offline mock Clean cleanup when a browser Cerebras key exists", async () => {
-    const { cleanupTranscript, saveCerebrasApiKey, setCleanupMode } =
+  it("default browser app settings have no cleanupMode field", async () => {
+    const { getAppSettings } = await import("./tauri");
+
+    const settings = await getAppSettings();
+
+    expect(settings).not.toHaveProperty("cleanupMode");
+    expect(JSON.stringify(settings)).not.toContain("cleanupMode");
+  });
+
+  it("clearCerebrasApiKey does not touch any cleanup mode in the browser", async () => {
+    const { clearCerebrasApiKey, getAppSettings, saveCerebrasApiKey } =
       await import("./tauri");
 
     await saveCerebrasApiKey("csk_12345678abcd");
-    await expect(setCleanupMode("clean")).resolves.toBe("clean");
+    await clearCerebrasApiKey();
+    const settings = await getAppSettings();
 
-    await expect(cleanupTranscript("clean text")).resolves.toEqual({
-      text: "Clean text.",
-      mode: "clean",
-      warning: null,
-    });
+    expect(settings).not.toHaveProperty("cleanupMode");
   });
 });
 

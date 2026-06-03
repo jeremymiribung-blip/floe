@@ -25,11 +25,8 @@ export interface CerebrasApiKeyStatus {
   maskedPreview: string | null;
 }
 
-export type CleanupMode = "raw" | "fast" | "clean";
-
 export interface AppSettings {
   hotkey: HotkeySettings;
-  cleanupMode: CleanupMode;
 }
 
 export interface HotkeySettings {
@@ -73,7 +70,6 @@ export interface SettingsError {
   code:
     | "invalidGroqApiKey"
     | "invalidCerebrasApiKey"
-    | "missingCerebrasApiKey"
     | "invalidAppSettings"
     | "secretStoreUnavailable"
     | "appSettingsUnavailable";
@@ -159,8 +155,7 @@ export interface GroqTranscriptionError {
 
 export interface TranscriptCleanupResult {
   text: string;
-  mode: CleanupMode;
-  warning: string | null;
+  warning?: string;
 }
 
 export type ClipboardErrorCode = "clipboardUnavailable" | "pasteUnavailable";

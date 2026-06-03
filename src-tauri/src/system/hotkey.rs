@@ -514,10 +514,7 @@ impl From<HotkeyError> for SettingsError {
 pub fn validate_app_hotkey_settings(settings: AppSettings) -> Result<AppSettings, SettingsError> {
     let hotkey = normalize_hotkey_settings(settings.hotkey).map_err(SettingsError::from)?;
 
-    Ok(AppSettings {
-        hotkey,
-        cleanup_mode: settings.cleanup_mode,
-    })
+    Ok(AppSettings { hotkey })
 }
 
 #[cfg(test)]
@@ -528,7 +525,7 @@ mod tests {
         default_hotkey_for_os, normalize_hotkey_settings, HotkeyError, HotkeyErrorCode,
         HotkeyManager, HotkeyRegistrar, HotkeySettings,
     };
-    use crate::settings::{AppSettings, CleanupMode, SecretStore, SettingsError, SettingsManager};
+    use crate::settings::{AppSettings, SecretStore, SettingsError, SettingsManager};
 
     #[derive(Default)]
     struct FakeRegistrar {
@@ -758,7 +755,6 @@ mod tests {
                     accelerator: "Control+Shift+B".to_string(),
                     label: String::new(),
                 },
-                cleanup_mode: CleanupMode::Raw,
             })
             .unwrap();
 
@@ -766,6 +762,5 @@ mod tests {
 
         assert_eq!(saved.hotkey.accelerator, "Control+Shift+KeyB");
         assert_eq!(saved.hotkey.label, "Control+Shift+B");
-        assert_eq!(saved.cleanup_mode, CleanupMode::Raw);
     }
 }

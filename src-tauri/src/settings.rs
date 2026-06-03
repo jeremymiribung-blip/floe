@@ -19,22 +19,11 @@ pub struct ApiKeyStatus {
 pub type GroqApiKeyStatus = ApiKeyStatus;
 pub type CerebrasApiKeyStatus = ApiKeyStatus;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum CleanupMode {
-    Raw,
-    #[default]
-    Fast,
-    Clean,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     #[serde(default)]
     pub hotkey: HotkeySettings,
-    #[serde(default)]
-    pub cleanup_mode: CleanupMode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -62,7 +51,6 @@ pub struct SettingsError {
 pub enum SettingsErrorCode {
     InvalidGroqApiKey,
     InvalidCerebrasApiKey,
-    MissingCerebrasApiKey,
     InvalidAppSettings,
     SecretStoreUnavailable,
     AppSettingsUnavailable,
@@ -182,7 +170,6 @@ impl SettingsManager {
 
     pub fn clear_cerebras_api_key(&self) -> Result<CerebrasApiKeyStatus, SettingsError> {
         self.cerebras_secret_store.clear()?;
-        self.force_fast_if_clean_without_key()?;
 
         Ok(status_from_secret(None))
     }
@@ -204,44 +191,6 @@ impl SettingsManager {
         self.app_settings_store.save(&settings)?;
 
         Ok(settings)
-    }
-
-    pub fn get_cleanup_mode(&self) -> Result<CleanupMode, SettingsError> {
-        Ok(self.get_app_settings()?.cleanup_mode)
-    }
-
-    pub fn set_cleanup_mode(
-        &self,
-        cleanup_mode: CleanupMode,
-    ) -> Result<CleanupMode, SettingsError> {
-        if cleanup_mode == CleanupMode::Clean && self.get_cerebras_api_key_secret()?.is_none() {
-            self.save_cleanup_mode(CleanupMode::Fast)?;
-
-            return Err(settings_error(
-                SettingsErrorCode::MissingCerebrasApiKey,
-                "Save a Cerebras API key before enabling Clean cleanup. Floe kept Fast cleanup selected.",
-            ));
-        }
-
-        self.save_cleanup_mode(cleanup_mode)
-    }
-
-    fn save_cleanup_mode(&self, cleanup_mode: CleanupMode) -> Result<CleanupMode, SettingsError> {
-        let mut settings = self.get_app_settings()?;
-        settings.cleanup_mode = cleanup_mode;
-        self.save_app_settings(settings)?;
-
-        Ok(cleanup_mode)
-    }
-
-    fn force_fast_if_clean_without_key(&self) -> Result<(), SettingsError> {
-        if self.get_cleanup_mode()? == CleanupMode::Clean
-            && self.get_cerebras_api_key_secret()?.is_none()
-        {
-            self.save_cleanup_mode(CleanupMode::Fast)?;
-        }
-
-        Ok(())
     }
 }
 
@@ -266,16 +215,21 @@ impl AppSettingsStore {
         }
 
         let raw = fs::read_to_string(&self.path).map_err(|_| app_settings_error())?;
-        let value =
-            serde_json::from_str::<serde_json::Value>(&raw).map_err(|_| app_settings_error())?;
-        let settings = serde_json::from_value::<AppSettings>(value).map_err(|_| {
-            settings_error(
-                SettingsErrorCode::InvalidAppSettings,
-                "App settings contain an unsupported value.",
-            )
-        })?;
+        let value: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|_| app_settings_error())?;
 
-        validate_app_settings(settings)
+        let hotkey = match value.get("hotkey") {
+            Some(hotkey_value) => serde_json::from_value::<HotkeySettings>(hotkey_value.clone())
+                .map_err(|_| {
+                    settings_error(
+                        SettingsErrorCode::InvalidAppSettings,
+                        "App settings contain an unsupported hotkey value.",
+                    )
+                })?,
+            None => HotkeySettings::default(),
+        };
+
+        Ok(AppSettings { hotkey })
     }
 
     fn save(&self, settings: &AppSettings) -> Result<(), SettingsError> {
@@ -380,9 +334,8 @@ mod tests {
     };
 
     use super::{
-        mask_api_key, ApiKeyStatus, AppSettings, CleanupMode, HotkeySettings, SecretStore,
-        SettingsError, SettingsErrorCode, SettingsManager, MAX_CEREBRAS_API_KEY_LEN,
-        MAX_GROQ_API_KEY_LEN,
+        mask_api_key, ApiKeyStatus, AppSettings, HotkeySettings, SecretStore, SettingsError,
+        SettingsErrorCode, SettingsManager, MAX_CEREBRAS_API_KEY_LEN, MAX_GROQ_API_KEY_LEN,
     };
 
     #[derive(Default)]
@@ -566,13 +519,12 @@ mod tests {
     }
 
     #[test]
-    fn app_settings_default_hotkey_and_fast_cleanup() {
+    fn app_settings_default_hotkey_only() {
         let manager = test_manager();
 
         let settings = manager.get_app_settings().unwrap();
 
         assert_eq!(settings.hotkey, HotkeySettings::default());
-        assert_eq!(settings.cleanup_mode, CleanupMode::Fast);
     }
 
     #[test]
@@ -588,48 +540,45 @@ mod tests {
         let settings = manager.get_app_settings().unwrap();
 
         assert_eq!(settings.hotkey, HotkeySettings::default());
-        assert_eq!(settings.cleanup_mode, CleanupMode::Fast);
     }
 
     #[test]
-    fn cleanup_mode_persists_and_rejects_clean_without_cerebras_key() {
-        let manager = test_manager();
-
-        assert_eq!(manager.get_cleanup_mode().unwrap(), CleanupMode::Fast);
-        assert_eq!(
-            manager.set_cleanup_mode(CleanupMode::Raw).unwrap(),
-            CleanupMode::Raw
+    fn app_settings_ignores_legacy_cleanup_mode_field() {
+        let path = unique_settings_path();
+        fs::write(
+            &path,
+            r#"{"hotkey":{"accelerator":"Ctrl+Shift+KeyA","label":"Ctrl+Shift+A"},"cleanupMode":"fast"}"#,
+        )
+        .expect("legacy settings should write");
+        let manager = SettingsManager::with_secret_stores(
+            Box::new(MemorySecretStore::default()),
+            Box::new(MemorySecretStore::default()),
+            path,
         );
-        assert_eq!(manager.get_cleanup_mode().unwrap(), CleanupMode::Raw);
 
-        let error = manager
-            .set_cleanup_mode(CleanupMode::Clean)
-            .expect_err("Clean requires a Cerebras key");
+        let settings = manager.get_app_settings().unwrap();
 
-        assert_eq!(error.code, SettingsErrorCode::MissingCerebrasApiKey);
-        assert_eq!(manager.get_cleanup_mode().unwrap(), CleanupMode::Fast);
-
-        manager
-            .save_cerebras_api_key("csk_12345678wxyz".to_string())
-            .unwrap();
-        assert_eq!(
-            manager.set_cleanup_mode(CleanupMode::Clean).unwrap(),
-            CleanupMode::Clean
-        );
-        assert_eq!(manager.get_cleanup_mode().unwrap(), CleanupMode::Clean);
+        assert_eq!(settings.hotkey.label, "Ctrl+Shift+A");
     }
 
     #[test]
-    fn clearing_cerebras_key_falls_back_from_clean_to_fast() {
-        let manager = test_manager();
+    fn app_settings_default_file_is_created_without_cleanup_mode() {
+        let path = unique_settings_path();
+        let manager = SettingsManager::with_secret_stores(
+            Box::new(MemorySecretStore::default()),
+            Box::new(MemorySecretStore::default()),
+            path.clone(),
+        );
 
         manager
-            .save_cerebras_api_key("csk_12345678wxyz".to_string())
+            .save_app_settings(AppSettings {
+                hotkey: HotkeySettings::default(),
+            })
             .unwrap();
-        manager.set_cleanup_mode(CleanupMode::Clean).unwrap();
-        manager.clear_cerebras_api_key().unwrap();
 
-        assert_eq!(manager.get_cleanup_mode().unwrap(), CleanupMode::Fast);
+        let saved_raw = fs::read_to_string(&path).expect("settings should be written");
+        assert!(!saved_raw.contains("cleanupMode"));
+        assert!(!saved_raw.contains("cleanup_mode"));
     }
 
     #[test]
@@ -650,11 +599,11 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_cleanup_mode_returns_invalid_settings_error() {
+    fn malformed_hotkey_returns_invalid_settings_error() {
         let path = unique_settings_path();
         fs::write(
             &path,
-            r#"{"hotkey":{"accelerator":"Ctrl+Space","label":"Ctrl+Space"},"cleanupMode":"turbo"}"#,
+            r#"{"hotkey":{"accelerator":42,"label":"Ctrl+Shift+Space"}}"#,
         )
         .expect("settings should write");
         let manager = SettingsManager::with_secret_stores(
@@ -665,7 +614,7 @@ mod tests {
 
         let error = manager
             .get_app_settings()
-            .expect_err("unsupported cleanup mode should fail");
+            .expect_err("malformed hotkey should fail");
 
         assert_eq!(error.code, SettingsErrorCode::InvalidAppSettings);
     }
@@ -689,10 +638,7 @@ mod tests {
             },
         ] {
             let error = manager
-                .save_app_settings(AppSettings {
-                    hotkey,
-                    cleanup_mode: CleanupMode::Fast,
-                })
+                .save_app_settings(AppSettings { hotkey })
                 .expect_err("invalid settings should fail");
 
             assert_eq!(error.code, SettingsErrorCode::InvalidAppSettings);
@@ -705,7 +651,6 @@ mod tests {
                     accelerator: too_long,
                     label: "Control+Shift+Space".to_string(),
                 },
-                cleanup_mode: CleanupMode::Fast,
             })
             .expect_err("too-long settings should fail");
 
@@ -713,7 +658,7 @@ mod tests {
     }
 
     #[test]
-    fn app_settings_save_trims_valid_hotkey_and_keeps_cleanup_mode() {
+    fn app_settings_save_trims_valid_hotkey() {
         let manager = test_manager();
 
         let saved = manager
@@ -722,13 +667,11 @@ mod tests {
                     accelerator: "  Control+Shift+A  ".to_string(),
                     label: "  Control+Shift+A  ".to_string(),
                 },
-                cleanup_mode: CleanupMode::Raw,
             })
             .expect("valid settings should save");
 
         assert_eq!(saved.hotkey.accelerator, "Control+Shift+KeyA");
         assert_eq!(saved.hotkey.label, "Control+Shift+A");
-        assert_eq!(saved.cleanup_mode, CleanupMode::Raw);
         assert_eq!(manager.get_app_settings().unwrap(), saved);
     }
 

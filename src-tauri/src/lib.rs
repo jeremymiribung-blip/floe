@@ -73,8 +73,6 @@ pub fn run() {
             commands::settings::get_cerebras_api_key_status,
             commands::settings::get_app_settings,
             commands::settings::save_app_settings,
-            commands::settings::get_cleanup_mode,
-            commands::settings::set_cleanup_mode,
             commands::settings::get_start_at_login_status,
             commands::settings::set_start_at_login_enabled,
             commands::hotkey::get_hotkey_settings,

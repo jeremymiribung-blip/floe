@@ -1,11 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { cleanupTranscript as cleanupTranscriptLocal } from "./transcriptCleanup";
 import type {
   AppSettings,
   AppStatus,
   CerebrasApiKeyStatus,
   ClipboardError,
-  CleanupMode,
   HotkeyError,
   HotkeyStatus,
   GroqTranscription,
@@ -15,7 +13,6 @@ import type {
   RecordingError,
   RecordingInfo,
   RecordingStatus,
-  SettingsError,
   StartAtLoginStatus,
   TranscriptCleanupResult,
 } from "../types/app";
@@ -40,7 +37,6 @@ let browserAppSettings: AppSettings = {
     accelerator: "Control+Shift+Space",
     label: "Control+Shift+Space",
   },
-  cleanupMode: "fast",
 };
 let browserHotkeyRegistered = true;
 let browserHotkeyRegistrationError: string | null = null;
@@ -75,13 +71,6 @@ function clipboardError(
   code: ClipboardError["code"],
   message: string,
 ): ClipboardError {
-  return { code, message };
-}
-
-function settingsError(
-  code: SettingsError["code"],
-  message: string,
-): SettingsError {
   return { code, message };
 }
 
@@ -221,14 +210,6 @@ export function clearCerebrasApiKey(): Promise<CerebrasApiKeyStatus> {
       configured: false,
       maskedPreview: null,
     };
-
-    if (browserAppSettings.cleanupMode === "clean") {
-      browserAppSettings = {
-        ...browserAppSettings,
-        cleanupMode: "fast",
-      };
-    }
-
     return Promise.resolve(browserCerebrasApiKeyStatus);
   }
 
@@ -255,7 +236,6 @@ export function saveAppSettings(settings: AppSettings): Promise<AppSettings> {
   if (!isTauriRuntime()) {
     browserAppSettings = {
       hotkey: normalizeBrowserHotkey(settings.hotkey.accelerator),
-      cleanupMode: settings.cleanupMode,
     };
     return Promise.resolve(browserAppSettings);
   }
@@ -349,40 +329,6 @@ export function setStartAtLoginEnabled(
   }
 
   return invoke("set_start_at_login_enabled", { enabled });
-}
-
-export function getCleanupMode(): Promise<CleanupMode> {
-  if (!isTauriRuntime()) {
-    return Promise.resolve(browserAppSettings.cleanupMode);
-  }
-
-  return invoke("get_cleanup_mode");
-}
-
-export function setCleanupMode(cleanupMode: CleanupMode): Promise<CleanupMode> {
-  if (!isTauriRuntime()) {
-    if (cleanupMode === "clean" && !browserCerebrasApiKeyStatus.configured) {
-      browserAppSettings = {
-        ...browserAppSettings,
-        cleanupMode: "fast",
-      };
-
-      return Promise.reject(
-        settingsError(
-          "missingCerebrasApiKey",
-          "Save a Cerebras API key before enabling Clean cleanup. Floe kept Fast cleanup selected.",
-        ),
-      );
-    }
-
-    browserAppSettings = {
-      ...browserAppSettings,
-      cleanupMode,
-    };
-    return Promise.resolve(cleanupMode);
-  }
-
-  return invoke("set_cleanup_mode", { cleanupMode });
 }
 
 export function runManualTestStub(action: string): Promise<ManualTestResult> {
@@ -512,32 +458,7 @@ export function cleanupTranscript(
   transcript: string,
 ): Promise<TranscriptCleanupResult> {
   if (!isTauriRuntime()) {
-    const mode = browserAppSettings.cleanupMode;
-
-    if (mode === "raw") {
-      return Promise.resolve({
-        text: transcript,
-        mode,
-        warning: null,
-      });
-    }
-
-    if (mode === "clean" && browserCerebrasApiKeyStatus.configured) {
-      return Promise.resolve({
-        text: cleanupTranscriptLocal(transcript),
-        mode,
-        warning: null,
-      });
-    }
-
-    return Promise.resolve({
-      text: cleanupTranscriptLocal(transcript),
-      mode: "fast",
-      warning:
-        mode === "clean"
-          ? "Clean cleanup needs a Cerebras API key. Floe used Fast cleanup instead."
-          : null,
-    });
+    return Promise.resolve({ text: transcript });
   }
 
   return invoke("cleanup_transcript", { transcript });

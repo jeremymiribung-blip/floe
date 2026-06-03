@@ -56,6 +56,22 @@ describe("SettingsView", () => {
     expect(container.textContent).not.toContain("Behavior");
   });
 
+  it("does not render any cleanup mode selector", () => {
+    const { container } = renderSettingsView();
+
+    expect(container.textContent).not.toContain("Cleanup");
+    expect(container.textContent).not.toContain("Behavior");
+    expect(container.querySelector("select")).toBeNull();
+    expect(container.querySelector('input[name="cleanupMode"]')).toBeNull();
+  });
+
+  it("keeps the privacy note about sending text to Cerebras", () => {
+    const { container } = renderSettingsView();
+
+    expect(container.textContent).toContain("Audio → Groq");
+    expect(container.textContent).toContain("Text → Cerebras");
+  });
+
   it("toggles start at login and updates the visible state", async () => {
     const onChange = vi.fn(async () => undefined);
     const { container } = renderSettingsView({ onChange });

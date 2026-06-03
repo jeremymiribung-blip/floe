@@ -2,8 +2,7 @@ use tauri::{AppHandle, Runtime, State};
 
 use crate::{
     settings::{
-        AppSettings, CerebrasApiKeyStatus, CleanupMode, GroqApiKeyStatus, SettingsError,
-        SettingsManager,
+        AppSettings, CerebrasApiKeyStatus, GroqApiKeyStatus, SettingsError, SettingsManager,
     },
     system::autostart::{
         get_start_at_login_status_with, set_start_at_login_enabled_with, StartAtLoginError,
@@ -66,19 +65,6 @@ pub fn save_app_settings(
     settings: AppSettings,
 ) -> Result<AppSettings, SettingsError> {
     manager.save_app_settings(settings)
-}
-
-#[tauri::command]
-pub fn get_cleanup_mode(manager: State<'_, SettingsManager>) -> Result<CleanupMode, SettingsError> {
-    manager.get_cleanup_mode()
-}
-
-#[tauri::command]
-pub fn set_cleanup_mode(
-    manager: State<'_, SettingsManager>,
-    cleanup_mode: CleanupMode,
-) -> Result<CleanupMode, SettingsError> {
-    manager.set_cleanup_mode(cleanup_mode)
 }
 
 #[tauri::command]

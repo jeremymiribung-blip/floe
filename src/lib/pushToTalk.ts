@@ -123,7 +123,7 @@ export class PushToTalkController {
       this.callbacks.onStateChange("cleaning");
       const cleanup = await this.cleanTranscriptOrUseRaw(transcription.text);
       const finalText = cleanup.text;
-      this.callbacks.onErrorChange(cleanup.warning);
+      this.callbacks.onErrorChange(cleanup.warning ?? null);
       this.callbacks.onTranscriptChange(finalText);
 
       if (finalText.trim().length === 0) {
@@ -162,8 +162,7 @@ export class PushToTalkController {
     } catch {
       return {
         text: transcript,
-        mode: "raw",
-        warning: "Cleanup failed. Floe pasted the raw transcript instead.",
+        warning: "Cleanup failed",
       };
     }
   }

@@ -96,8 +96,6 @@ function createHarness(options: HarnessOptions = {}) {
         calls.push("clean");
         return {
           text: `${transcript}.`,
-          mode: "fast" as const,
-          warning: null,
         };
       }),
   );
@@ -278,8 +276,6 @@ describe("PushToTalkController", () => {
       cleanupTranscript: (transcript) => {
         return Promise.resolve({
           text: transcript.trim(),
-          mode: "fast",
-          warning: null,
         });
       },
     });
@@ -293,14 +289,13 @@ describe("PushToTalkController", () => {
     expect(lastState(harness.states)).toBe("ready");
   });
 
-  it("surfaces cleanup warnings while still pasting fallback text", async () => {
+  it("surfaces cleanup warnings while still pasting cleaned text", async () => {
     const harness = createHarness({
       cleanupTranscript: async (transcript) => {
         harness.calls.push("clean");
         return {
           text: `${transcript}.`,
-          mode: "fast",
-          warning: "Cerebras failed. Floe used Fast cleanup instead.",
+          warning: "Cleanup failed",
         };
       },
     });
@@ -310,9 +305,7 @@ describe("PushToTalkController", () => {
 
     expect(harness.copyTextToClipboard).toHaveBeenCalledWith("raw transcript.");
     expect(harness.pasteClipboard).toHaveBeenCalledTimes(1);
-    expect(harness.errors).toContain(
-      "Cerebras failed. Floe used Fast cleanup instead.",
-    );
+    expect(harness.errors).toContain("Cleanup failed");
     expect(lastState(harness.states)).toBe("pasted");
   });
 
