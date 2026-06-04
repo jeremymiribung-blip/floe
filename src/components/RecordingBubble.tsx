@@ -1,12 +1,14 @@
 import { AudioBars } from "./AudioBars";
-import { useRecordingLevel } from "../hooks/useRecordingLevel";
+import { useBubbleRecordingActive } from "../hooks/useBubbleRecordingActive";
+import { useRollingWaveform } from "../hooks/useRollingWaveform";
 
 export function RecordingBubble() {
-  const level = useRecordingLevel(true);
+  const active = useBubbleRecordingActive();
+  const samples = useRollingWaveform(active);
 
   return (
     <div className="recording-bubble" role="presentation">
-      <AudioBars level={level} />
+      <AudioBars samples={samples} />
     </div>
   );
 }

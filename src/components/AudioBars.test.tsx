@@ -2,6 +2,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { AudioBars } from "./AudioBars";
+import {
+  createSilentWaveformBuffer,
+  WAVEFORM_SAMPLE_COUNT,
+} from "../lib/waveform";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
@@ -22,41 +26,45 @@ afterEach(() => {
 });
 
 describe("AudioBars", () => {
-  it("renders 12 bars", () => {
-    const { container } = render(<AudioBars level={0.5} />);
+  it("renders the rolling waveform buffer", () => {
+    const { container } = render(
+      <AudioBars samples={createSilentWaveformBuffer()} />,
+    );
 
     const bars = container.querySelectorAll(".audio-bars__bar");
-    expect(bars.length).toBe(12);
+    expect(bars.length).toBe(WAVEFORM_SAMPLE_COUNT);
   });
 
   it("renders no text nodes", () => {
-    const { container } = render(<AudioBars level={0.5} />);
+    const { container } = render(
+      <AudioBars samples={createSilentWaveformBuffer()} />,
+    );
 
     expect(container.textContent).toBe("");
   });
 
   it("uses the audio-bars container class", () => {
-    const { container } = render(<AudioBars level={0.5} />);
+    const { container } = render(
+      <AudioBars samples={createSilentWaveformBuffer()} />,
+    );
 
     expect(container.querySelector(".audio-bars")).not.toBeNull();
   });
 
-  it("taller bars at the center than at the edges for the same level", () => {
-    const { container } = render(<AudioBars level={1} />);
+  it("renders louder samples as taller bars", () => {
+    const { container } = render(<AudioBars samples={[0, 1]} />);
 
     const bars = Array.from(
       container.querySelectorAll<HTMLElement>(".audio-bars__bar"),
     );
-    const centerIndex = Math.floor(bars.length / 2);
-    const edgeIndex = 0;
-    const centerHeight = parseHeightPercent(bars[centerIndex].style.height);
-    const edgeHeight = parseHeightPercent(bars[edgeIndex].style.height);
+    const quietHeight = parseHeightPercent(bars[0].style.height);
+    const loudHeight = parseHeightPercent(bars[1].style.height);
 
-    expect(centerHeight).toBeGreaterThan(edgeHeight);
+    expect(loudHeight).toBeGreaterThan(quietHeight);
   });
 
   it("clamps silent level to a minimum bar height", () => {
-    const { container } = render(<AudioBars level={0} />);
+    const { container } = render(<AudioBars samples={[0, 0, 0]} />);
 
     const bars = Array.from(
       container.querySelectorAll<HTMLElement>(".audio-bars__bar"),
@@ -68,7 +76,7 @@ describe("AudioBars", () => {
   });
 
   it("clamps to maximum at high levels", () => {
-    const { container } = render(<AudioBars level={1.5} />);
+    const { container } = render(<AudioBars samples={[1.5, 2]} />);
 
     const bars = Array.from(
       container.querySelectorAll<HTMLElement>(".audio-bars__bar"),
@@ -80,7 +88,7 @@ describe("AudioBars", () => {
   });
 
   it("renders zero height for negative level", () => {
-    const { container } = render(<AudioBars level={-1} />);
+    const { container } = render(<AudioBars samples={[-1, -0.5]} />);
 
     const bars = Array.from(
       container.querySelectorAll<HTMLElement>(".audio-bars__bar"),
