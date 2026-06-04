@@ -18,7 +18,12 @@ export function HotkeyRow({
   const [capturing, setCapturing] = useState(false);
   const [captureMessage, setCaptureMessage] = useState<string | null>(null);
 
-  const label = hotkeyStatus?.configured.label ?? "Loading";
+  const label =
+    hotkeyStatus === null
+      ? "Loading"
+      : hotkeyStatus.isRegistered
+        ? hotkeyStatus.label
+        : (hotkeyStatus.error ?? hotkeyStatus.label);
 
   const cancelCapture = useCallback(() => {
     setCapturing(false);

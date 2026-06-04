@@ -24,17 +24,19 @@ afterEach(() => {
 });
 
 const registeredStatus: HotkeyStatus = {
-  configured: { accelerator: "Control+Space", label: "Ctrl + Space" },
-  registered: { accelerator: "Control+Space", label: "Ctrl + Space" },
+  accelerator: "Control+Space",
+  label: "Ctrl + Space",
+  isDefault: true,
   isRegistered: true,
-  registrationError: null,
+  error: null,
 };
 
 const unregisteredStatus: HotkeyStatus = {
-  configured: { accelerator: "Control+Space", label: "Ctrl + Space" },
-  registered: null,
+  accelerator: "Control+Space",
+  label: "Ctrl + Space",
+  isDefault: true,
   isRegistered: false,
-  registrationError: "Hotkey unavailable",
+  error: "Hotkey unavailable",
 };
 
 describe("HotkeySetupStep", () => {
@@ -49,6 +51,7 @@ describe("HotkeySetupStep", () => {
   it("disables Continue while a hotkey is not registered", () => {
     const { container } = renderStep({ hotkeyStatus: unregisteredStatus });
 
+    expect(container.textContent).toContain("Hotkey unavailable");
     expect(continueButton(container).hasAttribute("disabled")).toBe(true);
   });
 

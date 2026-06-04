@@ -38,8 +38,9 @@ Floe does not include streaming, rolling transcription, audio chunking, overlap 
 ## Current Scaffold Scope
 
 - Minimal Tauri 2 app named Floe.
-- React UI with a first-run onboarding flow (Groq API key, then hotkey), a minimal overview (wordmark, current state, current hotkey, `Settings`), and a settings view (`API Key`, `Hotkey`, `Start at login`, `Privacy`).
+- React UI with a first-run onboarding flow (Groq API key, then hotkey), a minimal overview (wordmark, current state, current hotkey, `Settings`, `Diagnostics`), and a settings view (`API Key`, `Hotkey`, `Start at login`, `Privacy`).
 - Rust commands for app status, secure settings, recording checks, Groq transcription, Groq cleanup, clipboard writes, and paste automation.
+- A small local `Diagnostics` action that copies the latest pipeline timing JSON.
 - Tauri 2 global shortcut registration with press/release events for push-to-talk.
 - Optional start-at-login support that launches Floe hidden in the background.
 - GitHub Actions CI for frontend and Rust checks.
@@ -50,7 +51,7 @@ The first time Floe is opened, the main window shows a short onboarding flow ins
 
 1. **Groq API key** — enter the Groq API key and press `Continue`. The key is stored in the OS keychain and the app moves to the next step.
 2. **Hotkey** — confirm the default hotkey (`Ctrl + Space` on Windows/Linux, `Option + Space` on macOS) or press `Change` to capture a new shortcut, then press `Continue`.
-3. **Overview** — the minimal overview appears, showing the wordmark, status, hotkey, and a `Settings` link.
+3. **Overview** — the minimal overview appears, showing the wordmark, status, hotkey, `Settings`, and `Diagnostics`.
 
 Floe only calls Groq for transcription and cleanup; it does not validate the API key with a network call during onboarding. If the key is cleared later or the hotkey becomes invalid, Floe returns to the matching onboarding step. The main overview never shows cleanup modes, provider labels, or behavior settings. Floe is Groq-only.
 
@@ -65,6 +66,7 @@ Floe is Groq-only and intentionally minimal. There are no cleanup modes, no Beha
 - The Groq API key is stored locally in the OS keychain.
 - Enabling Start at login does not access the microphone, start recording, call Groq, paste text, or send transcript data on startup.
 - Debug logging avoids raw audio, raw transcripts, full API keys, auth headers, and private transcripts.
+- Local diagnostics are kept in memory only and are never sent anywhere. They include timing and outcome metadata, but not transcripts, cleaned text, raw audio, API keys, auth headers, raw Groq responses, or clipboard contents.
 
 ## Setup
 

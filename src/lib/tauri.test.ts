@@ -29,6 +29,8 @@ describe("browser transcription fallback", () => {
 
     await expect(transcribeLatestRecording()).resolves.toEqual({
       text: "Mock transcript from the latest manual recording.",
+      model: "whisper-large-v3-turbo",
+      retryCount: 0,
     });
   });
 
@@ -119,17 +121,16 @@ describe("browser settings fallback", () => {
     const { getHotkeySettings, setHotkey } = await import("./tauri");
 
     await expect(setHotkey("Control+Space")).resolves.toMatchObject({
-      configured: {
-        accelerator: "Control+Space",
-        label: "Ctrl + Space",
-      },
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isDefault: true,
       isRegistered: true,
+      error: null,
     });
     await expect(getHotkeySettings()).resolves.toMatchObject({
-      registered: {
-        accelerator: "Control+Space",
-        label: "Ctrl + Space",
-      },
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isRegistered: true,
     });
     vi.restoreAllMocks();
   });
@@ -152,23 +153,20 @@ describe("browser settings fallback", () => {
       await import("./tauri");
 
     await expect(setHotkey("Control+Shift+KeyB")).resolves.toMatchObject({
-      configured: {
-        accelerator: "Control+Shift+KeyB",
-        label: "Ctrl + Shift + B",
-      },
+      accelerator: "Control+Shift+KeyB",
+      label: "Ctrl + Shift + B",
+      isDefault: false,
       isRegistered: true,
     });
     await expect(getHotkeySettings()).resolves.toMatchObject({
-      registered: {
-        accelerator: "Control+Shift+KeyB",
-        label: "Ctrl + Shift + B",
-      },
+      accelerator: "Control+Shift+KeyB",
+      label: "Ctrl + Shift + B",
+      isRegistered: true,
     });
     await expect(resetHotkeyToDefault()).resolves.toMatchObject({
-      configured: {
-        accelerator: "Control+Space",
-        label: "Ctrl + Space",
-      },
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isDefault: true,
     });
     vi.restoreAllMocks();
   });
@@ -227,6 +225,10 @@ describe("browser settings fallback", () => {
 
     await expect(cleanupTranscript("raw text")).resolves.toEqual({
       text: "raw text",
+      model: "openai/gpt-oss-20b",
+      retryCount: 0,
+      validationMs: 0,
+      fallbackUsed: false,
     });
   });
 

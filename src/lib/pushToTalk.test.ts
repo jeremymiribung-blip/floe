@@ -16,6 +16,8 @@ const latestRecording: RecordingInfo = {
   sampleCount: 48_000,
   wavByteCount: 96_044,
   wavBitsPerSample: 16,
+  recordingStopToEncodeStartMs: 0,
+  audioEncodeMs: 4,
   startedAtMs: 1_000,
   endedAtMs: 2_000,
   maxDurationReached: false,
@@ -61,6 +63,12 @@ function createHarness(options: HarnessOptions = {}) {
   const states: AppState[] = [];
   const errors: Array<string | null> = [];
   const transcripts: Array<string | null> = [];
+  const diagnostics: Array<string | null> = [];
+  let now = 1_000;
+  const nowMs = () => {
+    now += 10;
+    return now;
+  };
 
   const startRecording = vi.fn(
     options.startRecording ??
@@ -87,7 +95,7 @@ function createHarness(options: HarnessOptions = {}) {
     options.transcribeLatestRecording ??
       (async () => {
         calls.push("transcribe");
-        return { text: "raw transcript" };
+        return transcription("raw transcript");
       }),
   );
   const cleanupTranscript = vi.fn(
@@ -128,8 +136,12 @@ function createHarness(options: HarnessOptions = {}) {
       onRecordingStatusChange: () => undefined,
       onLatestRecordingChange: () => undefined,
       onTranscriptChange: (transcript) => transcripts.push(transcript),
+      onDiagnosticsChange: (json) => diagnostics.push(json),
       errorMessage: errorMessage,
     },
+    nowMs,
+    () => new Date("2026-01-01T12:00:00.000Z"),
+    "windows",
   );
 
   return {
@@ -137,6 +149,7 @@ function createHarness(options: HarnessOptions = {}) {
     controller,
     copyTextToClipboard,
     errors,
+    diagnostics,
     getRecordingStatus,
     pasteClipboard,
     startRecording,
@@ -271,7 +284,7 @@ describe("PushToTalkController", () => {
     const harness = createHarness({
       transcribeLatestRecording: async () => {
         harness.calls.push("transcribe");
-        return { text: "   " };
+        return transcription("   ");
       },
       cleanupTranscript: (transcript) => {
         return Promise.resolve({
@@ -408,9 +421,118 @@ describe("PushToTalkController", () => {
 
     expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
 
-    resolveTranscription({ text: "raw transcript" });
+    resolveTranscription(transcription("raw transcript"));
     await firstRelease;
 
+    expect(lastState(harness.states)).toBe("pasted");
+  });
+
+  it("emits sanitized diagnostics for a successful pipeline", async () => {
+    const harness = createHarness();
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const diagnostics = latestDiagnostics(harness.diagnostics);
+    expect(diagnostics.app).toBe("Floe");
+    expect(diagnostics.trace_version).toBe(1);
+    expect(diagnostics.created_at).toBe("2026-01-01T12:00:00.000Z");
+    expect(diagnostics.platform).toBe("windows");
+    expect(diagnostics.pipeline.total_ms).toBeGreaterThan(0);
+    expect(diagnostics.pipeline.hotkey_to_recording_start_ms).toBeGreaterThan(
+      0,
+    );
+    expect(diagnostics.pipeline.audio_encode_ms).toBe(4);
+    expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
+    expect(diagnostics.models.cleanup).toBe("openai/gpt-oss-20b");
+    expect(diagnostics.audio).toEqual({
+      format: "wav",
+      sample_rate: 48_000,
+      channels: 1,
+      bytes: 96_044,
+    });
+    expect(diagnostics.result.stt_success).toBe(true);
+    expect(diagnostics.result.cleanup_success).toBe(true);
+    expect(diagnostics.result.clipboard_success).toBe(true);
+    expect(diagnostics.result.paste_success).toBe(true);
+    expect(diagnostics.bottleneck.stage).toBeTruthy();
+  });
+
+  it("does not put transcript, cleaned text, keys, auth headers, audio, or clipboard content in diagnostics", async () => {
+    const privateTranscript = "private raw transcript gsk_secret";
+    const cleanedText = "private cleaned text authorization bearer";
+    const harness = createHarness({
+      transcribeLatestRecording: async () => transcription(privateTranscript),
+      cleanupTranscript: async () => ({
+        text: cleanedText,
+        model: "openai/gpt-oss-20b",
+        retryCount: 0,
+        validationMs: 1,
+        fallbackUsed: false,
+      }),
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const json = harness.controller.getLatestDiagnosticsJson() ?? "";
+    expect(json).not.toContain(privateTranscript);
+    expect(json).not.toContain(cleanedText);
+    expect(json).not.toContain("gsk_secret");
+    expect(json.toLowerCase()).not.toContain("authorization");
+    expect(json.toLowerCase()).not.toContain("bearer");
+    expect(json).not.toContain("rawAudio");
+    expect(json).not.toContain("clipboard contents");
+  });
+
+  it("tracks failed STT with a sanitized stage and retry count", async () => {
+    const error = new Error("Transcription failed") as Error & {
+      code?: string;
+      model?: string;
+      retryCount?: number;
+    };
+    error.code = "timeout";
+    error.model = "whisper-large-v3-turbo";
+    error.retryCount = 2;
+    const harness = createHarness({
+      transcribeLatestRecording: async () => {
+        throw error;
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const diagnostics = latestDiagnostics(harness.diagnostics);
+    expect(diagnostics.result.stt_success).toBe(false);
+    expect(diagnostics.result.error_stage).toBe("stt");
+    expect(diagnostics.result.sanitized_error_code).toBe("timeout");
+    expect(diagnostics.retries.stt).toBe(2);
+    expect(diagnostics.result.clipboard_success).toBe(false);
+  });
+
+  it("tracks cleanup fallback and validation failure without stopping paste", async () => {
+    const harness = createHarness({
+      cleanupTranscript: async (transcript) => ({
+        text: transcript,
+        warning: "Cleanup failed",
+        model: "openai/gpt-oss-20b",
+        retryCount: 0,
+        validationMs: 2,
+        fallbackUsed: true,
+        errorCode: "validationFailed",
+      }),
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const diagnostics = latestDiagnostics(harness.diagnostics);
+    expect(diagnostics.result.cleanup_success).toBe(false);
+    expect(diagnostics.result.cleanup_fallback_used).toBe(true);
+    expect(diagnostics.result.error_stage).toBe("cleanup_validation");
+    expect(diagnostics.result.sanitized_error_code).toBe("validationFailed");
+    expect(diagnostics.pipeline.cleanup_validation_ms).toBe(2);
     expect(lastState(harness.states)).toBe("pasted");
   });
 });
@@ -427,4 +549,21 @@ function errorMessage(caught: unknown): string {
 
 function lastState(states: AppState[]): AppState | undefined {
   return states[states.length - 1];
+}
+
+function transcription(text: string): GroqTranscription {
+  return {
+    text,
+    model: "whisper-large-v3-turbo",
+    retryCount: 0,
+  };
+}
+
+function latestDiagnostics(entries: Array<string | null>) {
+  const json = entries[entries.length - 1];
+  if (!json) {
+    throw new Error("Diagnostics were not emitted");
+  }
+
+  return JSON.parse(json);
 }

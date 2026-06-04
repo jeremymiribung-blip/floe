@@ -4,7 +4,7 @@ use std::{
         Arc, Mutex,
     },
     thread::JoinHandle,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -29,6 +29,8 @@ pub struct RecordingInfo {
     pub sample_count: u64,
     pub wav_byte_count: u64,
     pub wav_bits_per_sample: u16,
+    pub recording_stop_to_encode_start_ms: u64,
+    pub audio_encode_ms: u64,
     pub started_at_ms: u64,
     pub ended_at_ms: u64,
     pub max_duration_reached: bool,
@@ -132,7 +134,6 @@ impl Drop for LevelEmitterHandle {
 
 struct CompletedRecording {
     info: RecordingInfo,
-    _samples: Vec<f32>,
     wav_bytes: Vec<u8>,
 }
 
@@ -748,22 +749,22 @@ impl RecordingBuffer {
             sample_count: self.samples.len() as u64,
             wav_byte_count: 0,
             wav_bits_per_sample: WAV_BITS_PER_SAMPLE,
+            recording_stop_to_encode_start_ms: 0,
+            audio_encode_ms: 0,
             started_at_ms: self.started_at_ms,
             ended_at_ms,
             max_duration_reached: ended_reason == RecordingEndReason::MaxDuration,
             ended_reason,
         };
+        let encode_started = Instant::now();
         let wav_bytes = encode_pcm16_wav(&self.samples, self.sample_rate, OUTPUT_CHANNELS)?;
         let info = RecordingInfo {
             wav_byte_count: wav_bytes.len() as u64,
+            audio_encode_ms: elapsed_ms(encode_started),
             ..info
         };
 
-        Ok(CompletedRecording {
-            info,
-            _samples: self.samples,
-            wav_bytes,
-        })
+        Ok(CompletedRecording { info, wav_bytes })
     }
 
     fn snapshot_completed(
@@ -791,22 +792,22 @@ impl RecordingBuffer {
             sample_count: self.samples.len() as u64,
             wav_byte_count: 0,
             wav_bits_per_sample: WAV_BITS_PER_SAMPLE,
+            recording_stop_to_encode_start_ms: 0,
+            audio_encode_ms: 0,
             started_at_ms: self.started_at_ms,
             ended_at_ms,
             max_duration_reached: ended_reason == RecordingEndReason::MaxDuration,
             ended_reason,
         };
+        let encode_started = Instant::now();
         let wav_bytes = encode_pcm16_wav(&self.samples, self.sample_rate, OUTPUT_CHANNELS)?;
         let info = RecordingInfo {
             wav_byte_count: wav_bytes.len() as u64,
+            audio_encode_ms: elapsed_ms(encode_started),
             ..info
         };
 
-        Ok(CompletedRecording {
-            info,
-            _samples: self.samples.clone(),
-            wav_bytes,
-        })
+        Ok(CompletedRecording { info, wav_bytes })
     }
 }
 
@@ -1033,6 +1034,10 @@ fn now_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1136,6 +1141,8 @@ mod tests {
         assert_eq!(completed.info.duration_ms, 3);
         assert_eq!(completed.info.wav_byte_count, 50);
         assert_eq!(completed.info.wav_bits_per_sample, 16);
+        assert_eq!(completed.info.recording_stop_to_encode_start_ms, 0);
+        assert!(completed.info.audio_encode_ms < 1_000);
         assert_eq!(completed.info.started_at_ms, 10_000);
         assert_eq!(completed.info.ended_at_ms, 10_003);
     }

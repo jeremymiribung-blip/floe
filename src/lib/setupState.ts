@@ -17,6 +17,20 @@ export function computeSetupState(
   return "ready";
 }
 
+export function computeVisibleSetupState(
+  groqStatus: GroqApiKeyStatus | null,
+  hotkeyStatus: HotkeyStatus | null,
+  showHotkeyStepAfterGroqSave: boolean,
+): SetupState {
+  const base = computeSetupState(groqStatus, hotkeyStatus);
+
+  if (base === "ready" && showHotkeyStepAfterGroqSave) {
+    return "setup_hotkey";
+  }
+
+  return base;
+}
+
 export function isReady(state: SetupState): boolean {
   return state === "ready";
 }

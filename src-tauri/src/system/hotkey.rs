@@ -12,14 +12,16 @@ use crate::{
 };
 
 pub const HOTKEY_EVENT: &str = "floe-global-hotkey-state";
+const HOTKEY_UNAVAILABLE: &str = "Hotkey unavailable";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyStatus {
-    pub configured: HotkeySettings,
-    pub registered: Option<HotkeySettings>,
+    pub accelerator: String,
+    pub label: String,
+    pub is_default: bool,
     pub is_registered: bool,
-    pub registration_error: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -194,26 +196,7 @@ impl HotkeyManager {
 
         match self.register_hotkey(registrar, configured.clone()) {
             Ok(()) => self.status(configured),
-            Err(primary_error) => {
-                let default_hotkey = default_hotkey_settings();
-
-                if configured.accelerator != default_hotkey.accelerator {
-                    match self.register_hotkey(registrar, default_hotkey.clone()) {
-                        Ok(()) => {
-                            self.set_registered(
-                                Some(default_hotkey),
-                                Some(primary_error.message.clone()),
-                            );
-                            return self.status(configured);
-                        }
-                        Err(default_error) => {
-                            self.set_registered(None, Some(default_error.message));
-                        }
-                    }
-                }
-
-                self.status(configured)
-            }
+            Err(_) => self.status(configured),
         }
     }
 
@@ -246,12 +229,25 @@ impl HotkeyManager {
 
     fn status(&self, configured: HotkeySettings) -> HotkeyStatus {
         let state = self.state.lock().unwrap();
+        let is_registered = state
+            .registered
+            .as_ref()
+            .is_some_and(|registered| registered.accelerator == configured.accelerator);
+        let error = if is_registered {
+            None
+        } else {
+            state
+                .registration_error
+                .as_ref()
+                .map(|_| HOTKEY_UNAVAILABLE.to_string())
+        };
 
         HotkeyStatus {
-            configured,
-            registered: state.registered.clone(),
-            is_registered: state.registered.is_some(),
-            registration_error: state.registration_error.clone(),
+            is_default: configured.accelerator == default_hotkey_settings().accelerator,
+            accelerator: configured.accelerator,
+            label: configured.label,
+            is_registered,
+            error,
         }
     }
 
@@ -687,6 +683,24 @@ mod tests {
     }
 
     #[test]
+    fn status_reports_configured_default_and_registration_state() {
+        let manager = HotkeyManager::default();
+        let settings = test_settings_manager();
+        let mut registrar = FakeRegistrar::default();
+
+        manager
+            .register_hotkey(&mut registrar, current_default())
+            .unwrap();
+        let status = manager.get_hotkey_settings(&settings).unwrap();
+
+        assert_eq!(status.accelerator, current_default().accelerator);
+        assert_eq!(status.label, current_default().label);
+        assert!(status.is_default);
+        assert!(status.is_registered);
+        assert_eq!(status.error, None);
+    }
+
+    #[test]
     fn changing_hotkey_persists_and_registers_new_value() {
         let manager = HotkeyManager::default();
         let settings = test_settings_manager();
@@ -699,8 +713,10 @@ mod tests {
             .set_hotkey(&settings, &mut registrar, "Control+Alt+KeyA".to_string())
             .unwrap();
 
-        assert_eq!(status.configured.label, "Ctrl + Alt + A");
-        assert_eq!(status.registered.unwrap().label, "Ctrl + Alt + A");
+        assert_eq!(status.accelerator, "Control+Alt+KeyA");
+        assert_eq!(status.label, "Ctrl + Alt + A");
+        assert!(!status.is_default);
+        assert!(status.is_registered);
         assert_eq!(
             settings.get_app_settings().unwrap().hotkey.label,
             "Ctrl + Alt + A"
@@ -720,15 +736,18 @@ mod tests {
             .reset_hotkey_to_default(&settings, &mut registrar)
             .unwrap();
 
-        assert_eq!(status.configured, current_default());
+        assert_eq!(status.accelerator, current_default().accelerator);
+        assert_eq!(status.label, current_default().label);
+        assert!(status.is_default);
+        assert!(status.is_registered);
         assert_eq!(
             settings.get_app_settings().unwrap().hotkey,
-            status.configured
+            current_default()
         );
     }
 
     #[test]
-    fn startup_falls_back_to_default_when_saved_registration_fails() {
+    fn startup_reports_unavailable_when_saved_registration_fails() {
         let manager = HotkeyManager::default();
         let configured = normalize_for_test("Control+Alt+KeyA").unwrap();
         let mut registrar = FakeRegistrar::default();
@@ -736,9 +755,11 @@ mod tests {
 
         let status = manager.register_or_fallback(&mut registrar, configured.clone());
 
-        assert_eq!(status.configured, configured);
-        assert_eq!(status.registered.unwrap(), current_default());
-        assert!(status.registration_error.is_some());
+        assert_eq!(status.accelerator, configured.accelerator);
+        assert_eq!(status.label, configured.label);
+        assert!(!status.is_default);
+        assert!(!status.is_registered);
+        assert_eq!(status.error.as_deref(), Some("Hotkey unavailable"));
     }
 
     #[test]
@@ -763,7 +784,9 @@ mod tests {
         let status = manager.get_hotkey_settings(&settings).unwrap();
 
         assert_eq!(error.code, HotkeyErrorCode::AlreadyInUse);
-        assert_eq!(status.registered.unwrap(), default_hotkey);
+        assert_eq!(status.accelerator, default_hotkey.accelerator);
+        assert_eq!(status.label, default_hotkey.label);
+        assert!(status.is_registered);
         assert_eq!(
             settings.get_app_settings().unwrap().hotkey,
             current_default()

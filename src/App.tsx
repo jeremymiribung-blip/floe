@@ -5,7 +5,7 @@ import { OnboardingView } from "./components/OnboardingView";
 import { OverviewView } from "./components/OverviewView";
 import { SettingsView } from "./components/SettingsView";
 import { PushToTalkController } from "./lib/pushToTalk";
-import { computeSetupState } from "./lib/setupState";
+import { computeVisibleSetupState } from "./lib/setupState";
 import { statusLabel } from "./lib/status";
 import {
   bubbleHide,
@@ -50,7 +50,11 @@ export default function App() {
   const [startAtLoginStatus, setStartAtLoginStatus] =
     useState<StartAtLoginStatus | null>(null);
   const [groqStatus, setGroqStatus] = useState<GroqApiKeyStatus | null>(null);
-  const [hotkeyStepConfirmed, setHotkeyStepConfirmed] = useState(false);
+  const [latestDiagnosticsJson, setLatestDiagnosticsJson] = useState<
+    string | null
+  >(null);
+  const [showHotkeyStepAfterGroqSave, setShowHotkeyStepAfterGroqSave] =
+    useState(false);
   const controllerRef = useRef<PushToTalkController | null>(null);
 
   if (controllerRef.current === null) {
@@ -70,6 +74,7 @@ export default function App() {
         onRecordingStatusChange: () => undefined,
         onLatestRecordingChange: () => undefined,
         onTranscriptChange: () => undefined,
+        onDiagnosticsChange: setLatestDiagnosticsJson,
         errorMessage: pushToTalkErrorMessage,
       },
     );
@@ -156,20 +161,27 @@ export default function App() {
     };
   }, []);
 
-  const handleSaveGroq = useCallback(async (value: string) => {
-    try {
-      const next = await saveGroqApiKey(value);
-      setGroqStatus(next);
-      setError(null);
-    } catch (caught) {
-      throw settingsErrorForOnboarding(caught);
-    }
-  }, []);
+  const handleSaveGroq = useCallback(
+    async (value: string) => {
+      const wasConfigured = groqStatus?.configured === true;
+
+      try {
+        const next = await saveGroqApiKey(value);
+        setGroqStatus(next);
+        setShowHotkeyStepAfterGroqSave(!wasConfigured);
+        setError(null);
+      } catch (caught) {
+        throw settingsErrorForOnboarding(caught);
+      }
+    },
+    [groqStatus],
+  );
 
   const handleClearGroq = useCallback(async () => {
     try {
       const next = await clearGroqApiKey();
       setGroqStatus(next);
+      setShowHotkeyStepAfterGroqSave(false);
       setError(null);
     } catch (caught) {
       setError(settingsErrorMessage(caught));
@@ -209,17 +221,15 @@ export default function App() {
   }, []);
 
   const handleCompleteOnboarding = useCallback(() => {
-    setHotkeyStepConfirmed(true);
+    setShowHotkeyStepAfterGroqSave(false);
     setView("overview");
   }, []);
 
-  const setupState = (() => {
-    const base = computeSetupState(groqStatus, hotkeyStatus);
-    if (base === "ready" && !hotkeyStepConfirmed) {
-      return "setup_hotkey" as ReturnType<typeof computeSetupState>;
-    }
-    return base;
-  })();
+  const setupState = computeVisibleSetupState(
+    groqStatus,
+    hotkeyStatus,
+    showHotkeyStepAfterGroqSave,
+  );
 
   useEffect(() => {
     if (setupState === "ready") {
@@ -227,7 +237,7 @@ export default function App() {
     }
   }, [setupState]);
 
-  const hotkeyLabel = hotkeyStatus?.configured.label ?? "Loading";
+  const hotkeyLabel = hotkeyStatus?.label ?? "Loading";
   const flowBusy =
     appState === "transcribing" ||
     appState === "cleaning" ||
@@ -283,6 +293,8 @@ export default function App() {
         status={dynamicStatus}
         hotkeyLabel={hotkeyLabel}
         onOpenSettings={() => setView("settings")}
+        diagnosticsJson={latestDiagnosticsJson}
+        onCopyDiagnostics={copyTextToClipboard}
       />
     </AppShell>
   );

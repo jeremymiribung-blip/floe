@@ -17,6 +17,8 @@ describe("recording helpers", () => {
       sampleCount: 120_000,
       wavByteCount: 240_044,
       wavBitsPerSample: 16,
+      recordingStopToEncodeStartMs: 0,
+      audioEncodeMs: 1,
       startedAtMs: 1_000,
       endedAtMs: 3_500,
       maxDurationReached: false,

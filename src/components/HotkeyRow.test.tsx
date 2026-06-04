@@ -38,6 +38,20 @@ describe("HotkeyRow", () => {
     ).toBe("Reset");
   });
 
+  it("shows unavailable status when the configured hotkey is not registered", () => {
+    const { container } = renderHotkeyRow({
+      hotkeyStatus: {
+        accelerator: "Control+Space",
+        label: "Ctrl + Space",
+        isDefault: true,
+        isRegistered: false,
+        error: "Hotkey unavailable",
+      },
+    });
+
+    expect(container.textContent).toContain("Hotkey unavailable");
+  });
+
   it("enters capture mode and saves a valid shortcut", async () => {
     const onChange = vi.fn().mockResolvedValue(undefined);
     const { container } = renderHotkeyRow({ onChange });
@@ -169,10 +183,11 @@ describe("HotkeyRow", () => {
 
 function makeStatus(label: string, accelerator: string): HotkeyStatus {
   return {
-    configured: { label, accelerator },
-    registered: { label, accelerator },
+    accelerator,
+    label,
+    isDefault: accelerator === "Control+Space",
     isRegistered: true,
-    registrationError: null,
+    error: null,
   };
 }
 

@@ -39,6 +39,7 @@ describe("OverviewView", () => {
       ".overview-view__settings",
     ) as HTMLButtonElement | null;
     expect(settings?.textContent).toBe("Settings");
+    expect(container.textContent).toContain("Diagnostics");
   });
 
   it("calls onOpenSettings when Settings is clicked", () => {
@@ -85,12 +86,72 @@ describe("OverviewView", () => {
     expect(container.textContent).toContain("Hotkey unavailable");
     expect(container.querySelector(".overview-view__error")).toBeNull();
   });
+
+  it("shows no diagnostics before the first trace", () => {
+    const { container } = renderOverview({
+      status: "Ready",
+      hotkeyLabel: "Ctrl + Space",
+      onOpenSettings: vi.fn(),
+      diagnosticsJson: null,
+    });
+
+    act(() => {
+      diagnosticsButton(container).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    expect(container.textContent).toContain("No diagnostics yet");
+    expect(
+      container.querySelector(".diagnostics-popover__json"),
+    ).not.toBeNull();
+    expect(container.querySelector("table")).toBeNull();
+    expect(container.querySelector("canvas")).toBeNull();
+  });
+
+  it("copies diagnostics JSON from the compact popover", async () => {
+    const onCopyDiagnostics = vi.fn(async (json: string) => {
+      expect(typeof json).toBe("string");
+    });
+    const diagnosticsJson = JSON.stringify({ app: "Floe", trace_version: 1 });
+    const { container } = renderOverview({
+      status: "Ready",
+      hotkeyLabel: "Ctrl + Space",
+      onOpenSettings: vi.fn(),
+      onCopyDiagnostics,
+      diagnosticsJson,
+    });
+
+    act(() => {
+      diagnosticsButton(container).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    await act(async () => {
+      (
+        container.querySelector(
+          ".diagnostics-popover__button",
+        ) as HTMLButtonElement
+      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const copiedJson = onCopyDiagnostics.mock.calls[0]?.[0];
+    expect(typeof copiedJson).toBe("string");
+    expect(JSON.parse(copiedJson as string)).toEqual({
+      app: "Floe",
+      trace_version: 1,
+    });
+    expect(container.textContent).toContain("Copied");
+  });
 });
 
 interface RenderOptions {
   status: string;
   hotkeyLabel: string;
   onOpenSettings: () => void;
+  diagnosticsJson?: string | null;
+  onCopyDiagnostics?: (json: string) => Promise<void> | void;
 }
 
 function renderOverview(options: RenderOptions) {
@@ -106,9 +167,23 @@ function renderOverview(options: RenderOptions) {
         status={options.status}
         hotkeyLabel={options.hotkeyLabel}
         onOpenSettings={options.onOpenSettings}
+        diagnosticsJson={options.diagnosticsJson ?? null}
+        onCopyDiagnostics={options.onCopyDiagnostics ?? vi.fn()}
       />,
     );
   });
 
   return { container };
+}
+
+function diagnosticsButton(container: HTMLElement): HTMLButtonElement {
+  const button = container.querySelector(
+    ".overview-view__diagnostics",
+  ) as HTMLButtonElement | null;
+
+  if (!button) {
+    throw new Error("Diagnostics button not found");
+  }
+
+  return button;
 }

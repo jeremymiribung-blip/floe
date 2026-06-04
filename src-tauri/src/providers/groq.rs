@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::{header::HeaderMap, multipart, StatusCode};
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,8 @@ const CLEANUP_SYSTEM_PROMPT: &str = "You are a transcript cleanup engine for a p
 #[serde(rename_all = "camelCase")]
 pub struct GroqTranscription {
     pub text: String,
+    pub model: String,
+    pub retry_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -26,6 +28,8 @@ pub struct GroqTranscription {
 pub struct GroqTranscriptionError {
     pub code: GroqTranscriptionErrorCode,
     pub message: String,
+    pub model: String,
+    pub retry_count: u32,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -127,11 +131,17 @@ impl GroqTranscriptionClient {
 
         for attempt in 1..=self.max_attempts {
             match self.send_once(api_key.trim(), &wav_bytes).await {
-                Ok(transcription) => return Ok(transcription),
+                Ok(mut transcription) => {
+                    transcription.retry_count = retry_count_for_attempt(attempt);
+                    return Ok(transcription);
+                }
                 Err(attempt_error) if attempt_error.retryable && attempt < self.max_attempts => {
                     tokio::time::sleep(retry_delay(self.retry_backoff, attempt)).await;
                 }
-                Err(attempt_error) => return Err(attempt_error.error),
+                Err(mut attempt_error) => {
+                    attempt_error.error.retry_count = retry_count_for_attempt(attempt);
+                    return Err(attempt_error.error);
+                }
             }
         }
 
@@ -192,7 +202,11 @@ fn parse_transcription_response(body: &str) -> Result<GroqTranscription, GroqTra
         ));
     };
 
-    Ok(GroqTranscription { text })
+    Ok(GroqTranscription {
+        text,
+        model: GROQ_STT_MODEL.to_string(),
+        retry_count: 0,
+    })
 }
 
 fn classify_request_error(error: reqwest::Error) -> AttemptError {
@@ -271,6 +285,10 @@ fn retry_delay(base: Duration, attempt: usize) -> Duration {
     base.saturating_mul(multiplier)
 }
 
+fn retry_count_for_attempt(attempt: usize) -> u32 {
+    attempt.saturating_sub(1).try_into().unwrap_or(u32::MAX)
+}
+
 fn retryable(error: GroqTranscriptionError) -> AttemptError {
     AttemptError {
         error,
@@ -296,6 +314,23 @@ fn groq_error(code: GroqTranscriptionErrorCode, message: &'static str) -> GroqTr
     GroqTranscriptionError {
         code,
         message: message.to_string(),
+        model: GROQ_STT_MODEL.to_string(),
+        retry_count: 0,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GroqCleanup {
+    pub text: String,
+    pub model: String,
+    pub retry_count: u32,
+    pub validation_ms: u64,
+}
+
+impl PartialEq<&str> for GroqCleanup {
+    fn eq(&self, other: &&str) -> bool {
+        self.text == *other
     }
 }
 
@@ -304,6 +339,9 @@ fn groq_error(code: GroqTranscriptionErrorCode, message: &'static str) -> GroqTr
 pub struct GroqCleanupError {
     pub code: GroqCleanupErrorCode,
     pub message: String,
+    pub model: String,
+    pub retry_count: u32,
+    pub validation_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -414,7 +452,7 @@ impl GroqCleanupClient {
         &self,
         api_key: &str,
         transcript: &str,
-    ) -> Result<String, GroqCleanupError> {
+    ) -> Result<GroqCleanup, GroqCleanupError> {
         let api_key = api_key.trim();
 
         if api_key.is_empty() {
@@ -433,7 +471,10 @@ impl GroqCleanupClient {
 
         for attempt in 1..=self.max_attempts {
             match self.send_once(api_key, transcript).await {
-                Ok(cleaned) => return Ok(cleaned),
+                Ok(mut cleaned) => {
+                    cleaned.retry_count = retry_count_for_attempt(attempt);
+                    return Ok(cleaned);
+                }
                 Err(attempt_error) if attempt_error.retryable && attempt < self.max_attempts => {
                     let delay = attempt_error
                         .retry_after
@@ -441,7 +482,10 @@ impl GroqCleanupClient {
                         .min(MAX_RETRY_DELAY);
                     tokio::time::sleep(delay).await;
                 }
-                Err(attempt_error) => return Err(attempt_error.error),
+                Err(mut attempt_error) => {
+                    attempt_error.error.retry_count = retry_count_for_attempt(attempt);
+                    return Err(attempt_error.error);
+                }
             }
         }
 
@@ -452,7 +496,7 @@ impl GroqCleanupClient {
         &self,
         api_key: &str,
         transcript: &str,
-    ) -> Result<String, CleanupAttemptError> {
+    ) -> Result<GroqCleanup, CleanupAttemptError> {
         let response = self
             .http_client
             .post(self.chat_completions_url())
@@ -512,11 +556,15 @@ fn cleanup_request_body(transcript: &str) -> ChatCompletionRequest {
 }
 
 fn cleanup_max_tokens_for(transcript: &str) -> u32 {
-    let estimated_tokens = transcript.chars().count().saturating_div(3) + 64;
-    estimated_tokens.clamp(64, 2048) as u32
+    let input_word_count = transcript.split_whitespace().count();
+    input_word_count
+        .saturating_mul(2)
+        .clamp(64, 512)
+        .try_into()
+        .unwrap_or(512)
 }
 
-fn parse_cleanup_response(body: &str, input: &str) -> Result<String, GroqCleanupError> {
+fn parse_cleanup_response(body: &str, input: &str) -> Result<GroqCleanup, GroqCleanupError> {
     let response: ChatCompletionResponse = serde_json::from_str(body).map_err(|_| {
         groq_cleanup_error(
             GroqCleanupErrorCode::MalformedResponse,
@@ -535,7 +583,18 @@ fn parse_cleanup_response(body: &str, input: &str) -> Result<String, GroqCleanup
             )
         })?;
 
-    validate_cleanup_output(input, &content)
+    let validation_started = Instant::now();
+    let text = validate_cleanup_output(input, &content).map_err(|mut error| {
+        error.validation_ms = elapsed_ms(validation_started);
+        error
+    })?;
+
+    Ok(GroqCleanup {
+        text,
+        model: GROQ_CLEANUP_MODEL.to_string(),
+        retry_count: 0,
+        validation_ms: elapsed_ms(validation_started),
+    })
 }
 
 pub fn validate_cleanup_output(input: &str, output: &str) -> Result<String, GroqCleanupError> {
@@ -695,7 +754,14 @@ fn groq_cleanup_error(code: GroqCleanupErrorCode, message: &'static str) -> Groq
     GroqCleanupError {
         code,
         message: message.to_string(),
+        model: GROQ_CLEANUP_MODEL.to_string(),
+        retry_count: 0,
+        validation_ms: 0,
     }
+}
+
+fn elapsed_ms(started: Instant) -> u64 {
+    started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -712,7 +778,7 @@ mod tests {
     };
 
     use super::{
-        GroqCleanupClient, GroqCleanupErrorCode, GroqTranscriptionClient,
+        cleanup_max_tokens_for, GroqCleanupClient, GroqCleanupErrorCode, GroqTranscriptionClient,
         GroqTranscriptionErrorCode, CHAT_COMPLETIONS_PATH, GROQ_CLEANUP_MODEL, GROQ_STT_MODEL,
         TRANSCRIPTIONS_PATH,
     };
@@ -728,6 +794,8 @@ mod tests {
             .expect("transcription should succeed");
 
         assert_eq!(result.text, "hello");
+        assert_eq!(result.model, GROQ_STT_MODEL);
+        assert_eq!(result.retry_count, 0);
         assert_eq!(server.request_count(), 1);
         let request = server.requests()[0].clone();
         let request_lower = request.to_ascii_lowercase();
@@ -864,6 +932,8 @@ mod tests {
             .expect_err("rate limit should fail after retries");
 
         assert_eq!(error.code, GroqTranscriptionErrorCode::RateLimit);
+        assert_eq!(error.model, GROQ_STT_MODEL);
+        assert_eq!(error.retry_count, 2);
         assert_eq!(server.request_count(), 3);
     }
 
@@ -881,6 +951,7 @@ mod tests {
             .expect("rate-limit retry should succeed");
 
         assert_eq!(result.text, "ok after rate limit");
+        assert_eq!(result.retry_count, 1);
         assert_eq!(server.request_count(), 2);
         assert!(server
             .requests()
@@ -1015,6 +1086,9 @@ mod tests {
             .expect("cleanup should succeed");
 
         assert_eq!(result, "Cleaned transcript.");
+        assert_eq!(result.text, "Cleaned transcript.");
+        assert_eq!(result.model, GROQ_CLEANUP_MODEL);
+        assert_eq!(result.retry_count, 0);
         assert_eq!(server.request_count(), 1);
         let request = server.requests()[0].clone();
         let request_lower = request.to_ascii_lowercase();
@@ -1126,6 +1200,8 @@ mod tests {
             .expect_err("rate limit should fail after retries");
 
         assert_eq!(error.code, GroqCleanupErrorCode::RateLimit);
+        assert_eq!(error.model, GROQ_CLEANUP_MODEL);
+        assert_eq!(error.retry_count, 2);
         assert_eq!(server.request_count(), 3);
     }
 
@@ -1143,6 +1219,7 @@ mod tests {
             .expect("cleanup should eventually succeed");
 
         assert_eq!(result, "Cleaned.");
+        assert_eq!(result.retry_count, 1);
         assert_eq!(server.request_count(), 2);
     }
 
@@ -1195,7 +1272,19 @@ mod tests {
             .expect_err("markdown output should fail");
 
         assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+        assert_eq!(error.model, GROQ_CLEANUP_MODEL);
         assert_eq!(server.request_count(), 1);
+    }
+
+    #[test]
+    fn cleanup_token_limit_uses_bounded_word_count() {
+        assert_eq!(cleanup_max_tokens_for("short text"), 64);
+
+        let medium = "word ".repeat(100);
+        assert_eq!(cleanup_max_tokens_for(&medium), 200);
+
+        let large = "word ".repeat(300);
+        assert_eq!(cleanup_max_tokens_for(&large), 512);
     }
 
     #[tokio::test]

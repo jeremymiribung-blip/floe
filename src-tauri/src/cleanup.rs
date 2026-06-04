@@ -2,7 +2,10 @@ use std::future::Future;
 
 use serde::Serialize;
 
-use crate::{providers::groq::GroqCleanupError, settings::SettingsManager};
+use crate::{
+    providers::groq::{GroqCleanup, GroqCleanupError, GroqCleanupErrorCode},
+    settings::SettingsManager,
+};
 
 const CLEANUP_FAILED_WARNING: &str = "Cleanup failed";
 
@@ -12,20 +15,44 @@ pub struct TranscriptCleanupResult {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    pub model: String,
+    pub retry_count: u32,
+    pub validation_ms: u64,
+    pub fallback_used: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<GroqCleanupErrorCode>,
 }
 
 impl TranscriptCleanupResult {
-    fn from_cleaned(text: String) -> Self {
+    fn from_cleaned(cleaned: GroqCleanup) -> Self {
         Self {
-            text,
+            text: cleaned.text,
             warning: None,
+            model: cleaned.model,
+            retry_count: cleaned.retry_count,
+            validation_ms: cleaned.validation_ms,
+            fallback_used: false,
+            error_code: None,
         }
     }
 
-    fn fallback(text: String) -> Self {
+    fn fallback(text: String, error: Option<GroqCleanupError>) -> Self {
+        let model = error
+            .as_ref()
+            .map(|error| error.model.clone())
+            .unwrap_or_else(|| "openai/gpt-oss-20b".to_string());
+        let retry_count = error.as_ref().map(|error| error.retry_count).unwrap_or(0);
+        let validation_ms = error.as_ref().map(|error| error.validation_ms).unwrap_or(0);
+        let error_code = error.map(|error| error.code);
+
         Self {
             text,
             warning: Some(CLEANUP_FAILED_WARNING.to_string()),
+            model,
+            retry_count,
+            validation_ms,
+            fallback_used: true,
+            error_code,
         }
     }
 }
@@ -49,17 +76,17 @@ pub async fn cleanup_transcript_with<F, Fut>(
 ) -> TranscriptCleanupResult
 where
     F: FnOnce(String, String) -> Fut,
-    Fut: Future<Output = Result<String, GroqCleanupError>>,
+    Fut: Future<Output = Result<GroqCleanup, GroqCleanupError>>,
 {
     let api_key = match manager.get_groq_api_key_secret() {
         Ok(Some(api_key)) => api_key,
-        Ok(None) => return TranscriptCleanupResult::fallback(transcript),
-        Err(_) => return TranscriptCleanupResult::fallback(transcript),
+        Ok(None) => return TranscriptCleanupResult::fallback(transcript, None),
+        Err(_) => return TranscriptCleanupResult::fallback(transcript, None),
     };
 
     match clean_with_groq(api_key, transcript.clone()).await {
         Ok(cleaned) => TranscriptCleanupResult::from_cleaned(cleaned),
-        Err(_) => TranscriptCleanupResult::fallback(transcript),
+        Err(error) => TranscriptCleanupResult::fallback(transcript, Some(error)),
     }
 }
 
@@ -72,7 +99,7 @@ mod tests {
 
     use super::cleanup_transcript_with;
     use crate::{
-        providers::groq::{GroqCleanupError, GroqCleanupErrorCode},
+        providers::groq::{GroqCleanup, GroqCleanupError, GroqCleanupErrorCode},
         settings::{SecretStore, SettingsError, SettingsManager},
     };
 
@@ -110,7 +137,7 @@ mod tests {
             |api_key, transcript| async move {
                 assert_eq!(api_key, "gsk_12345678wxyz");
                 assert_eq!(transcript, "raw transcript");
-                Ok("Cleaned transcript.".to_string())
+                Ok(test_cleanup("Cleaned transcript."))
             },
         )
         .await;
@@ -120,6 +147,11 @@ mod tests {
             super::TranscriptCleanupResult {
                 text: "Cleaned transcript.".to_string(),
                 warning: None,
+                model: "openai/gpt-oss-20b".to_string(),
+                retry_count: 0,
+                validation_ms: 1,
+                fallback_used: false,
+                error_code: None,
             }
         );
     }
@@ -136,6 +168,8 @@ mod tests {
 
         assert_eq!(result.text, "raw transcript");
         assert_eq!(result.warning.as_deref(), Some("Cleanup failed"));
+        assert!(result.fallback_used);
+        assert_eq!(result.error_code, None);
     }
 
     #[tokio::test]
@@ -162,6 +196,8 @@ mod tests {
 
             assert_eq!(result.text, "fallback text");
             assert_eq!(result.warning.as_deref(), Some("Cleanup failed"));
+            assert!(result.fallback_used);
+            assert_eq!(result.error_code, Some(code));
         }
     }
 
@@ -177,13 +213,22 @@ mod tests {
         let result =
             cleanup_transcript_with(&manager, "untouched text".to_string(), |_, _| async move {
                 CALLS.fetch_add(1, Ordering::SeqCst);
-                Ok("unused".to_string())
+                Ok(test_cleanup("unused"))
             })
             .await;
 
         assert_eq!(CALLS.load(Ordering::SeqCst), 0);
         assert_eq!(result.text, "untouched text");
         assert_eq!(result.warning.as_deref(), Some("Cleanup failed"));
+    }
+
+    fn test_cleanup(text: &str) -> GroqCleanup {
+        GroqCleanup {
+            text: text.to_string(),
+            model: "openai/gpt-oss-20b".to_string(),
+            retry_count: 0,
+            validation_ms: 1,
+        }
     }
 
     fn test_manager() -> SettingsManager {

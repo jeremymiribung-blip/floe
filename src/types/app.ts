@@ -30,10 +30,11 @@ export interface HotkeySettings {
 }
 
 export interface HotkeyStatus {
-  configured: HotkeySettings;
-  registered: HotkeySettings | null;
+  accelerator: string;
+  label: string;
+  isDefault: boolean;
   isRegistered: boolean;
-  registrationError: string | null;
+  error: string | null;
 }
 
 export interface HotkeyError {
@@ -107,6 +108,8 @@ export interface RecordingInfo {
   sampleCount: number;
   wavByteCount: number;
   wavBitsPerSample: 16;
+  recordingStopToEncodeStartMs: number;
+  audioEncodeMs: number;
   startedAtMs: number;
   endedAtMs: number;
   maxDurationReached: boolean;
@@ -140,16 +143,35 @@ export type GroqTranscriptionErrorCode =
 
 export interface GroqTranscription {
   text: string;
+  model: string;
+  retryCount: number;
 }
 
 export interface GroqTranscriptionError {
   code: GroqTranscriptionErrorCode;
   message: string;
+  model?: string;
+  retryCount?: number;
 }
 
 export interface TranscriptCleanupResult {
   text: string;
   warning?: string;
+  model?: string;
+  retryCount?: number;
+  validationMs?: number;
+  fallbackUsed?: boolean;
+  errorCode?:
+    | "missingApiKey"
+    | "invalidApiKey"
+    | "rateLimit"
+    | "timeout"
+    | "apiUnreachable"
+    | "malformedResponse"
+    | "invalidRequest"
+    | "emptyTranscript"
+    | "validationFailed"
+    | "serverError";
 }
 
 export type ClipboardErrorCode = "clipboardUnavailable" | "pasteUnavailable";

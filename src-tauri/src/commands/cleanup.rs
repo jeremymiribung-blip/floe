@@ -6,9 +6,9 @@ use crate::{
 };
 
 #[tauri::command]
-pub fn cleanup_transcript(
+pub async fn cleanup_transcript(
     manager: State<'_, SettingsManager>,
     transcript: String,
-) -> TranscriptCleanupResult {
-    tauri::async_runtime::block_on(cleanup_transcript_impl(&manager, transcript))
+) -> Result<TranscriptCleanupResult, String> {
+    Ok(cleanup_transcript_impl(&manager, transcript).await)
 }

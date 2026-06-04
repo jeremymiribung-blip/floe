@@ -2,10 +2,16 @@ import type {
   AppState,
   ClipboardError,
   GroqTranscription,
+  GroqTranscriptionError,
   RecordingInfo,
   RecordingStatus,
   TranscriptCleanupResult,
 } from "../types/app";
+import {
+  createPipelineDiagnostics,
+  diagnosticsToJson,
+  type PipelineStage,
+} from "./diagnostics";
 
 export type ShortcutState = "Pressed" | "Released";
 
@@ -25,6 +31,7 @@ export interface PushToTalkCallbacks {
   onRecordingStatusChange: (status: RecordingStatus) => void;
   onLatestRecordingChange: (recording: RecordingInfo) => void;
   onTranscriptChange: (transcript: string | null) => void;
+  onDiagnosticsChange?: (json: string | null) => void;
   errorMessage: (caught: unknown) => string;
 }
 
@@ -34,11 +41,21 @@ export class PushToTalkController {
   private releaseAfterStart = false;
   private recording = false;
   private finishing = false;
+  private activeTraceStartedAt = 0;
+  private hotkeyToRecordingStartMs = 0;
+  private latestDiagnosticsJson: string | null = null;
 
   constructor(
     private readonly dependencies: PushToTalkDependencies,
     private readonly callbacks: PushToTalkCallbacks,
+    private readonly nowMs: () => number = defaultNowMs,
+    private readonly createdAt: () => Date = () => new Date(),
+    private readonly platform: string = defaultPlatform(),
   ) {}
+
+  getLatestDiagnosticsJson(): string | null {
+    return this.latestDiagnosticsJson;
+  }
 
   async handleShortcutState(state: ShortcutState): Promise<void> {
     if (state === "Pressed") {
@@ -55,11 +72,11 @@ export class PushToTalkController {
     }
 
     this.hotkeyDown = true;
-
     if (this.startInFlight || this.recording || this.finishing) {
       return;
     }
 
+    this.activeTraceStartedAt = this.nowMs();
     await this.startRecording();
   }
 
@@ -87,6 +104,7 @@ export class PushToTalkController {
     try {
       const status = await this.dependencies.startRecording();
       this.recording = true;
+      this.hotkeyToRecordingStartMs = this.nowMs() - this.activeTraceStartedAt;
       this.callbacks.onRecordingStatusChange(status);
       this.callbacks.onStateChange("recording");
     } catch (caught) {
@@ -110,18 +128,56 @@ export class PushToTalkController {
 
     this.finishing = true;
     this.callbacks.onErrorChange(null);
+    const totalStartedAt = this.activeTraceStartedAt || this.nowMs();
+    let latestRecording: RecordingInfo | null = null;
+    let transcription: GroqTranscription | null = null;
+    let transcriptionError: Partial<GroqTranscriptionError> | null = null;
+    let cleanup: TranscriptCleanupResult | null = null;
+    let cleanupFallbackUsed = false;
+    let cleanupValidationMs = 0;
+    let sttDurationMs = 0;
+    let cleanupDurationMs = 0;
+    let clipboardWriteMs = 0;
+    let pasteAttemptMs = 0;
+    let clipboardSuccess = false;
+    let pasteSuccess = false;
+    let copiedOnly = false;
+    let errorStage: PipelineStage | null = null;
+    let sanitizedErrorCode: string | null = null;
 
     try {
-      const latestRecording = await this.dependencies.stopRecording();
+      latestRecording = await this.dependencies.stopRecording();
       this.recording = false;
       this.callbacks.onLatestRecordingChange(latestRecording);
       await this.refreshRecordingStatus();
 
       this.callbacks.onStateChange("transcribing");
-      const transcription = await this.dependencies.transcribeLatestRecording();
+      const sttStartedAt = this.nowMs();
+      try {
+        transcription = await this.dependencies.transcribeLatestRecording();
+      } catch (caught) {
+        sttDurationMs = this.nowMs() - sttStartedAt;
+        transcriptionError = caught as Partial<GroqTranscriptionError>;
+        errorStage = "stt";
+        sanitizedErrorCode = sanitizedCode(caught);
+        throw caught;
+      }
+      sttDurationMs = this.nowMs() - sttStartedAt;
 
       this.callbacks.onStateChange("cleaning");
-      const cleanup = await this.cleanTranscriptOrUseRaw(transcription.text);
+      const cleanupStartedAt = this.nowMs();
+      cleanup = await this.cleanTranscriptOrUseRaw(transcription.text);
+      cleanupDurationMs = this.nowMs() - cleanupStartedAt;
+      cleanupFallbackUsed =
+        cleanup.fallbackUsed === true || cleanup.warning === "Cleanup failed";
+      cleanupValidationMs = cleanup.validationMs ?? 0;
+      if (cleanupFallbackUsed && cleanup.errorCode) {
+        errorStage =
+          cleanup.errorCode === "validationFailed"
+            ? "cleanup_validation"
+            : "cleanup";
+        sanitizedErrorCode = cleanup.errorCode;
+      }
       const finalText = cleanup.text;
       this.callbacks.onErrorChange(cleanup.warning ?? null);
       this.callbacks.onTranscriptChange(finalText);
@@ -132,23 +188,66 @@ export class PushToTalkController {
       }
 
       this.callbacks.onStateChange("pasting");
+      let clipboardStartedAt = 0;
+      let pasteStartedAt = 0;
       try {
+        clipboardStartedAt = this.nowMs();
         await this.dependencies.copyTextToClipboard(finalText);
+        clipboardWriteMs = this.nowMs() - clipboardStartedAt;
+        clipboardSuccess = true;
+        pasteStartedAt = this.nowMs();
         await this.dependencies.pasteClipboard();
+        pasteAttemptMs = this.nowMs() - pasteStartedAt;
+        pasteSuccess = true;
         this.callbacks.onStateChange("pasted");
       } catch (caught) {
         const maybeClipboardError = caught as Partial<ClipboardError>;
+        if (clipboardSuccess) {
+          pasteAttemptMs = this.nowMs() - pasteStartedAt;
+          errorStage = "paste";
+        } else {
+          clipboardWriteMs = this.nowMs() - clipboardStartedAt;
+          errorStage = "clipboard";
+        }
+        sanitizedErrorCode = sanitizedCode(caught);
         if (maybeClipboardError.code === "pasteUnavailable") {
           this.callbacks.onErrorChange(null);
           this.callbacks.onStateChange("copied");
+          copiedOnly = true;
           return;
         }
         throw caught;
       }
     } catch (caught) {
+      if (errorStage === null) {
+        errorStage = "recording";
+        sanitizedErrorCode = sanitizedCode(caught);
+      }
       this.callbacks.onErrorChange(this.callbacks.errorMessage(caught));
       this.callbacks.onStateChange("error");
     } finally {
+      this.storeDiagnostics({
+        createdAt: this.createdAt(),
+        platform: this.platform,
+        totalMs: this.nowMs() - totalStartedAt,
+        hotkeyToRecordingStartMs: this.hotkeyToRecordingStartMs,
+        recordingInfo: latestRecording,
+        sttDurationMs,
+        stt: transcription,
+        sttError: transcriptionError,
+        cleanupDurationMs,
+        cleanup,
+        cleanupFallbackUsed,
+        cleanupErrorCode: cleanup?.errorCode ?? null,
+        cleanupValidationMs,
+        clipboardWriteMs,
+        pasteAttemptMs,
+        clipboardSuccess,
+        pasteSuccess,
+        copiedOnly,
+        errorStage,
+        sanitizedErrorCode,
+      });
       this.recording = false;
       this.finishing = false;
     }
@@ -159,10 +258,17 @@ export class PushToTalkController {
   ): Promise<TranscriptCleanupResult> {
     try {
       return await this.dependencies.cleanupTranscript(transcript);
-    } catch {
+    } catch (caught) {
       return {
         text: transcript,
         warning: "Cleanup failed",
+        model: "openai/gpt-oss-20b",
+        retryCount: 0,
+        validationMs: 0,
+        fallbackUsed: true,
+        errorCode: sanitizedCode(
+          caught,
+        ) as TranscriptCleanupResult["errorCode"],
       };
     }
   }
@@ -176,4 +282,46 @@ export class PushToTalkController {
       // Recording already stopped; status refresh should not block transcription.
     }
   }
+
+  private storeDiagnostics(
+    input: Parameters<typeof createPipelineDiagnostics>[0],
+  ): void {
+    const diagnostics = createPipelineDiagnostics(input);
+    this.latestDiagnosticsJson = diagnosticsToJson(diagnostics);
+    this.callbacks.onDiagnosticsChange?.(this.latestDiagnosticsJson);
+  }
+}
+
+function sanitizedCode(caught: unknown): string | null {
+  const maybeCode = caught as Partial<{ code: string; errorCode: string }>;
+
+  if (typeof maybeCode.code === "string") {
+    return maybeCode.code;
+  }
+  if (typeof maybeCode.errorCode === "string") {
+    return maybeCode.errorCode;
+  }
+
+  return null;
+}
+
+function defaultNowMs(): number {
+  return performance.now();
+}
+
+function defaultPlatform(): string {
+  if (typeof navigator !== "undefined" && navigator.userAgent) {
+    const userAgent = navigator.userAgent.toLowerCase();
+    if (userAgent.includes("windows")) {
+      return "windows";
+    }
+    if (userAgent.includes("mac")) {
+      return "macos";
+    }
+    if (userAgent.includes("linux")) {
+      return "linux";
+    }
+  }
+
+  return "unknown";
 }

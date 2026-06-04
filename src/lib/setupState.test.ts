@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { GroqApiKeyStatus, HotkeyStatus } from "../types/app";
-import { computeSetupState, isReady } from "./setupState";
+import {
+  computeSetupState,
+  computeVisibleSetupState,
+  isReady,
+} from "./setupState";
 
 const groqConfigured: GroqApiKeyStatus = {
   configured: true,
@@ -13,17 +17,19 @@ const groqMissing: GroqApiKeyStatus = {
 };
 
 const hotkeyRegistered: HotkeyStatus = {
-  configured: { accelerator: "Control+Space", label: "Ctrl + Space" },
-  registered: { accelerator: "Control+Space", label: "Ctrl + Space" },
+  accelerator: "Control+Space",
+  label: "Ctrl + Space",
+  isDefault: true,
   isRegistered: true,
-  registrationError: null,
+  error: null,
 };
 
 const hotkeyUnregistered: HotkeyStatus = {
-  configured: { accelerator: "Control+Space", label: "Ctrl + Space" },
-  registered: null,
+  accelerator: "Control+Space",
+  label: "Ctrl + Space",
+  isDefault: true,
   isRegistered: false,
-  registrationError: "Hotkey unavailable",
+  error: "Hotkey unavailable",
 };
 
 describe("computeSetupState", () => {
@@ -55,6 +61,26 @@ describe("computeSetupState", () => {
     expect(computeSetupState(groqConfigured, hotkeyUnregistered)).toBe(
       "setup_hotkey",
     );
+  });
+});
+
+describe("computeVisibleSetupState", () => {
+  it("lets returning users skip the Hotkey step when setup is ready", () => {
+    expect(
+      computeVisibleSetupState(groqConfigured, hotkeyRegistered, false),
+    ).toBe("ready");
+  });
+
+  it("shows the Hotkey step once after first-time Groq setup", () => {
+    expect(
+      computeVisibleSetupState(groqConfigured, hotkeyRegistered, true),
+    ).toBe("setup_hotkey");
+  });
+
+  it("keeps unavailable hotkeys on the Hotkey step regardless of the session flag", () => {
+    expect(
+      computeVisibleSetupState(groqConfigured, hotkeyUnregistered, false),
+    ).toBe("setup_hotkey");
   });
 });
 

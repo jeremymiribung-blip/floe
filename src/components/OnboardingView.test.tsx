@@ -24,10 +24,11 @@ afterEach(() => {
 });
 
 const registeredStatus: HotkeyStatus = {
-  configured: { accelerator: "Control+Space", label: "Ctrl + Space" },
-  registered: { accelerator: "Control+Space", label: "Ctrl + Space" },
+  accelerator: "Control+Space",
+  label: "Ctrl + Space",
+  isDefault: true,
   isRegistered: true,
-  registrationError: null,
+  error: null,
 };
 
 describe("OnboardingView", () => {

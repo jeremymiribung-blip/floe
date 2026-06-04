@@ -18,7 +18,12 @@ export function HotkeySetupStep({
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const label = hotkeyStatus?.configured.label ?? "Loading";
+  const label =
+    hotkeyStatus === null
+      ? "Loading"
+      : hotkeyStatus.isRegistered
+        ? hotkeyStatus.label
+        : (hotkeyStatus.error ?? hotkeyStatus.label);
   const canContinue =
     !busy && !capturing && hotkeyStatus?.isRegistered === true;
 

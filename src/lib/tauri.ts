@@ -78,11 +78,15 @@ function hotkeyError(code: HotkeyError["code"], message: string): HotkeyError {
 }
 
 function browserHotkeyStatus(): HotkeyStatus {
+  const hotkey = browserAppSettings.hotkey;
+  const defaultHotkey = browserDefaultHotkey();
+
   return {
-    configured: browserAppSettings.hotkey,
-    registered: browserHotkeyRegistered ? browserAppSettings.hotkey : null,
+    accelerator: hotkey.accelerator,
+    label: hotkey.label,
+    isDefault: hotkey.accelerator === defaultHotkey.accelerator,
     isRegistered: browserHotkeyRegistered,
-    registrationError: browserHotkeyRegistrationError,
+    error: browserHotkeyRegistered ? null : browserHotkeyRegistrationError,
   };
 }
 
@@ -321,6 +325,7 @@ export function registerGlobalHotkey(): Promise<HotkeyStatus> {
 export function unregisterGlobalHotkey(): Promise<HotkeyStatus> {
   if (!isTauriRuntime()) {
     browserHotkeyRegistered = false;
+    browserHotkeyRegistrationError = null;
 
     return Promise.resolve(browserHotkeyStatus());
   }
@@ -417,6 +422,8 @@ export function stopRecording(): Promise<RecordingInfo> {
       wavByteCount:
         44 + Math.floor((durationMs / 1000) * browserSampleRate) * 2,
       wavBitsPerSample: 16,
+      recordingStopToEncodeStartMs: 0,
+      audioEncodeMs: 0,
       startedAtMs: browserRecordingStartedAtMs,
       endedAtMs: browserRecordingStartedAtMs + durationMs,
       maxDurationReached: durationMs >= browserMaxDurationSeconds * 1000,
@@ -471,6 +478,8 @@ export function transcribeLatestRecording(): Promise<GroqTranscription> {
 
     return Promise.resolve({
       text: "Mock transcript from the latest manual recording.",
+      model: "whisper-large-v3-turbo",
+      retryCount: 0,
     });
   }
 
@@ -481,7 +490,13 @@ export function cleanupTranscript(
   transcript: string,
 ): Promise<TranscriptCleanupResult> {
   if (!isTauriRuntime()) {
-    return Promise.resolve({ text: transcript });
+    return Promise.resolve({
+      text: transcript,
+      model: "openai/gpt-oss-20b",
+      retryCount: 0,
+      validationMs: 0,
+      fallbackUsed: false,
+    });
   }
 
   return invoke("cleanup_transcript", { transcript });
