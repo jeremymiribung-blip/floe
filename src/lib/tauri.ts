@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   AppStatus,
-  CerebrasApiKeyStatus,
   ClipboardError,
   HotkeyError,
   HotkeyStatus,
@@ -25,10 +24,6 @@ const browserStatus: AppStatus = {
 };
 
 let browserGroqApiKeyStatus: GroqApiKeyStatus = {
-  configured: false,
-  maskedPreview: null,
-};
-let browserCerebrasApiKeyStatus: CerebrasApiKeyStatus = {
   configured: false,
   maskedPreview: null,
 };
@@ -187,41 +182,6 @@ export function getGroqApiKeyStatus(): Promise<GroqApiKeyStatus> {
   }
 
   return invoke("get_groq_api_key_status");
-}
-
-export function saveCerebrasApiKey(
-  apiKey: string,
-): Promise<CerebrasApiKeyStatus> {
-  if (!isTauriRuntime()) {
-    const trimmed = apiKey.trim();
-    browserCerebrasApiKeyStatus = {
-      configured: true,
-      maskedPreview: maskBrowserApiKey(trimmed),
-    };
-    return Promise.resolve(browserCerebrasApiKeyStatus);
-  }
-
-  return invoke("save_cerebras_api_key", { apiKey });
-}
-
-export function clearCerebrasApiKey(): Promise<CerebrasApiKeyStatus> {
-  if (!isTauriRuntime()) {
-    browserCerebrasApiKeyStatus = {
-      configured: false,
-      maskedPreview: null,
-    };
-    return Promise.resolve(browserCerebrasApiKeyStatus);
-  }
-
-  return invoke("clear_cerebras_api_key");
-}
-
-export function getCerebrasApiKeyStatus(): Promise<CerebrasApiKeyStatus> {
-  if (!isTauriRuntime()) {
-    return Promise.resolve(browserCerebrasApiKeyStatus);
-  }
-
-  return invoke("get_cerebras_api_key_status");
 }
 
 export function getAppSettings(): Promise<AppSettings> {

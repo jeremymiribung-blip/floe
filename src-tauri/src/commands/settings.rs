@@ -1,9 +1,7 @@
 use tauri::{AppHandle, Runtime, State};
 
 use crate::{
-    settings::{
-        AppSettings, CerebrasApiKeyStatus, GroqApiKeyStatus, SettingsError, SettingsManager,
-    },
+    settings::{AppSettings, GroqApiKeyStatus, SettingsError, SettingsManager},
     system::autostart::{
         get_start_at_login_status_with, set_start_at_login_enabled_with, StartAtLoginError,
         StartAtLoginStatus, TauriAutostartIntegration,
@@ -30,28 +28,6 @@ pub fn get_groq_api_key_status(
     manager: State<'_, SettingsManager>,
 ) -> Result<GroqApiKeyStatus, SettingsError> {
     manager.get_groq_api_key_status()
-}
-
-#[tauri::command]
-pub fn save_cerebras_api_key(
-    manager: State<'_, SettingsManager>,
-    api_key: String,
-) -> Result<CerebrasApiKeyStatus, SettingsError> {
-    manager.save_cerebras_api_key(api_key)
-}
-
-#[tauri::command]
-pub fn clear_cerebras_api_key(
-    manager: State<'_, SettingsManager>,
-) -> Result<CerebrasApiKeyStatus, SettingsError> {
-    manager.clear_cerebras_api_key()
-}
-
-#[tauri::command]
-pub fn get_cerebras_api_key_status(
-    manager: State<'_, SettingsManager>,
-) -> Result<CerebrasApiKeyStatus, SettingsError> {
-    manager.get_cerebras_api_key_status()
 }
 
 #[tauri::command]

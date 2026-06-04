@@ -728,8 +728,7 @@ mod tests {
     }
 
     fn test_settings_manager() -> SettingsManager {
-        SettingsManager::with_secret_stores(
-            Box::<MemorySecretStore>::default(),
+        SettingsManager::with_secret_store(
             Box::<MemorySecretStore>::default(),
             unique_settings_path(),
         )

@@ -163,24 +163,6 @@ describe("browser settings fallback", () => {
     });
   });
 
-  it("masks and clears browser Cerebras API key status without exposing the full key", async () => {
-    const { clearCerebrasApiKey, getCerebrasApiKeyStatus, saveCerebrasApiKey } =
-      await import("./tauri");
-
-    await expect(saveCerebrasApiKey("  csk_12345678abcd  ")).resolves.toEqual({
-      configured: true,
-      maskedPreview: "csk_...abcd",
-    });
-    await expect(getCerebrasApiKeyStatus()).resolves.toEqual({
-      configured: true,
-      maskedPreview: "csk_...abcd",
-    });
-    await expect(clearCerebrasApiKey()).resolves.toEqual({
-      configured: false,
-      maskedPreview: null,
-    });
-  });
-
   it("browser cleanupTranscript returns the raw transcript without invoking cleanup", async () => {
     const { cleanupTranscript } = await import("./tauri");
 
@@ -196,17 +178,6 @@ describe("browser settings fallback", () => {
 
     expect(settings).not.toHaveProperty("cleanupMode");
     expect(JSON.stringify(settings)).not.toContain("cleanupMode");
-  });
-
-  it("clearCerebrasApiKey does not touch any cleanup mode in the browser", async () => {
-    const { clearCerebrasApiKey, getAppSettings, saveCerebrasApiKey } =
-      await import("./tauri");
-
-    await saveCerebrasApiKey("csk_12345678abcd");
-    await clearCerebrasApiKey();
-    const settings = await getAppSettings();
-
-    expect(settings).not.toHaveProperty("cleanupMode");
   });
 });
 

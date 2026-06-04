@@ -20,11 +20,6 @@ export interface GroqApiKeyStatus {
   maskedPreview: string | null;
 }
 
-export interface CerebrasApiKeyStatus {
-  configured: boolean;
-  maskedPreview: string | null;
-}
-
 export interface AppSettings {
   hotkey: HotkeySettings;
 }
@@ -69,7 +64,6 @@ export interface GlobalHotkeyEvent {
 export interface SettingsError {
   code:
     | "invalidGroqApiKey"
-    | "invalidCerebrasApiKey"
     | "invalidAppSettings"
     | "secretStoreUnavailable"
     | "appSettingsUnavailable";

@@ -1,12 +1,12 @@
 # Floe
 
-Floe is a minimal desktop push-to-talk transcription utility. Hold a global hotkey, speak, release it, and Floe sends the completed recording once to Groq Speech-to-Text, runs the transcript through Cerebras cleanup, copies the cleaned text to the clipboard, and pastes it into the focused app.
+Floe is a minimal desktop push-to-talk transcription utility. Hold a global hotkey, speak, release it, and Floe sends the completed recording once to Groq Speech-to-Text, cleans the transcript with Groq, copies the cleaned text to the clipboard, and pastes it into the focused app.
 
-This repository is currently an early V1 implementation. The desktop shell, settings storage, manual recording, configurable global push-to-talk hotkeys, Groq transcription, Cerebras transcript cleanup, clipboard writes, and paste automation are in place.
+This repository is currently an early V1 implementation. The desktop shell, settings storage, manual recording, configurable global push-to-talk hotkeys, Groq transcription, Groq transcript cleanup, clipboard writes, and paste automation are in place.
 
 ## Product Goal
 
-Floe aims to feel fast, private by default, and boringly reliable. The STT path intentionally favors a single complete transcription request after recording stops over streaming or partial transcript features. Cerebras cleanup is part of the standard flow; there is no user-selectable cleanup mode.
+Floe aims to feel fast, private by default, and boringly reliable. The STT path intentionally favors a single complete transcription request after recording stops over streaming or partial transcript features. Transcript cleanup is fixed and uses Groq; there is no user-selectable provider or cleanup mode.
 
 ## Tech Stack
 
@@ -16,8 +16,8 @@ Floe aims to feel fast, private by default, and boringly reliable. The STT path 
 - `cpal` microphone recording
 - In-memory 16-bit PCM WAV generation
 - Groq Speech-to-Text with `whisper-large-v3-turbo`
-- Cerebras transcript cleanup with `gpt-oss-120b`
-- OS keychain storage for Groq and Cerebras API keys
+- Groq transcript cleanup with `openai/gpt-oss-20b`
+- OS keychain storage for the Groq API key
 - Tauri autostart integration for optional start-at-login
 
 ## Intended V1 Scope
@@ -26,20 +26,20 @@ Floe aims to feel fast, private by default, and boringly reliable. The STT path 
 2. Stop recording on release.
 3. Convert the full recording to WAV in memory.
 4. Send the WAV once to Groq STT.
-5. Clean the transcript with Cerebras.
+5. Clean the transcript with Groq.
 6. Copy and paste the final text.
 
-Retries are bounded and only used for temporary network/API failures. If Cerebras cleanup fails, Floe falls back to the raw Groq transcript and surfaces a `Cleanup failed` warning.
+Retries are bounded and only used for temporary network/API failures. If Groq cleanup fails, Floe falls back to the raw Groq transcript and surfaces a `Cleanup failed` warning.
 
 ## Non-goals
 
-Floe does not include streaming, rolling transcription, audio chunking, overlap windows, realtime partial transcripts, transcript merging, analytics, or permanent audio storage. Floe also does not expose a user-selectable cleanup mode; the only flow is Groq STT followed by Cerebras cleanup.
+Floe does not include streaming, rolling transcription, audio chunking, overlap windows, realtime partial transcripts, transcript merging, analytics, or permanent audio storage. Floe also does not expose a user-selectable cleanup provider or mode; the only flow is Groq STT followed by Groq cleanup using the same API key.
 
 ## Current Scaffold Scope
 
 - Minimal Tauri 2 app named Floe.
 - React UI with a status view (wordmark, current state, current hotkey) and a settings view (`API Keys`, `Hotkey`, `Start at login`, `Privacy`).
-- Rust commands for app status, secure settings, recording checks, Groq transcription, Cerebras cleanup, clipboard writes, and paste automation.
+- Rust commands for app status, secure settings, recording checks, Groq transcription, Groq cleanup, clipboard writes, and paste automation.
 - Tauri 2 global shortcut registration with press/release events for push-to-talk.
 - Optional start-at-login support that launches Floe hidden in the background.
 - GitHub Actions CI for frontend and Rust checks.
@@ -48,11 +48,10 @@ Floe does not include streaming, rolling transcription, audio chunking, overlap 
 
 - Audio is kept in memory and sent once to Groq after recording stops.
 - Audio is not written to disk by default.
-- Audio is never sent to Cerebras.
-- Transcript text is sent to Cerebras as part of the standard cleanup flow.
-- If Cerebras cleanup fails, Floe pastes the raw Groq transcript and shows a short `Cleanup failed` warning.
-- API keys are stored locally in the OS keychain and kept separate by provider.
-- Enabling Start at login does not access the microphone, start recording, call Groq, call Cerebras, paste text, or send transcript data on startup.
+- Audio is never sent for cleanup. Only transcript text is sent to Groq for cleanup.
+- If Groq cleanup fails, Floe pastes the raw Groq transcript and shows a short `Cleanup failed` warning.
+- The Groq API key is stored locally in the OS keychain.
+- Enabling Start at login does not access the microphone, start recording, call Groq, paste text, or send transcript data on startup.
 - Debug logging avoids raw audio, raw transcripts, full API keys, auth headers, and private transcripts.
 
 ## Setup
@@ -80,7 +79,7 @@ pnpm tauri:dev
 ## Manual Test Flow
 
 1. Run `pnpm tauri:dev`.
-2. Save a Groq API key in Settings, then save a Cerebras API key.
+2. Save a Groq API key in Settings.
 3. Confirm the global hotkey appears as the current shortcut on the status view.
 4. Focus a target text field in another app.
 5. Hold the configured global hotkey, speak briefly, then release it.
@@ -126,19 +125,19 @@ Floe is a background push-to-talk utility. The window close button (X on Windows
 
 ## API Keys and Cleanup
 
-Groq and Cerebras API keys are stored through the operating system keychain using the Rust `keyring` crate. Each provider uses a separate keychain entry. Non-secret app settings, including the global hotkey, are stored separately in Floe's app config directory.
+The Groq API key is stored through the operating system keychain using the Rust `keyring` crate under the `groq-api-key` user. Non-secret app settings, including the global hotkey, are stored separately in Floe's app config directory.
 
-The frontend never receives a full API key. It only receives whether a key is configured and a masked preview such as `gsk_...abcd` or `csk_...abcd`.
+The frontend never receives the full API key. It only receives whether a key is configured and a masked preview such as `gsk_...abcd`.
 
 If the native keychain is unavailable in the current environment, Floe does not fall back to plaintext secret files. Saving or clearing a secret returns a sanitized error, and the API key status remains unconfigured until OS keychain access works.
 
-Cleanup is fixed: after Groq STT, Floe sends the transcript text to Cerebras. Only transcript text is sent to Cerebras; audio is never sent. If Cerebras cleanup fails (for example, missing or invalid key, network error, rate limit, malformed response), Floe pastes the raw Groq transcript and surfaces a short `Cleanup failed` warning. The flow does not block on Cerebras success.
+Cleanup is fixed: after Groq STT, Floe sends the transcript text to Groq using the same API key. Only transcript text is sent for cleanup; audio is never sent. If Groq cleanup fails (for example, missing or invalid key, network error, rate limit, malformed response), Floe pastes the raw Groq transcript and surfaces a short `Cleanup failed` warning. The flow does not block on cleanup success.
 
 ## Troubleshooting
 
 - If `pnpm` is not on PATH, run commands through Corepack: `corepack pnpm ...`.
 - If `tauri:dev` fails on Linux, install the WebKitGTK and appindicator packages listed in `.github/workflows/ci.yml`.
-- If Cerebras cleanup is slow or unavailable, Floe will fall back to the raw Groq transcript and show `Cleanup failed`. The rest of the flow still works.
+- If Groq cleanup is slow or unavailable, Floe will fall back to the raw Groq transcript and show `Cleanup failed`. The rest of the flow still works.
 - If the hotkey does not register, choose a less common shortcut; another app or the OS may already own it.
 - On macOS, allow Floe in Privacy & Security settings if global shortcuts or paste automation are blocked. Depending on the OS version, Accessibility and Input Monitoring permissions may be relevant.
 - On Windows/Linux, desktop environments and input methods can reserve shortcuts. Try `Control+Alt+Shift+Space` or another three-key combination if registration fails.
@@ -147,13 +146,13 @@ Cleanup is fixed: after Groq STT, Floe sends the transcript text to Cerebras. On
 
 ## Testing and CI
 
-Tests must not call the real Groq or Cerebras APIs, require real keys, or depend on a real microphone. Use mocks and fakes for API and audio pipeline tests.
+Tests must not call the real Groq API, require real keys, or depend on a real microphone. Use mocks and fakes for API and audio pipeline tests.
 
 GitHub Actions runs frontend formatting, linting, tests, builds, Rust formatting, Rust linting, Rust tests, and basic secret scanning support.
 
 ## Security Notes
 
-Never commit secrets or temporary audio files. `.env` files are ignored and should only be used for local development metadata, not production Groq or Cerebras keys.
+Never commit secrets or temporary audio files. `.env` files are ignored and should only be used for local development metadata, not production Groq keys.
 
 Enable GitHub secret scanning and push protection in the repository security settings when those features are available for the repository plan. If GitHub secret scanning is unavailable for a private repository, run a local scan before pushing:
 

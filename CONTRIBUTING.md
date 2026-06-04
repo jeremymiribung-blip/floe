@@ -35,7 +35,7 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Tests must not call Groq or Cerebras, require real API keys, or require a real microphone in CI.
+Tests must not call Groq, require real API keys, or require a real microphone in CI.
 
 ## Secrets
 
@@ -55,7 +55,7 @@ Treat any finding as sensitive until it has been reviewed and rotated if needed.
 
 Floe uses exactly one Groq Speech-to-Text request after recording stops. Do not add streaming, chunking, realtime partial transcripts, or transcript merging.
 
-Floe uses Groq for STT and Cerebras for transcript cleanup. Audio is sent only to Groq. Only transcript text is sent to Cerebras. If Cerebras cleanup fails, Floe pastes the raw Groq transcript and surfaces a `Cleanup failed` warning. There is no user-selectable cleanup mode.
+Floe uses Groq for both STT and transcript cleanup. The same Groq API key handles both steps; there is no provider switching and no cleanup modes. Audio is sent only to Groq for STT. Only transcript text is sent to Groq for cleanup. If cleanup fails, Floe pastes the raw Groq transcript and surfaces a `Cleanup failed` warning. There is no user-selectable cleanup provider or mode.
 
 ## Pull Requests
 

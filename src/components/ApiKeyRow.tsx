@@ -1,12 +1,9 @@
 import { useState, type FormEvent } from "react";
-import type { GroqApiKeyStatus, CerebrasApiKeyStatus } from "../types/app";
-
-type Provider = "groq" | "cerebras";
+import type { GroqApiKeyStatus } from "../types/app";
 
 interface ApiKeyRowProps {
-  provider: Provider;
   label: string;
-  status: GroqApiKeyStatus | CerebrasApiKeyStatus | null;
+  status: GroqApiKeyStatus | null;
   onSave: (value: string) => Promise<void> | void;
   onClear: () => Promise<void> | void;
   disabled?: boolean;

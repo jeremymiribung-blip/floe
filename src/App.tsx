@@ -9,10 +9,8 @@ import {
   bubbleHide,
   bubbleShow,
   cleanupTranscript,
-  clearCerebrasApiKey,
   clearGroqApiKey,
   copyTextToClipboard,
-  getCerebrasApiKeyStatus,
   getGroqApiKeyStatus,
   getHotkeySettings,
   getRecordingStatus,
@@ -20,7 +18,6 @@ import {
   isTauriRuntime,
   pasteClipboard,
   resetHotkeyToDefault,
-  saveCerebrasApiKey,
   saveGroqApiKey,
   setHotkey,
   setStartAtLoginEnabled,
@@ -30,7 +27,6 @@ import {
 } from "./lib/tauri";
 import type {
   AppState,
-  CerebrasApiKeyStatus,
   ClipboardError,
   GroqApiKeyStatus,
   GroqTranscriptionError,
@@ -52,8 +48,6 @@ export default function App() {
   const [startAtLoginStatus, setStartAtLoginStatus] =
     useState<StartAtLoginStatus | null>(null);
   const [groqStatus, setGroqStatus] = useState<GroqApiKeyStatus | null>(null);
-  const [cerebrasStatus, setCerebrasStatus] =
-    useState<CerebrasApiKeyStatus | null>(null);
   const controllerRef = useRef<PushToTalkController | null>(null);
 
   if (controllerRef.current === null) {
@@ -79,14 +73,9 @@ export default function App() {
   }
 
   useEffect(() => {
-    Promise.all([
-      getGroqApiKeyStatus(),
-      getCerebrasApiKeyStatus(),
-      getHotkeySettings(),
-    ])
-      .then(([groq, cerebras, hotkey]) => {
+    Promise.all([getGroqApiKeyStatus(), getHotkeySettings()])
+      .then(([groq, hotkey]) => {
         setGroqStatus(groq);
-        setCerebrasStatus(cerebras);
         setHotkeyStatus(hotkey);
         if (!hotkey.isRegistered) {
           setError(hotkey.registrationError ?? "Hotkey unavailable");
@@ -197,31 +186,6 @@ export default function App() {
     }
   }, []);
 
-  const handleSaveCerebras = useCallback(async (value: string) => {
-    try {
-      const next = await saveCerebrasApiKey(value);
-      setCerebrasStatus(next);
-      setError(null);
-      setAppState("ready");
-    } catch (caught) {
-      setError(settingsErrorMessage(caught));
-      setAppState("error");
-      throw caught;
-    }
-  }, []);
-
-  const handleClearCerebras = useCallback(async () => {
-    try {
-      setCerebrasStatus(await clearCerebrasApiKey());
-      setError(null);
-      setAppState("ready");
-    } catch (caught) {
-      setError(settingsErrorMessage(caught));
-      setAppState("error");
-      throw caught;
-    }
-  }, []);
-
   const handleChangeHotkey = useCallback(async (accelerator: string) => {
     try {
       const next = await setHotkey(accelerator);
@@ -289,14 +253,11 @@ export default function App() {
       ) : (
         <SettingsView
           groqStatus={groqStatus}
-          cerebrasStatus={cerebrasStatus}
           hotkeyStatus={hotkeyStatus}
           startAtLoginStatus={startAtLoginStatus}
           onClose={() => setView("status")}
           onSaveGroq={handleSaveGroq}
           onClearGroq={handleClearGroq}
-          onSaveCerebras={handleSaveCerebras}
-          onClearCerebras={handleClearCerebras}
           onChangeHotkey={handleChangeHotkey}
           onResetHotkey={handleResetHotkey}
           onSetStartAtLogin={handleSetStartAtLogin}

@@ -2,7 +2,7 @@
 
 This guide explains how to build release installers for Floe, a Tauri 2 desktop app with a React, TypeScript, Vite frontend and a Rust backend.
 
-Floe keeps audio in memory by default and sends one complete Groq Speech-to-Text request only after recording stops. The transcript text is then sent to Cerebras for cleanup. Installer builds must not add streaming, transcript chunking, transcript merging, realtime partials, or any behavior that sends audio to Cerebras.
+Floe keeps audio in memory by default and sends one complete Groq Speech-to-Text request only after recording stops. The transcript text is then sent to Groq for cleanup. Installer builds must not add streaming, transcript chunking, transcript merging, realtime partials, or any behavior that sends audio for cleanup.
 
 The packaged app registers a configurable global push-to-talk hotkey through the Tauri 2 global shortcut plugin. The default is `CommandOrControl+Shift+Space` on macOS and `Control+Shift+Space` on Windows/Linux.
 

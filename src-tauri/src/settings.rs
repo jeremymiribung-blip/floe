@@ -5,9 +5,8 @@ use serde::{Deserialize, Serialize};
 
 const KEYRING_SERVICE: &str = "com.floe.app";
 const GROQ_API_KEY_USER: &str = "groq-api-key";
-const CEREBRAS_API_KEY_USER: &str = "cerebras-api-key";
+const LEGACY_CEREBRAS_API_KEY_USER: &str = "cerebras-api-key";
 const MAX_GROQ_API_KEY_LEN: usize = 256;
-const MAX_CEREBRAS_API_KEY_LEN: usize = 512;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -17,7 +16,6 @@ pub struct ApiKeyStatus {
 }
 
 pub type GroqApiKeyStatus = ApiKeyStatus;
-pub type CerebrasApiKeyStatus = ApiKeyStatus;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
@@ -50,7 +48,6 @@ pub struct SettingsError {
 #[serde(rename_all = "camelCase")]
 pub enum SettingsErrorCode {
     InvalidGroqApiKey,
-    InvalidCerebrasApiKey,
     InvalidAppSettings,
     SecretStoreUnavailable,
     AppSettingsUnavailable,
@@ -101,28 +98,26 @@ impl SecretStore for KeyringSecretStore {
 
 pub struct SettingsManager {
     groq_secret_store: Box<dyn SecretStore>,
-    cerebras_secret_store: Box<dyn SecretStore>,
     app_settings_store: AppSettingsStore,
 }
 
 impl SettingsManager {
     pub fn new(config_dir: PathBuf) -> Self {
+        Self::migrate_legacy_cerebras_keyring_entry();
+
         Self {
             groq_secret_store: Box::new(KeyringSecretStore::new(GROQ_API_KEY_USER)),
-            cerebras_secret_store: Box::new(KeyringSecretStore::new(CEREBRAS_API_KEY_USER)),
             app_settings_store: AppSettingsStore::new(config_dir.join("settings.json")),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn with_secret_stores(
+    pub(crate) fn with_secret_store(
         groq_secret_store: Box<dyn SecretStore>,
-        cerebras_secret_store: Box<dyn SecretStore>,
         settings_path: PathBuf,
     ) -> Self {
         Self {
             groq_secret_store,
-            cerebras_secret_store,
             app_settings_store: AppSettingsStore::new(settings_path),
         }
     }
@@ -153,35 +148,6 @@ impl SettingsManager {
         self.groq_secret_store.get()
     }
 
-    pub fn save_cerebras_api_key(
-        &self,
-        api_key: String,
-    ) -> Result<CerebrasApiKeyStatus, SettingsError> {
-        let api_key = validate_api_key(
-            &api_key,
-            MAX_CEREBRAS_API_KEY_LEN,
-            SettingsErrorCode::InvalidCerebrasApiKey,
-            "Enter a valid Cerebras API key.",
-        )?;
-        self.cerebras_secret_store.save(&api_key)?;
-
-        Ok(status_from_secret(Some(api_key)))
-    }
-
-    pub fn clear_cerebras_api_key(&self) -> Result<CerebrasApiKeyStatus, SettingsError> {
-        self.cerebras_secret_store.clear()?;
-
-        Ok(status_from_secret(None))
-    }
-
-    pub fn get_cerebras_api_key_status(&self) -> Result<CerebrasApiKeyStatus, SettingsError> {
-        secret_status(&*self.cerebras_secret_store)
-    }
-
-    pub fn get_cerebras_api_key_secret(&self) -> Result<Option<String>, SettingsError> {
-        self.cerebras_secret_store.get()
-    }
-
     pub fn get_app_settings(&self) -> Result<AppSettings, SettingsError> {
         self.app_settings_store.load()
     }
@@ -191,6 +157,17 @@ impl SettingsManager {
         self.app_settings_store.save(&settings)?;
 
         Ok(settings)
+    }
+
+    fn migrate_legacy_cerebras_keyring_entry() {
+        let Ok(entry) = Entry::new(KEYRING_SERVICE, LEGACY_CEREBRAS_API_KEY_USER) else {
+            return;
+        };
+        if let Err(error) = entry.delete_credential() {
+            if !matches!(error, KeyringError::NoEntry) {
+                eprintln!("[floe:settings] legacy Cerebras keyring entry could not be removed");
+            }
+        }
     }
 }
 
@@ -335,7 +312,7 @@ mod tests {
 
     use super::{
         mask_api_key, ApiKeyStatus, AppSettings, HotkeySettings, SecretStore, SettingsError,
-        SettingsErrorCode, SettingsManager, MAX_CEREBRAS_API_KEY_LEN, MAX_GROQ_API_KEY_LEN,
+        SettingsErrorCode, SettingsManager, MAX_GROQ_API_KEY_LEN,
     };
 
     #[derive(Default)]
@@ -378,7 +355,6 @@ mod tests {
     #[test]
     fn masks_api_keys_without_exposing_short_values() {
         assert_eq!(mask_api_key("gsk_12345678abcd").unwrap(), "gsk_...abcd");
-        assert_eq!(mask_api_key("csk_12345678abcd").unwrap(), "csk_...abcd");
         assert_eq!(mask_api_key("short").unwrap(), "Configured key");
     }
 
@@ -393,19 +369,11 @@ mod tests {
                 masked_preview: None,
             }
         );
-        assert_eq!(
-            manager.get_cerebras_api_key_status().unwrap(),
-            ApiKeyStatus {
-                configured: false,
-                masked_preview: None,
-            }
-        );
     }
 
     #[test]
     fn unavailable_keyring_keeps_status_unconfigured() {
-        let manager = SettingsManager::with_secret_stores(
-            Box::new(UnavailableSecretStore),
+        let manager = SettingsManager::with_secret_store(
             Box::new(UnavailableSecretStore),
             unique_settings_path(),
         );
@@ -417,54 +385,34 @@ mod tests {
                 masked_preview: None,
             }
         );
-        assert_eq!(
-            manager.get_cerebras_api_key_status().unwrap(),
-            ApiKeyStatus {
-                configured: false,
-                masked_preview: None,
-            }
-        );
     }
 
     #[test]
-    fn groq_and_cerebras_keys_are_stored_separately() {
+    fn groq_key_round_trips_through_settings_manager() {
         let manager = test_manager();
 
         manager
             .save_groq_api_key("gsk_12345678abcd".to_string())
-            .unwrap();
-        manager
-            .save_cerebras_api_key("csk_12345678wxyz".to_string())
             .unwrap();
 
         assert_eq!(
             manager.get_groq_api_key_secret().unwrap(),
             Some("gsk_12345678abcd".to_string())
         );
-        assert_eq!(
-            manager.get_cerebras_api_key_secret().unwrap(),
-            Some("csk_12345678wxyz".to_string())
-        );
 
-        manager.clear_cerebras_api_key().unwrap();
-        assert!(manager.get_cerebras_api_key_secret().unwrap().is_none());
-        assert!(manager.get_groq_api_key_secret().unwrap().is_some());
+        manager.clear_groq_api_key().unwrap();
+        assert!(manager.get_groq_api_key_secret().unwrap().is_none());
     }
 
     #[test]
     fn saving_keys_trims_secret_and_returns_only_masked_status() {
         let manager = test_manager();
         let groq_key = "gsk_12345678abcd";
-        let cerebras_key = "csk_12345678wxyz";
 
         let groq_status = manager
             .save_groq_api_key(format!("  {groq_key}  "))
             .expect("Groq key should save");
-        let cerebras_status = manager
-            .save_cerebras_api_key(format!("  {cerebras_key}  "))
-            .expect("Cerebras key should save");
-        let serialized =
-            serde_json::to_string(&(groq_status.clone(), cerebras_status.clone())).unwrap();
+        let serialized = serde_json::to_string(&groq_status.clone()).unwrap();
 
         assert_eq!(
             groq_status,
@@ -473,15 +421,7 @@ mod tests {
                 masked_preview: Some("gsk_...abcd".to_string()),
             }
         );
-        assert_eq!(
-            cerebras_status,
-            ApiKeyStatus {
-                configured: true,
-                masked_preview: Some("csk_...wxyz".to_string()),
-            }
-        );
         assert!(!serialized.contains(groq_key));
-        assert!(!serialized.contains(cerebras_key));
     }
 
     #[test]
@@ -501,21 +441,7 @@ mod tests {
             assert_eq!(error.code, SettingsErrorCode::InvalidGroqApiKey);
         }
 
-        for api_key in [
-            String::new(),
-            "   ".to_string(),
-            "csk_valid_prefix\nwith_control".to_string(),
-            "x".repeat(MAX_CEREBRAS_API_KEY_LEN + 1),
-        ] {
-            let error = manager
-                .save_cerebras_api_key(api_key)
-                .expect_err("invalid Cerebras key should fail");
-
-            assert_eq!(error.code, SettingsErrorCode::InvalidCerebrasApiKey);
-        }
-
         assert_eq!(manager.get_groq_api_key_secret().unwrap(), None);
-        assert_eq!(manager.get_cerebras_api_key_secret().unwrap(), None);
     }
 
     #[test]
@@ -531,11 +457,8 @@ mod tests {
     fn app_settings_loads_defaults_from_legacy_empty_file() {
         let path = unique_settings_path();
         fs::write(&path, "{}").expect("legacy settings should write");
-        let manager = SettingsManager::with_secret_stores(
-            Box::new(MemorySecretStore::default()),
-            Box::new(MemorySecretStore::default()),
-            path,
-        );
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
 
         let settings = manager.get_app_settings().unwrap();
 
@@ -550,11 +473,8 @@ mod tests {
             r#"{"hotkey":{"accelerator":"Ctrl+Shift+KeyA","label":"Ctrl+Shift+A"},"cleanupMode":"fast"}"#,
         )
         .expect("legacy settings should write");
-        let manager = SettingsManager::with_secret_stores(
-            Box::new(MemorySecretStore::default()),
-            Box::new(MemorySecretStore::default()),
-            path,
-        );
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
 
         let settings = manager.get_app_settings().unwrap();
 
@@ -564,8 +484,7 @@ mod tests {
     #[test]
     fn app_settings_default_file_is_created_without_cleanup_mode() {
         let path = unique_settings_path();
-        let manager = SettingsManager::with_secret_stores(
-            Box::new(MemorySecretStore::default()),
+        let manager = SettingsManager::with_secret_store(
             Box::new(MemorySecretStore::default()),
             path.clone(),
         );
@@ -585,11 +504,8 @@ mod tests {
     fn corrupt_app_settings_file_returns_settings_error() {
         let path = unique_settings_path();
         fs::write(&path, "{not valid json").expect("corrupt settings should write");
-        let manager = SettingsManager::with_secret_stores(
-            Box::new(MemorySecretStore::default()),
-            Box::new(MemorySecretStore::default()),
-            path,
-        );
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
 
         let error = manager
             .get_app_settings()
@@ -606,11 +522,8 @@ mod tests {
             r#"{"hotkey":{"accelerator":42,"label":"Ctrl+Shift+Space"}}"#,
         )
         .expect("settings should write");
-        let manager = SettingsManager::with_secret_stores(
-            Box::new(MemorySecretStore::default()),
-            Box::new(MemorySecretStore::default()),
-            path,
-        );
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
 
         let error = manager
             .get_app_settings()
@@ -676,8 +589,7 @@ mod tests {
     }
 
     fn test_manager() -> SettingsManager {
-        SettingsManager::with_secret_stores(
-            Box::<MemorySecretStore>::default(),
+        SettingsManager::with_secret_store(
             Box::<MemorySecretStore>::default(),
             unique_settings_path(),
         )

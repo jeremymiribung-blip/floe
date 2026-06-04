@@ -3,7 +3,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsView } from "./SettingsView";
 import type {
-  CerebrasApiKeyStatus,
   GroqApiKeyStatus,
   HotkeyStatus,
   StartAtLoginStatus,
@@ -14,10 +13,6 @@ import type {
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 const groqStatus: GroqApiKeyStatus = {
-  configured: false,
-  maskedPreview: null,
-};
-const cerebrasStatus: CerebrasApiKeyStatus = {
   configured: false,
   maskedPreview: null,
 };
@@ -65,11 +60,11 @@ describe("SettingsView", () => {
     expect(container.querySelector('input[name="cleanupMode"]')).toBeNull();
   });
 
-  it("keeps the privacy note about sending text to Cerebras", () => {
+  it("keeps the privacy note about sending text to Groq", () => {
     const { container } = renderSettingsView();
 
     expect(container.textContent).toContain("Audio → Groq");
-    expect(container.textContent).toContain("Text → Cerebras");
+    expect(container.textContent).toContain("Text → Groq");
   });
 
   it("toggles start at login and updates the visible state", async () => {
@@ -126,14 +121,11 @@ function renderSettingsView(
     return (
       <SettingsView
         groqStatus={groqStatus}
-        cerebrasStatus={cerebrasStatus}
         hotkeyStatus={hotkeyStatus}
         startAtLoginStatus={startAtLoginStatus}
         onClose={() => undefined}
         onSaveGroq={() => undefined}
         onClearGroq={() => undefined}
-        onSaveCerebras={() => undefined}
-        onClearCerebras={() => undefined}
         onChangeHotkey={() => undefined}
         onResetHotkey={() => undefined}
         onSetStartAtLogin={async (enabled) => {

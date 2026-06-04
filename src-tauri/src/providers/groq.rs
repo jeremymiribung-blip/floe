@@ -1,14 +1,19 @@
 use std::time::Duration;
 
-use reqwest::{multipart, StatusCode};
+use reqwest::{header::HeaderMap, multipart, StatusCode};
 use serde::{Deserialize, Serialize};
 
 const GROQ_BASE_URL: &str = "https://api.groq.com";
 const TRANSCRIPTIONS_PATH: &str = "/openai/v1/audio/transcriptions";
+const CHAT_COMPLETIONS_PATH: &str = "/openai/v1/chat/completions";
 const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const GROQ_CLEANUP_MODEL: &str = "openai/gpt-oss-20b";
+const STT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const CLEANUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_ATTEMPTS: usize = 3;
 const INITIAL_RETRY_BACKOFF: Duration = Duration::from_millis(250);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
+const CLEANUP_SYSTEM_PROMPT: &str = "You are a transcript cleanup engine for a push-to-talk dictation app.\n\nYour job:\n\n- Correct capitalization.\n- Correct punctuation.\n- Fix obvious speech-to-text transcription errors only when the intended word is clear.\n- Preserve the user's language.\n- Preserve the user's meaning.\n- Preserve the user's tone.\n- Do not summarize.\n- Do not rewrite stylistically.\n- Do not add new information.\n- Do not remove information.\n- Do not answer the text.\n- Return only the cleaned transcript text.";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -65,7 +70,7 @@ impl GroqTranscriptionClient {
     pub fn new() -> Result<Self, GroqTranscriptionError> {
         Self::with_config(
             GROQ_BASE_URL.to_string(),
-            REQUEST_TIMEOUT,
+            STT_REQUEST_TIMEOUT,
             MAX_ATTEMPTS,
             INITIAL_RETRY_BACKOFF,
         )
@@ -294,6 +299,405 @@ fn groq_error(code: GroqTranscriptionErrorCode, message: &'static str) -> GroqTr
     }
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GroqCleanupError {
+    pub code: GroqCleanupErrorCode,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum GroqCleanupErrorCode {
+    MissingApiKey,
+    InvalidApiKey,
+    RateLimit,
+    Timeout,
+    ApiUnreachable,
+    MalformedResponse,
+    InvalidRequest,
+    EmptyTranscript,
+    ValidationFailed,
+    ServerError,
+}
+
+impl GroqCleanupError {
+    #[cfg(test)]
+    pub fn new(code: GroqCleanupErrorCode, message: &'static str) -> Self {
+        groq_cleanup_error(code, message)
+    }
+}
+
+pub struct GroqCleanupClient {
+    http_client: reqwest::Client,
+    base_url: String,
+    max_attempts: usize,
+    retry_backoff: Duration,
+}
+
+struct CleanupAttemptError {
+    error: GroqCleanupError,
+    retryable: bool,
+    retry_after: Option<Duration>,
+}
+
+#[derive(Serialize)]
+struct ChatCompletionRequest {
+    model: &'static str,
+    messages: Vec<ChatMessage>,
+    temperature: f32,
+    max_tokens: u32,
+}
+
+#[derive(Serialize)]
+struct ChatMessage {
+    role: &'static str,
+    content: String,
+}
+
+#[derive(Deserialize)]
+struct ChatCompletionResponse {
+    choices: Option<Vec<ChatChoice>>,
+}
+
+#[derive(Deserialize)]
+struct ChatChoice {
+    message: Option<ChatResponseMessage>,
+}
+
+#[derive(Deserialize)]
+struct ChatResponseMessage {
+    content: Option<String>,
+}
+
+impl GroqCleanupClient {
+    pub fn new() -> Result<Self, GroqCleanupError> {
+        Self::with_config(
+            GROQ_BASE_URL.to_string(),
+            CLEANUP_REQUEST_TIMEOUT,
+            MAX_ATTEMPTS,
+            INITIAL_RETRY_BACKOFF,
+        )
+    }
+
+    fn with_config(
+        base_url: String,
+        timeout: Duration,
+        max_attempts: usize,
+        retry_backoff: Duration,
+    ) -> Result<Self, GroqCleanupError> {
+        let http_client = reqwest::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|_| cleanup_server_error())?;
+
+        Ok(Self {
+            http_client,
+            base_url,
+            max_attempts: max_attempts.max(1),
+            retry_backoff,
+        })
+    }
+
+    #[cfg(test)]
+    fn for_test(
+        base_url: String,
+        timeout: Duration,
+        max_attempts: usize,
+        retry_backoff: Duration,
+    ) -> Self {
+        Self::with_config(base_url, timeout, max_attempts, retry_backoff)
+            .expect("test client should build")
+    }
+
+    pub async fn cleanup_transcript(
+        &self,
+        api_key: &str,
+        transcript: &str,
+    ) -> Result<String, GroqCleanupError> {
+        let api_key = api_key.trim();
+
+        if api_key.is_empty() {
+            return Err(groq_cleanup_error(
+                GroqCleanupErrorCode::MissingApiKey,
+                "Configure a Groq API key before cleaning a transcript.",
+            ));
+        }
+
+        if transcript.trim().is_empty() {
+            return Err(groq_cleanup_error(
+                GroqCleanupErrorCode::EmptyTranscript,
+                "There is no transcript text to clean.",
+            ));
+        }
+
+        for attempt in 1..=self.max_attempts {
+            match self.send_once(api_key, transcript).await {
+                Ok(cleaned) => return Ok(cleaned),
+                Err(attempt_error) if attempt_error.retryable && attempt < self.max_attempts => {
+                    let delay = attempt_error
+                        .retry_after
+                        .unwrap_or_else(|| retry_delay(self.retry_backoff, attempt))
+                        .min(MAX_RETRY_DELAY);
+                    tokio::time::sleep(delay).await;
+                }
+                Err(attempt_error) => return Err(attempt_error.error),
+            }
+        }
+
+        Err(cleanup_server_error())
+    }
+
+    async fn send_once(
+        &self,
+        api_key: &str,
+        transcript: &str,
+    ) -> Result<String, CleanupAttemptError> {
+        let response = self
+            .http_client
+            .post(self.chat_completions_url())
+            .bearer_auth(api_key)
+            .json(&cleanup_request_body(transcript))
+            .send()
+            .await
+            .map_err(classify_cleanup_request_error)?;
+        let status = response.status();
+        let retry_after = cleanup_retry_after(response.headers());
+        let body = response.text().await.unwrap_or_default();
+
+        if status.is_success() {
+            return parse_cleanup_response(&body, transcript).map_err(cleanup_non_retryable);
+        }
+
+        Err(classify_cleanup_http_error(status, retry_after))
+    }
+
+    fn chat_completions_url(&self) -> String {
+        format!(
+            "{}{}",
+            self.base_url.trim_end_matches('/'),
+            CHAT_COMPLETIONS_PATH
+        )
+    }
+}
+
+impl CleanupAttemptError {
+    #[allow(dead_code)]
+    #[cfg(test)]
+    fn delay(&self, base: Duration, attempt: usize) -> Duration {
+        self.retry_after
+            .unwrap_or_else(|| retry_delay(base, attempt))
+            .min(MAX_RETRY_DELAY)
+    }
+}
+
+fn cleanup_request_body(transcript: &str) -> ChatCompletionRequest {
+    ChatCompletionRequest {
+        model: GROQ_CLEANUP_MODEL,
+        messages: vec![
+            ChatMessage {
+                role: "system",
+                content: CLEANUP_SYSTEM_PROMPT.to_string(),
+            },
+            ChatMessage {
+                role: "user",
+                content: format!(
+                    "Clean this transcript:\n\n<transcript>\n{transcript}\n</transcript>"
+                ),
+            },
+        ],
+        temperature: 0.0,
+        max_tokens: cleanup_max_tokens_for(transcript),
+    }
+}
+
+fn cleanup_max_tokens_for(transcript: &str) -> u32 {
+    let estimated_tokens = transcript.chars().count().saturating_div(3) + 64;
+    estimated_tokens.clamp(64, 2048) as u32
+}
+
+fn parse_cleanup_response(body: &str, input: &str) -> Result<String, GroqCleanupError> {
+    let response: ChatCompletionResponse = serde_json::from_str(body).map_err(|_| {
+        groq_cleanup_error(
+            GroqCleanupErrorCode::MalformedResponse,
+            "Groq returned a cleanup response Floe could not read.",
+        )
+    })?;
+    let content = response
+        .choices
+        .and_then(|choices| choices.into_iter().next())
+        .and_then(|choice| choice.message)
+        .and_then(|message| message.content)
+        .ok_or_else(|| {
+            groq_cleanup_error(
+                GroqCleanupErrorCode::MalformedResponse,
+                "Groq returned a cleanup response without text.",
+            )
+        })?;
+
+    validate_cleanup_output(input, &content)
+}
+
+pub fn validate_cleanup_output(input: &str, output: &str) -> Result<String, GroqCleanupError> {
+    let trimmed = output.trim();
+
+    if trimmed.is_empty() {
+        return Err(cleanup_validation_error());
+    }
+
+    let input_len = input.chars().count();
+    let output_len = trimmed.chars().count();
+    let max_len = input_len.saturating_mul(2).max(input_len + 200);
+
+    if output_len > max_len
+        || cleanup_looks_like_markdown(trimmed)
+        || cleanup_looks_like_commentary(trimmed)
+    {
+        return Err(cleanup_validation_error());
+    }
+
+    Ok(trimmed.to_string())
+}
+
+fn cleanup_looks_like_markdown(value: &str) -> bool {
+    let trimmed = value.trim_start();
+
+    trimmed.starts_with("```")
+        || trimmed.starts_with('#')
+        || trimmed.contains("\n```")
+        || trimmed.contains("\n- ")
+        || trimmed.contains("\n* ")
+}
+
+fn cleanup_looks_like_commentary(value: &str) -> bool {
+    let lower = value.trim_start().to_ascii_lowercase();
+    let rejected_prefixes = [
+        "corrected:",
+        "output:",
+        "here's the cleaned text:",
+        "here is the cleaned text:",
+        "cleaned transcript:",
+        "the cleaned transcript is:",
+    ];
+
+    rejected_prefixes
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+}
+
+fn classify_cleanup_request_error(error: reqwest::Error) -> CleanupAttemptError {
+    if error.is_timeout() {
+        return cleanup_retryable(groq_cleanup_error(
+            GroqCleanupErrorCode::Timeout,
+            "The Groq cleanup request timed out.",
+        ));
+    }
+
+    cleanup_retryable(groq_cleanup_error(
+        GroqCleanupErrorCode::ApiUnreachable,
+        "Groq could not be reached. Check your network connection and try again.",
+    ))
+}
+
+fn classify_cleanup_http_error(
+    status: StatusCode,
+    retry_after: Option<Duration>,
+) -> CleanupAttemptError {
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            cleanup_non_retryable(groq_cleanup_error(
+                GroqCleanupErrorCode::InvalidApiKey,
+                "The configured Groq API key was rejected.",
+            ))
+        }
+        StatusCode::BAD_REQUEST => cleanup_non_retryable(groq_cleanup_error(
+            GroqCleanupErrorCode::InvalidRequest,
+            "Groq rejected the cleanup request.",
+        )),
+        StatusCode::REQUEST_TIMEOUT => cleanup_retryable_with_retry_after(
+            groq_cleanup_error(
+                GroqCleanupErrorCode::Timeout,
+                "The Groq cleanup request timed out.",
+            ),
+            retry_after,
+        ),
+        StatusCode::TOO_MANY_REQUESTS => cleanup_retryable_with_retry_after(
+            groq_cleanup_error(
+                GroqCleanupErrorCode::RateLimit,
+                "Groq rate limited the cleanup request. Try again shortly.",
+            ),
+            retry_after,
+        ),
+        status if status.is_server_error() => cleanup_retryable_with_retry_after(
+            groq_cleanup_error(
+                GroqCleanupErrorCode::ServerError,
+                "Groq could not complete the cleanup request.",
+            ),
+            retry_after,
+        ),
+        _ => cleanup_non_retryable(groq_cleanup_error(
+            GroqCleanupErrorCode::InvalidRequest,
+            "Groq rejected the cleanup request.",
+        )),
+    }
+}
+
+fn cleanup_retry_after(headers: &HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+}
+
+fn cleanup_retryable(error: GroqCleanupError) -> CleanupAttemptError {
+    CleanupAttemptError {
+        error,
+        retryable: true,
+        retry_after: None,
+    }
+}
+
+fn cleanup_retryable_with_retry_after(
+    error: GroqCleanupError,
+    retry_after: Option<Duration>,
+) -> CleanupAttemptError {
+    CleanupAttemptError {
+        error,
+        retryable: true,
+        retry_after,
+    }
+}
+
+fn cleanup_non_retryable(error: GroqCleanupError) -> CleanupAttemptError {
+    CleanupAttemptError {
+        error,
+        retryable: false,
+        retry_after: None,
+    }
+}
+
+fn cleanup_server_error() -> GroqCleanupError {
+    groq_cleanup_error(
+        GroqCleanupErrorCode::ServerError,
+        "Groq cleanup could not be initialized.",
+    )
+}
+
+fn cleanup_validation_error() -> GroqCleanupError {
+    groq_cleanup_error(
+        GroqCleanupErrorCode::ValidationFailed,
+        "Groq cleanup returned text Floe could not safely use.",
+    )
+}
+
+fn groq_cleanup_error(code: GroqCleanupErrorCode, message: &'static str) -> GroqCleanupError {
+    GroqCleanupError {
+        code,
+        message: message.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -308,7 +712,9 @@ mod tests {
     };
 
     use super::{
-        GroqTranscriptionClient, GroqTranscriptionErrorCode, GROQ_STT_MODEL, TRANSCRIPTIONS_PATH,
+        GroqCleanupClient, GroqCleanupErrorCode, GroqTranscriptionClient,
+        GroqTranscriptionErrorCode, CHAT_COMPLETIONS_PATH, GROQ_CLEANUP_MODEL, GROQ_STT_MODEL,
+        TRANSCRIPTIONS_PATH,
     };
 
     #[tokio::test]
@@ -595,8 +1001,260 @@ mod tests {
         assert_eq!(server.request_count(), 3);
     }
 
+    #[tokio::test]
+    async fn cleanup_successful_request_sends_expected_payload() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"Cleaned transcript."}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let result = client
+            .cleanup_transcript("gsk_test_key", "raw transcript")
+            .await
+            .expect("cleanup should succeed");
+
+        assert_eq!(result, "Cleaned transcript.");
+        assert_eq!(server.request_count(), 1);
+        let request = server.requests()[0].clone();
+        let request_lower = request.to_ascii_lowercase();
+        assert!(request.starts_with(&format!("POST {CHAT_COMPLETIONS_PATH} HTTP/1.1")));
+        assert!(request_lower.contains("authorization: bearer gsk_test_key"));
+        assert!(request.contains(GROQ_CLEANUP_MODEL));
+        assert!(request.contains(r#""role":"system""#));
+        assert!(request.contains(r#""role":"user""#));
+        assert!(request.contains(r#""temperature":0"#));
+        assert!(request.contains("Clean this transcript"));
+        assert!(request.contains("<transcript>"));
+        assert!(request.contains("raw transcript"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_missing_api_key_is_not_retried() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"unused"}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("   ", "raw")
+            .await
+            .expect_err("missing key should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::MissingApiKey);
+        assert_eq!(server.request_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_empty_transcript_is_not_retried() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"unused"}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "   \n  ")
+            .await
+            .expect_err("empty transcript should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::EmptyTranscript);
+        assert_eq!(server.request_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_invalid_api_key_is_not_retried() {
+        let server = MockServer::start(vec![MockResponse::json(
+            401,
+            r#"{"error":{"message":"unauthorized"}}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("invalid key should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::InvalidApiKey);
+        assert_eq!(server.request_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_mapped_error_messages_do_not_expose_api_key_or_response_body() {
+        let server = MockServer::start(vec![MockResponse::json(
+            401,
+            r#"{"error":{"message":"leaked secret response body"}}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("invalid key should fail");
+
+        assert!(!error.message.contains("gsk_test_key"));
+        assert!(!error.message.contains("leaked secret response body"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_malformed_success_response_fails_without_retry() {
+        let server = MockServer::start(vec![MockResponse::json(200, r#"{"unexpected":"shape"}"#)]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("malformed response should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::MalformedResponse);
+        assert_eq!(server.request_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rate_limit_retries_with_bounded_attempts() {
+        let server = MockServer::start(vec![
+            MockResponse::json(429, r#"{"error":{"message":"slow down"}}"#),
+            MockResponse::json(429, r#"{"error":{"message":"slow down"}}"#),
+            MockResponse::json(429, r#"{"error":{"message":"slow down"}}"#),
+        ]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("rate limit should fail after retries");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::RateLimit);
+        assert_eq!(server.request_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rate_limit_retries_until_success() {
+        let server = MockServer::start(vec![
+            MockResponse::json(429, r#"{"error":{"message":"slow down"}}"#),
+            MockResponse::json(200, r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#),
+        ]);
+        let client = test_cleanup_client(server.base_url());
+
+        let result = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect("cleanup should eventually succeed");
+
+        assert_eq!(result, "Cleaned.");
+        assert_eq!(server.request_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn cleanup_server_errors_retry_until_success() {
+        let server = MockServer::start(vec![
+            MockResponse::json(503, r#"{"error":{"message":"down"}}"#),
+            MockResponse::json(200, r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#),
+        ]);
+        let client = test_cleanup_client(server.base_url());
+
+        let result = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect("cleanup should eventually succeed");
+
+        assert_eq!(result, "Cleaned.");
+        assert_eq!(server.request_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn cleanup_server_errors_fail_after_retry_exhaustion() {
+        let server = MockServer::start(vec![
+            MockResponse::json(500, r#"{"error":{"message":"down"}}"#),
+            MockResponse::json(500, r#"{"error":{"message":"down"}}"#),
+            MockResponse::json(500, r#"{"error":{"message":"down"}}"#),
+        ]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("server errors should fail after retries");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ServerError);
+        assert_eq!(server.request_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_markdown_fenced_output() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"```\nCleaned.\n```"}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("markdown output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+        assert_eq!(server.request_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_commentary_prefixed_output() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"Corrected: Cleaned."}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("commentary output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_empty_output() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"   "}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("empty output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_unreachable_api_retries_and_reports_unreachable() {
+        let server = BrokenServer::start(3);
+        let client = GroqCleanupClient::for_test(
+            server.base_url(),
+            Duration::from_secs(1),
+            3,
+            Duration::ZERO,
+        );
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("unreachable api should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ApiUnreachable);
+        assert_eq!(server.request_count(), 3);
+    }
+
     fn test_client(base_url: String) -> GroqTranscriptionClient {
         GroqTranscriptionClient::for_test(base_url, Duration::from_secs(2), 3, Duration::ZERO)
+    }
+
+    fn test_cleanup_client(base_url: String) -> GroqCleanupClient {
+        GroqCleanupClient::for_test(base_url, Duration::from_secs(2), 3, Duration::ZERO)
     }
 
     fn minimal_wav() -> Vec<u8> {
