@@ -7,7 +7,7 @@ const GROQ_BASE_URL: &str = "https://api.groq.com";
 const TRANSCRIPTIONS_PATH: &str = "/openai/v1/audio/transcriptions";
 const CHAT_COMPLETIONS_PATH: &str = "/openai/v1/chat/completions";
 const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
-const GROQ_CLEANUP_MODEL: &str = "openai/gpt-oss-20b";
+const GROQ_CLEANUP_MODEL: &str = "llama-3.1-8b-instant";
 const STT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CLEANUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_ATTEMPTS: usize = 3;
@@ -1104,6 +1104,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cleanup_request_uses_llama_instant_and_sends_no_gpt_oss_parameters() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let result = client
+            .cleanup_transcript("gsk_test_key", "raw transcript")
+            .await
+            .expect("cleanup should succeed");
+
+        assert_eq!(result.model, "llama-3.1-8b-instant");
+        assert_eq!(GROQ_CLEANUP_MODEL, "llama-3.1-8b-instant");
+
+        let request = server.requests()[0].clone();
+        let body = extract_request_body(&request);
+        let body_lower = body.to_ascii_lowercase();
+        assert!(!body_lower.contains("gpt-oss"));
+        assert!(!body_lower.contains("reasoning_effort"));
+        assert!(!body_lower.contains("\"reasoning\""));
+        assert!(body.contains(r#""temperature":0"#));
+        assert!(body_lower.contains("\"max_tokens\":64"));
+        assert!(body.contains(r#""model":"llama-3.1-8b-instant""#));
+    }
+
+    #[tokio::test]
     async fn cleanup_missing_api_key_is_not_retried() {
         let server = MockServer::start(vec![MockResponse::json(
             200,
@@ -1344,6 +1371,14 @@ mod tests {
 
     fn test_cleanup_client(base_url: String) -> GroqCleanupClient {
         GroqCleanupClient::for_test(base_url, Duration::from_secs(2), 3, Duration::ZERO)
+    }
+
+    fn extract_request_body(request: &str) -> String {
+        let marker = "\r\n\r\n";
+        if let Some(index) = request.find(marker) {
+            return request[index + marker.len()..].to_string();
+        }
+        String::new()
     }
 
     fn minimal_wav() -> Vec<u8> {

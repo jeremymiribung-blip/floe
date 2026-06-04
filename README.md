@@ -16,7 +16,7 @@ Floe aims to feel fast, private by default, and boringly reliable. The STT path 
 - `cpal` microphone recording
 - In-memory 16-bit PCM WAV generation
 - Groq Speech-to-Text with `whisper-large-v3-turbo`
-- Groq transcript cleanup with `openai/gpt-oss-20b`
+- Groq transcript cleanup with `llama-3.1-8b-instant`
 - OS keychain storage for the Groq API key
 - Tauri autostart integration for optional start-at-login
 

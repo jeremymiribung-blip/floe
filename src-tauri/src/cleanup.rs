@@ -8,6 +8,7 @@ use crate::{
 };
 
 const CLEANUP_FAILED_WARNING: &str = "Cleanup failed";
+const CLEANUP_MODEL: &str = "llama-3.1-8b-instant";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +41,7 @@ impl TranscriptCleanupResult {
         let model = error
             .as_ref()
             .map(|error| error.model.clone())
-            .unwrap_or_else(|| "openai/gpt-oss-20b".to_string());
+            .unwrap_or_else(|| CLEANUP_MODEL.to_string());
         let retry_count = error.as_ref().map(|error| error.retry_count).unwrap_or(0);
         let validation_ms = error.as_ref().map(|error| error.validation_ms).unwrap_or(0);
         let error_code = error.map(|error| error.code);
@@ -147,7 +148,7 @@ mod tests {
             super::TranscriptCleanupResult {
                 text: "Cleaned transcript.".to_string(),
                 warning: None,
-                model: "openai/gpt-oss-20b".to_string(),
+                model: "llama-3.1-8b-instant".to_string(),
                 retry_count: 0,
                 validation_ms: 1,
                 fallback_used: false,
@@ -222,10 +223,25 @@ mod tests {
         assert_eq!(result.warning.as_deref(), Some("Cleanup failed"));
     }
 
+    #[tokio::test]
+    async fn fallback_model_uses_llama_instant_constant() {
+        let manager = test_manager();
+
+        let result =
+            cleanup_transcript_with(&manager, "raw transcript".to_string(), |_, _| async {
+                panic!("groq must not be called without a key")
+            })
+            .await;
+
+        assert_eq!(result.text, "raw transcript");
+        assert_eq!(result.model, "llama-3.1-8b-instant");
+        assert!(result.fallback_used);
+    }
+
     fn test_cleanup(text: &str) -> GroqCleanup {
         GroqCleanup {
             text: text.to_string(),
-            model: "openai/gpt-oss-20b".to_string(),
+            model: "llama-3.1-8b-instant".to_string(),
             retry_count: 0,
             validation_ms: 1,
         }

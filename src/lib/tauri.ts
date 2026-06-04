@@ -492,7 +492,7 @@ export function cleanupTranscript(
   if (!isTauriRuntime()) {
     return Promise.resolve({
       text: transcript,
-      model: "openai/gpt-oss-20b",
+      model: "llama-3.1-8b-instant",
       retryCount: 0,
       validationMs: 0,
       fallbackUsed: false,

@@ -262,7 +262,7 @@ export class PushToTalkController {
       return {
         text: transcript,
         warning: "Cleanup failed",
-        model: "openai/gpt-oss-20b",
+        model: "llama-3.1-8b-instant",
         retryCount: 0,
         validationMs: 0,
         fallbackUsed: true,

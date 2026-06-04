@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   bottleneckFor,
+  CLEANUP_MODEL,
   createPipelineDiagnostics,
   diagnosticsToJson,
+  STT_MODEL,
 } from "./diagnostics";
 import type { RecordingInfo } from "../types/app";
 
@@ -39,7 +41,7 @@ describe("diagnostics", () => {
       cleanupDurationMs: 190,
       cleanup: {
         text: "private cleaned text",
-        model: "openai/gpt-oss-20b",
+        model: "llama-3.1-8b-instant",
         retryCount: 1,
         validationMs: 2,
         fallbackUsed: false,
@@ -98,7 +100,7 @@ describe("diagnostics", () => {
         cleanupDurationMs: 3,
         cleanup: {
           text: "cleaned secret authorization bearer",
-          model: "openai/gpt-oss-20b",
+          model: "llama-3.1-8b-instant",
           retryCount: 0,
           validationMs: 1,
           fallbackUsed: false,
@@ -120,5 +122,37 @@ describe("diagnostics", () => {
     expect(json).not.toContain("gsk_12345678abcd");
     expect(json.toLowerCase()).not.toContain("authorization bearer");
     expect(json).not.toContain("raw_audio");
+  });
+
+  it("uses llama-3.1-8b-instant for cleanup and whisper-large-v3-turbo for stt", () => {
+    expect(CLEANUP_MODEL).toBe("llama-3.1-8b-instant");
+    expect(STT_MODEL).toBe("whisper-large-v3-turbo");
+    expect(CLEANUP_MODEL).not.toContain("gpt-oss");
+    expect(CLEANUP_MODEL).not.toContain("openai/");
+  });
+
+  it("falls back to llama-3.1-8b-instant when cleanup data is missing", () => {
+    const diagnostics = createPipelineDiagnostics({
+      createdAt: new Date("2026-01-01T12:00:00.000Z"),
+      platform: "windows",
+      totalMs: 1,
+      hotkeyToRecordingStartMs: 0,
+      recordingInfo,
+      sttDurationMs: 1,
+      cleanupDurationMs: 0,
+      cleanupFallbackUsed: false,
+      cleanupValidationMs: 0,
+      clipboardWriteMs: 0,
+      pasteAttemptMs: 0,
+      clipboardSuccess: false,
+      pasteSuccess: false,
+      copiedOnly: false,
+      errorStage: null,
+      sanitizedErrorCode: null,
+    });
+
+    expect(diagnostics.models.cleanup).toBe("llama-3.1-8b-instant");
+    expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
+    expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
   });
 });

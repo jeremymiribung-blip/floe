@@ -353,6 +353,23 @@ describe("PushToTalkController", () => {
     expect(lastState(harness.states)).toBe("pasted");
   });
 
+  it("uses llama-3.1-8b-instant as the cleanup fallback model when cleanup throws", async () => {
+    const harness = createHarness({
+      cleanupTranscript: async () => {
+        throw new Error("cleanup failed");
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const json = harness.controller.getLatestDiagnosticsJson() ?? "";
+    const diagnostics = JSON.parse(json);
+    expect(diagnostics.models.cleanup).toBe("llama-3.1-8b-instant");
+    expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
+    expect(diagnostics.result.cleanup_fallback_used).toBe(true);
+  });
+
   it("copies text before a paste failure is reported", async () => {
     const harness = createHarness({
       pasteClipboard: async () => {
@@ -444,7 +461,7 @@ describe("PushToTalkController", () => {
     );
     expect(diagnostics.pipeline.audio_encode_ms).toBe(4);
     expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
-    expect(diagnostics.models.cleanup).toBe("openai/gpt-oss-20b");
+    expect(diagnostics.models.cleanup).toBe("llama-3.1-8b-instant");
     expect(diagnostics.audio).toEqual({
       format: "wav",
       sample_rate: 48_000,
@@ -465,7 +482,7 @@ describe("PushToTalkController", () => {
       transcribeLatestRecording: async () => transcription(privateTranscript),
       cleanupTranscript: async () => ({
         text: cleanedText,
-        model: "openai/gpt-oss-20b",
+        model: "llama-3.1-8b-instant",
         retryCount: 0,
         validationMs: 1,
         fallbackUsed: false,
@@ -516,7 +533,7 @@ describe("PushToTalkController", () => {
       cleanupTranscript: async (transcript) => ({
         text: transcript,
         warning: "Cleanup failed",
-        model: "openai/gpt-oss-20b",
+        model: "llama-3.1-8b-instant",
         retryCount: 0,
         validationMs: 2,
         fallbackUsed: true,

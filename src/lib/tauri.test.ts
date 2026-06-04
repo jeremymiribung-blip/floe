@@ -225,11 +225,20 @@ describe("browser settings fallback", () => {
 
     await expect(cleanupTranscript("raw text")).resolves.toEqual({
       text: "raw text",
-      model: "openai/gpt-oss-20b",
+      model: "llama-3.1-8b-instant",
       retryCount: 0,
       validationMs: 0,
       fallbackUsed: false,
     });
+  });
+
+  it("browser cleanupTranscript uses llama-3.1-8b-instant and not a gpt-oss model", async () => {
+    const { cleanupTranscript } = await import("./tauri");
+
+    const result = await cleanupTranscript("raw text");
+    expect(result.model).toBe("llama-3.1-8b-instant");
+    expect(result.model).not.toContain("gpt-oss");
+    expect(result.model).not.toContain("openai/");
   });
 
   it("default browser app settings have no cleanupMode field", async () => {
