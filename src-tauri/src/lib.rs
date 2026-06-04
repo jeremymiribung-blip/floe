@@ -8,7 +8,14 @@ mod settings;
 mod system;
 
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        system::single_instance::handle_secondary_launch(app);
+    }));
+
+    let builder = builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
@@ -94,6 +101,7 @@ pub fn run() {
     match builder.build(tauri::generate_context!()) {
         Ok(app) => {
             lifecycle::log_lifecycle(lifecycle::LifecycleLevel::Info, "app_started");
+            system::single_instance::log_primary_started();
             app.run(|app, event| {
                 if let tauri::RunEvent::ExitRequested { .. } = event {
                     lifecycle::cleanup_before_exit(app);

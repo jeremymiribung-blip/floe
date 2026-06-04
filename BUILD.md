@@ -8,6 +8,8 @@ The packaged app registers a configurable global push-to-talk hotkey through the
 
 Floe also supports optional Start at login through the Tauri 2 autostart plugin. When enabled, the installed app launches with `--background`, creates the tray icon, registers the configured hotkey, and keeps the main window hidden until the user chooses tray `Show Floe`.
 
+Floe uses the Tauri 2 single-instance plugin to guarantee one app process at a time. The plugin is registered as the first plugin in the Tauri builder and is included as a desktop-only target dependency so mobile builds remain unaffected. Secondary launches (Start Menu, Desktop, Explorer, or a manual launch while Start at login is also active) notify the primary process to show and focus the existing main window instead of starting a second tray, hotkey, audio manager, or recording flow. The Windows release binary keeps `windows_subsystem = "windows"` in `main.rs`, so the single-instance behavior does not reintroduce a console window.
+
 ## Project Build Overview
 
 Floe uses `corepack pnpm run tauri:build` for the default Tauri build and `corepack pnpm exec tauri build --bundles <target>` when selecting one bundle type explicitly. Tauri first runs `corepack pnpm build`, which runs `tsc && vite build` and writes frontend assets to `dist/`. Tauri then compiles the Rust app in `src-tauri/` and hands the release binary to the platform bundler.

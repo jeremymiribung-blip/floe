@@ -14,3 +14,4 @@
 - Do not access the microphone, start recording, call Groq, paste text, or show prompts during background startup.
 - Do not log raw transcripts, raw audio, full API keys, or auth headers.
 - Prefer small modules and focused tests.
+- Floe runs as a single app instance via the Tauri 2 single-instance plugin; secondary launches show/focus the existing main window and never reinitialize the tray, hotkey, audio manager, recording, or paste.

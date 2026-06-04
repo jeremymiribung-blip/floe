@@ -26,5 +26,8 @@ enigo = "0.6"
 tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-autostart = "2"
 
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt", "time"] }

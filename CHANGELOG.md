@@ -6,6 +6,8 @@ All notable changes to Floe will be documented in this file.
 
 ### Added
 
+- Single-instance enforcement via the Tauri 2 single-instance plugin. Secondary launches show and focus the existing main window instead of reinitializing the tray, global hotkey, audio manager, recording, Groq calls, or paste. This makes Start at login plus a later manual launch resolve to a single running instance.
+
 - Groq transcript cleanup as part of the fixed Groq STT → Groq cleanup → clipboard → paste flow. The `cleanup_transcript` command now always sends the Groq transcript through the Groq Chat Completions API and copies the result to the clipboard; if cleanup fails, the raw Groq transcript is pasted instead and a short `Cleanup failed` warning is shown.
 - Best-effort migration of any legacy `cerebras-api-key` keychain entry to silence in `SettingsManager::new`. The legacy value is never read or logged.
 - Initial setup-only Tauri 2, React, TypeScript, Vite, and Rust scaffold.

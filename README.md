@@ -123,6 +123,10 @@ Autostart behavior may depend on OS-specific login item permissions. On Linux, a
 
 Floe is a background push-to-talk utility. The window close button (X on Windows/Linux, red close button on macOS, and `Cmd+W`) hides Floe to the system tray instead of quitting. The global hotkey keeps working while the window is hidden, and the tray icon stays active. The tray menu offers `Show Floe`, `Hide Floe`, `Settings`, and `Quit`. Use the tray `Quit` to fully exit Floe; `Cmd+Q` on macOS also exits through the same shutdown path. On Linux desktops without a system tray, Floe falls back to keeping the process running but the tray icon may not be visible.
 
+## Single Instance
+
+Floe runs as a single app instance. Launching Floe again from the Start Menu, Desktop, or Explorer shows and focuses the existing main window instead of starting a second process. This prevents duplicate tray icons, duplicate global hotkey registrations, and double recording or paste attempts. When Start at login is enabled, autostart and a later manual launch resolve to one running instance; the secondary launch shows the existing window. After tray `Quit`, the next launch starts normally.
+
 ## API Keys and Cleanup
 
 The Groq API key is stored through the operating system keychain using the Rust `keyring` crate under the `groq-api-key` user. Non-secret app settings, including the global hotkey, are stored separately in Floe's app config directory.
