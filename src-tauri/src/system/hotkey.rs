@@ -12,8 +12,6 @@ use crate::{
 };
 
 pub const HOTKEY_EVENT: &str = "floe-global-hotkey-state";
-const LEGACY_DEFAULT_HOTKEY_ACCELERATOR: &str = "Ctrl+Space";
-const LEGACY_DEFAULT_HOTKEY_LABEL: &str = "Ctrl+Space";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -308,30 +306,33 @@ pub fn default_hotkey_settings() -> HotkeySettings {
 pub fn default_hotkey_for_os(os: &str) -> HotkeySettings {
     if os == "macos" {
         HotkeySettings {
-            accelerator: "CommandOrControl+Shift+Space".to_string(),
-            label: "Command+Shift+Space".to_string(),
+            accelerator: "Alt+Space".to_string(),
+            label: "Option + Space".to_string(),
         }
     } else {
         HotkeySettings {
-            accelerator: "Control+Shift+Space".to_string(),
-            label: "Control+Shift+Space".to_string(),
+            accelerator: "Control+Space".to_string(),
+            label: "Ctrl + Space".to_string(),
         }
     }
 }
 
 pub fn normalize_hotkey_settings(hotkey: HotkeySettings) -> Result<HotkeySettings, HotkeyError> {
+    normalize_hotkey_settings_for_os(hotkey, std::env::consts::OS)
+}
+
+pub fn normalize_hotkey_settings_for_os(
+    hotkey: HotkeySettings,
+    os: &str,
+) -> Result<HotkeySettings, HotkeyError> {
     let accelerator = hotkey.accelerator.trim();
-    let label = hotkey.label.trim();
+    let _label = hotkey.label.trim();
 
     if accelerator.is_empty() || accelerator.chars().any(char::is_control) {
         return Err(invalid_hotkey_error());
     }
 
-    if is_legacy_default_hotkey(accelerator, label) {
-        return Ok(default_hotkey_settings());
-    }
-
-    let default_hotkey = default_hotkey_settings();
+    let default_hotkey = default_hotkey_for_os(os);
     if accelerator.eq_ignore_ascii_case(&default_hotkey.accelerator) {
         return Ok(default_hotkey);
     }
@@ -340,7 +341,7 @@ pub fn normalize_hotkey_settings(hotkey: HotkeySettings) -> Result<HotkeySetting
     validate_shortcut(&shortcut)?;
 
     let accelerator = canonical_accelerator(&shortcut);
-    let label = label_from_shortcut(&shortcut);
+    let label = label_from_shortcut_for_os(&shortcut, os);
 
     Ok(HotkeySettings { accelerator, label })
 }
@@ -363,19 +364,10 @@ fn parse_shortcut(accelerator: &str) -> Result<Shortcut, HotkeyError> {
 fn validate_shortcut(shortcut: &Shortcut) -> Result<(), HotkeyError> {
     let base_mods = Modifiers::SHIFT | Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER;
     let mods = shortcut.mods & base_mods;
-    let modifier_count = [
-        Modifiers::CONTROL,
-        Modifiers::ALT,
-        Modifiers::SHIFT,
-        Modifiers::SUPER,
-    ]
-    .into_iter()
-    .filter(|modifier| mods.contains(*modifier))
-    .count();
     let has_primary_modifier =
         mods.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER);
 
-    if !has_primary_modifier || modifier_count < 2 {
+    if !has_primary_modifier {
         return Err(unsupported_hotkey_error());
     }
 
@@ -396,7 +388,6 @@ fn is_floe_conflict(shortcut: &Shortcut) -> bool {
 fn is_unsafe_system_shortcut(shortcut: &Shortcut) -> bool {
     shortcut.matches(Modifiers::ALT, Code::F4)
         || shortcut.matches(Modifiers::SUPER, Code::KeyQ)
-        || shortcut.matches(Modifiers::CONTROL, Code::Space)
         || shortcut.matches(Modifiers::SUPER, Code::Space)
         || shortcut.matches(Modifiers::CONTROL | Modifiers::ALT, Code::Delete)
 }
@@ -408,34 +399,44 @@ fn canonical_accelerator(shortcut: &Shortcut) -> String {
     parts.join("+")
 }
 
-fn label_from_shortcut(shortcut: &Shortcut) -> String {
-    let mut parts = modifier_parts(shortcut, true);
+fn label_from_shortcut_for_os(shortcut: &Shortcut, os: &str) -> String {
+    let mut parts = modifier_parts_for_os(shortcut, true, os);
     parts.push(key_label(shortcut.key));
 
-    parts.join("+")
+    parts.join(" + ")
 }
 
 fn modifier_parts(shortcut: &Shortcut, label: bool) -> Vec<String> {
+    modifier_parts_for_os(shortcut, label, std::env::consts::OS)
+}
+
+fn modifier_parts_for_os(shortcut: &Shortcut, label: bool, os: &str) -> Vec<String> {
     let mut parts = Vec::new();
+    let is_macos = os == "macos";
 
     if shortcut.mods.contains(Modifiers::CONTROL) {
-        parts.push("Control".to_string());
+        parts.push(if label && !is_macos {
+            "Ctrl".to_string()
+        } else {
+            "Control".to_string()
+        });
     }
     if shortcut.mods.contains(Modifiers::ALT) {
-        parts.push("Alt".to_string());
+        parts.push(if label && is_macos {
+            "Option".to_string()
+        } else {
+            "Alt".to_string()
+        });
     }
     if shortcut.mods.contains(Modifiers::SHIFT) {
         parts.push("Shift".to_string());
     }
     if shortcut.mods.contains(Modifiers::SUPER) {
-        parts.push(
-            if label && std::env::consts::OS == "macos" {
-                "Command"
-            } else {
-                "Super"
-            }
-            .to_string(),
-        );
+        parts.push(if label && is_macos {
+            "Command".to_string()
+        } else {
+            "Super".to_string()
+        });
     }
 
     parts
@@ -448,11 +449,6 @@ fn key_label(key: Code) -> String {
         .or_else(|| raw.strip_prefix("Digit"))
         .unwrap_or(&raw)
         .to_string()
-}
-
-fn is_legacy_default_hotkey(accelerator: &str, label: &str) -> bool {
-    accelerator.eq_ignore_ascii_case(LEGACY_DEFAULT_HOTKEY_ACCELERATOR)
-        && (label.is_empty() || label.eq_ignore_ascii_case(LEGACY_DEFAULT_HOTKEY_LABEL))
 }
 
 fn map_registration_error(error: tauri_plugin_global_shortcut::Error) -> HotkeyError {
@@ -522,7 +518,7 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        default_hotkey_for_os, normalize_hotkey_settings, HotkeyError, HotkeyErrorCode,
+        default_hotkey_for_os, normalize_hotkey_settings_for_os, HotkeyError, HotkeyErrorCode,
         HotkeyManager, HotkeyRegistrar, HotkeySettings,
     };
     use crate::settings::{AppSettings, SecretStore, SettingsError, SettingsManager};
@@ -577,62 +573,117 @@ mod tests {
         }
     }
 
+    fn normalize_for_test(accelerator: &str) -> Result<HotkeySettings, HotkeyError> {
+        normalize_hotkey_settings_for_os(
+            HotkeySettings {
+                accelerator: accelerator.to_string(),
+                label: String::new(),
+            },
+            "linux",
+        )
+    }
+
+    fn normalize_for_macos(accelerator: &str) -> Result<HotkeySettings, HotkeyError> {
+        normalize_hotkey_settings_for_os(
+            HotkeySettings {
+                accelerator: accelerator.to_string(),
+                label: String::new(),
+            },
+            "macos",
+        )
+    }
+
+    fn current_default() -> HotkeySettings {
+        default_hotkey_for_os(std::env::consts::OS)
+    }
+
     #[test]
     fn default_hotkey_selection_matches_platforms() {
-        assert_eq!(
-            default_hotkey_for_os("macos").accelerator,
-            "CommandOrControl+Shift+Space"
-        );
+        assert_eq!(default_hotkey_for_os("macos").accelerator, "Alt+Space");
+        assert_eq!(default_hotkey_for_os("macos").label, "Option + Space");
         assert_eq!(
             default_hotkey_for_os("windows").accelerator,
-            "Control+Shift+Space"
+            "Control+Space"
         );
-        assert_eq!(
-            default_hotkey_for_os("linux").accelerator,
-            "Control+Shift+Space"
-        );
+        assert_eq!(default_hotkey_for_os("windows").label, "Ctrl + Space");
+        assert_eq!(default_hotkey_for_os("linux").accelerator, "Control+Space");
+        assert_eq!(default_hotkey_for_os("linux").label, "Ctrl + Space");
     }
 
     #[test]
     fn hotkey_parsing_normalizes_label_and_accelerator() {
-        let hotkey = normalize_hotkey_settings(HotkeySettings {
-            accelerator: "  Ctrl + Shift + A  ".to_string(),
-            label: String::new(),
-        })
-        .unwrap();
+        let hotkey = normalize_for_test("  Ctrl + Shift + A  ").unwrap();
 
         assert_eq!(hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(hotkey.label, "Control+Shift+A");
+        assert_eq!(hotkey.label, "Ctrl + Shift + A");
     }
 
     #[test]
-    fn invalid_hotkeys_are_rejected() {
-        for accelerator in ["", "Shift+A", "A", "Control+Space", "Control+Shift"] {
-            let error = normalize_hotkey_settings(HotkeySettings {
-                accelerator: accelerator.to_string(),
-                label: String::new(),
-            })
-            .expect_err("hotkey should fail validation");
+    fn macos_label_uses_option_for_alt() {
+        let hotkey = normalize_for_macos("Alt+Space").unwrap();
+
+        assert_eq!(hotkey.accelerator, "Alt+Space");
+        assert_eq!(hotkey.label, "Option + Space");
+    }
+
+    #[test]
+    fn single_modifier_shortcuts_are_valid() {
+        let windows = normalize_for_test("Control+Space").unwrap();
+        assert_eq!(windows.accelerator, "Control+Space");
+        assert_eq!(windows.label, "Ctrl + Space");
+
+        let macos = normalize_for_macos("Alt+Space").unwrap();
+        assert_eq!(macos.accelerator, "Alt+Space");
+        assert_eq!(macos.label, "Option + Space");
+
+        let combo = normalize_for_test("Control+Alt+KeyK").unwrap();
+        assert_eq!(combo.accelerator, "Control+Alt+KeyK");
+        assert_eq!(combo.label, "Ctrl + Alt + K");
+
+        let shifted = normalize_for_test("Control+Shift+KeyB").unwrap();
+        assert_eq!(shifted.accelerator, "Control+Shift+KeyB");
+        assert_eq!(shifted.label, "Ctrl + Shift + B");
+    }
+
+    #[test]
+    fn modifier_only_and_plain_shortcuts_are_invalid() {
+        for accelerator in [
+            "",
+            "  ",
+            "Control",
+            "Shift",
+            "Alt",
+            "Super",
+            "Control+Shift",
+            "A",
+            "Space",
+            "Control+",
+            "+++",
+        ] {
+            let error = normalize_for_test(accelerator).expect_err("hotkey should fail validation");
 
             assert!(
                 matches!(
                     error.code,
                     HotkeyErrorCode::InvalidHotkey | HotkeyErrorCode::UnsupportedHotkey
                 ),
-                "unexpected error: {error:?}"
+                "unexpected error for {accelerator:?}: {error:?}"
             );
         }
     }
 
     #[test]
-    fn legacy_default_hotkey_migrates_to_safe_default() {
-        let migrated = normalize_hotkey_settings(HotkeySettings {
-            accelerator: "Ctrl+Space".to_string(),
-            label: "Ctrl+Space".to_string(),
-        })
-        .unwrap();
+    fn control_space_is_not_treated_as_unsafe() {
+        let hotkey = normalize_for_test("Control+Space").unwrap();
+        assert_eq!(hotkey.accelerator, "Control+Space");
+        assert_eq!(hotkey.label, "Ctrl + Space");
 
-        assert_eq!(migrated, super::default_hotkey_settings());
+        let manager = HotkeyManager::default();
+        let mut registrar = FakeRegistrar::default();
+        manager
+            .register_hotkey(&mut registrar, hotkey)
+            .expect("Control+Space should register");
+        assert!(registrar.registered.iter().any(|a| a == "Control+Space"));
     }
 
     #[test]
@@ -642,17 +693,17 @@ mod tests {
         let mut registrar = FakeRegistrar::default();
 
         manager
-            .register_hotkey(&mut registrar, super::default_hotkey_settings())
+            .register_hotkey(&mut registrar, current_default())
             .unwrap();
         let status = manager
-            .set_hotkey(&settings, &mut registrar, "Control+Shift+KeyA".to_string())
+            .set_hotkey(&settings, &mut registrar, "Control+Alt+KeyA".to_string())
             .unwrap();
 
-        assert_eq!(status.configured.label, "Control+Shift+A");
-        assert_eq!(status.registered.unwrap().label, "Control+Shift+A");
+        assert_eq!(status.configured.label, "Ctrl + Alt + A");
+        assert_eq!(status.registered.unwrap().label, "Ctrl + Alt + A");
         assert_eq!(
             settings.get_app_settings().unwrap().hotkey.label,
-            "Control+Shift+A"
+            "Ctrl + Alt + A"
         );
     }
 
@@ -663,13 +714,13 @@ mod tests {
         let mut registrar = FakeRegistrar::default();
 
         manager
-            .set_hotkey(&settings, &mut registrar, "Control+Shift+KeyA".to_string())
+            .set_hotkey(&settings, &mut registrar, "Control+Alt+KeyA".to_string())
             .unwrap();
         let status = manager
             .reset_hotkey_to_default(&settings, &mut registrar)
             .unwrap();
 
-        assert_eq!(status.configured, super::default_hotkey_settings());
+        assert_eq!(status.configured, current_default());
         assert_eq!(
             settings.get_app_settings().unwrap().hotkey,
             status.configured
@@ -679,18 +730,14 @@ mod tests {
     #[test]
     fn startup_falls_back_to_default_when_saved_registration_fails() {
         let manager = HotkeyManager::default();
-        let configured = normalize_hotkey_settings(HotkeySettings {
-            accelerator: "Control+Shift+KeyA".to_string(),
-            label: String::new(),
-        })
-        .unwrap();
+        let configured = normalize_for_test("Control+Alt+KeyA").unwrap();
         let mut registrar = FakeRegistrar::default();
         registrar.failed.insert(configured.accelerator.clone());
 
         let status = manager.register_or_fallback(&mut registrar, configured.clone());
 
         assert_eq!(status.configured, configured);
-        assert_eq!(status.registered.unwrap(), super::default_hotkey_settings());
+        assert_eq!(status.registered.unwrap(), current_default());
         assert!(status.registration_error.is_some());
     }
 
@@ -699,12 +746,8 @@ mod tests {
         let manager = HotkeyManager::default();
         let settings = test_settings_manager();
         let mut registrar = FakeRegistrar::default();
-        let default_hotkey = super::default_hotkey_settings();
-        let failing_hotkey = normalize_hotkey_settings(HotkeySettings {
-            accelerator: "Control+Shift+KeyA".to_string(),
-            label: String::new(),
-        })
-        .unwrap();
+        let default_hotkey = current_default();
+        let failing_hotkey = normalize_for_test("Control+Alt+KeyA").unwrap();
         registrar.failed.insert(failing_hotkey.accelerator.clone());
 
         manager
@@ -723,7 +766,7 @@ mod tests {
         assert_eq!(status.registered.unwrap(), default_hotkey);
         assert_eq!(
             settings.get_app_settings().unwrap().hotkey,
-            super::default_hotkey_settings()
+            current_default()
         );
     }
 
@@ -760,6 +803,6 @@ mod tests {
         let saved = settings.get_app_settings().unwrap();
 
         assert_eq!(saved.hotkey.accelerator, "Control+Shift+KeyB");
-        assert_eq!(saved.hotkey.label, "Control+Shift+B");
+        assert_eq!(saved.hotkey.label, "Ctrl + Shift + B");
     }
 }

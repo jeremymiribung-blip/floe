@@ -18,12 +18,12 @@ const groqStatus: GroqApiKeyStatus = {
 };
 const hotkeyStatus: HotkeyStatus = {
   configured: {
-    accelerator: "Control+Shift+Space",
-    label: "Control+Shift+Space",
+    accelerator: "Control+Space",
+    label: "Ctrl + Space",
   },
   registered: {
-    accelerator: "Control+Shift+Space",
-    label: "Control+Shift+Space",
+    accelerator: "Control+Space",
+    label: "Ctrl + Space",
   },
   isRegistered: true,
   registrationError: null,
@@ -65,6 +65,12 @@ describe("SettingsView", () => {
 
     expect(container.textContent).toContain("Audio → Groq");
     expect(container.textContent).toContain("Text → Groq");
+  });
+
+  it("shows the configured hotkey label in the new Ctrl + Space format", () => {
+    const { container } = renderSettingsView();
+
+    expect(container.textContent).toContain("Ctrl + Space");
   });
 
   it("toggles start at login and updates the visible state", async () => {

@@ -30,17 +30,11 @@ export function captureHotkey(event: HotkeyCaptureEvent): CapturedHotkey {
   }
 
   if (modifierCodes.has(event.code)) {
-    throw new Error("Press a key with at least two modifier keys.");
-  }
-
-  const modifiers = modifierParts(event);
-
-  if (modifiers.length < 2) {
-    throw new Error("Use at least two modifier keys.");
+    throw new Error("Press a key with at least one modifier.");
   }
 
   if (!event.ctrlKey && !event.altKey && !event.metaKey) {
-    throw new Error("Use Control, Alt, Command, or Super in the shortcut.");
+    throw new Error("Press a key with at least one modifier.");
   }
 
   const key = keyPart(event);
@@ -49,25 +43,28 @@ export function captureHotkey(event: HotkeyCaptureEvent): CapturedHotkey {
     throw new Error("This shortcut is not supported.");
   }
 
+  const modifiers = modifierParts(event);
+
   return {
     accelerator: [
       ...modifiers.map((modifier) => modifier.accelerator),
       key,
     ].join("+"),
     label: [...modifiers.map((modifier) => modifier.label), keyLabel(key)].join(
-      "+",
+      " + ",
     ),
   };
 }
 
 function modifierParts(event: HotkeyCaptureEvent) {
+  const mac = isMacLikePlatform();
   const modifiers: Array<{ accelerator: string; label: string }> = [];
 
   if (event.ctrlKey) {
-    modifiers.push({ accelerator: "Control", label: "Control" });
+    modifiers.push({ accelerator: "Control", label: mac ? "Control" : "Ctrl" });
   }
   if (event.altKey) {
-    modifiers.push({ accelerator: "Alt", label: "Alt" });
+    modifiers.push({ accelerator: "Alt", label: mac ? "Option" : "Alt" });
   }
   if (event.shiftKey) {
     modifiers.push({ accelerator: "Shift", label: "Shift" });
@@ -75,7 +72,7 @@ function modifierParts(event: HotkeyCaptureEvent) {
   if (event.metaKey) {
     modifiers.push({
       accelerator: "Super",
-      label: isMacLikePlatform() ? "Command" : "Super",
+      label: mac ? "Command" : "Super",
     });
   }
 
@@ -106,7 +103,6 @@ function keyPart(event: HotkeyCaptureEvent): string | null {
       "End",
       "Enter",
       "Equal",
-      "Escape",
       "Home",
       "Insert",
       "Minus",
@@ -134,6 +130,6 @@ function keyLabel(key: string): string {
   return key.replace(/^Key/, "").replace(/^Digit/, "");
 }
 
-function isMacLikePlatform(): boolean {
+export function isMacLikePlatform(): boolean {
   return /Mac|iPhone|iPad/.test(window.navigator.platform);
 }

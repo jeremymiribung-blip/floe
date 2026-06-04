@@ -206,7 +206,8 @@ impl AppSettingsStore {
             None => HotkeySettings::default(),
         };
 
-        Ok(AppSettings { hotkey })
+        let settings = AppSettings { hotkey };
+        validate_app_settings(settings)
     }
 
     fn save(&self, settings: &AppSettings) -> Result<(), SettingsError> {
@@ -478,7 +479,7 @@ mod tests {
 
         let settings = manager.get_app_settings().unwrap();
 
-        assert_eq!(settings.hotkey.label, "Ctrl+Shift+A");
+        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
     }
 
     #[test]
@@ -539,15 +540,11 @@ mod tests {
         for hotkey in [
             HotkeySettings {
                 accelerator: "".to_string(),
-                label: "Ctrl+Space".to_string(),
+                label: "Ctrl + Space".to_string(),
             },
             HotkeySettings {
                 accelerator: "Control\nShift+Space".to_string(),
                 label: "Control+Shift+Space".to_string(),
-            },
-            HotkeySettings {
-                accelerator: "Control+Space".to_string(),
-                label: "Control+Space".to_string(),
             },
         ] {
             let error = manager
@@ -562,12 +559,29 @@ mod tests {
             .save_app_settings(AppSettings {
                 hotkey: HotkeySettings {
                     accelerator: too_long,
-                    label: "Control+Shift+Space".to_string(),
+                    label: "Ctrl + Shift + Space".to_string(),
                 },
             })
             .expect_err("too-long settings should fail");
 
         assert_eq!(error.code, SettingsErrorCode::InvalidAppSettings);
+    }
+
+    #[test]
+    fn app_settings_accepts_platform_space_defaults() {
+        let manager = test_manager();
+
+        let saved = manager
+            .save_app_settings(AppSettings {
+                hotkey: HotkeySettings {
+                    accelerator: "Control+Space".to_string(),
+                    label: "Ctrl + Space".to_string(),
+                },
+            })
+            .expect("Control+Space should save");
+
+        assert_eq!(saved.hotkey.accelerator, "Control+Space");
+        assert_eq!(saved.hotkey.label, "Ctrl + Space");
     }
 
     #[test]
@@ -584,7 +598,7 @@ mod tests {
             .expect("valid settings should save");
 
         assert_eq!(saved.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(saved.hotkey.label, "Control+Shift+A");
+        assert_eq!(saved.hotkey.label, "Ctrl + Shift + A");
         assert_eq!(manager.get_app_settings().unwrap(), saved);
     }
 

@@ -15,6 +15,7 @@ import type {
   StartAtLoginStatus,
   TranscriptCleanupResult,
 } from "../types/app";
+import { isMacLikePlatform } from "./hotkeyCapture";
 
 const browserStatus: AppStatus = {
   appName: "Floe",
@@ -23,15 +24,18 @@ const browserStatus: AppStatus = {
     "Push-to-talk recording, transcription, clipboard copy, and paste checks are ready.",
 };
 
+function browserDefaultHotkey() {
+  return isMacLikePlatform()
+    ? { accelerator: "Alt+Space", label: "Option + Space" }
+    : { accelerator: "Control+Space", label: "Ctrl + Space" };
+}
+
 let browserGroqApiKeyStatus: GroqApiKeyStatus = {
   configured: false,
   maskedPreview: null,
 };
 let browserAppSettings: AppSettings = {
-  hotkey: {
-    accelerator: "Control+Shift+Space",
-    label: "Control+Shift+Space",
-  },
+  hotkey: browserDefaultHotkey(),
 };
 let browserHotkeyRegistered = true;
 let browserHotkeyRegistrationError: string | null = null;
@@ -89,26 +93,88 @@ function normalizeBrowserHotkey(accelerator: string): AppSettings["hotkey"] {
     throw hotkeyError("invalidHotkey", "Enter a valid shortcut.");
   }
 
-  if (!trimmed.includes("+")) {
-    throw hotkeyError("unsupportedHotkey", "This shortcut is not supported.");
-  }
-
   const parts = trimmed
     .split("+")
     .map((part) => part.trim())
     .filter(Boolean);
   const key = parts[parts.length - 1] ?? "";
 
-  if (parts.length < 3 || !key) {
+  if (parts.length < 2 || !key) {
     throw hotkeyError("unsupportedHotkey", "This shortcut is not supported.");
   }
 
+  const modifiers = parts.slice(0, -1).map((part) => part.toUpperCase());
+  const modifierSet = new Set(modifiers);
+  const hasPrimaryModifier =
+    modifierSet.has("CONTROL") ||
+    modifierSet.has("CTRL") ||
+    modifierSet.has("ALT") ||
+    modifierSet.has("OPTION") ||
+    modifierSet.has("SUPER") ||
+    modifierSet.has("COMMAND") ||
+    modifierSet.has("CMD");
+
+  if (!hasPrimaryModifier) {
+    throw hotkeyError("unsupportedHotkey", "This shortcut is not supported.");
+  }
+
+  if (
+    /^Key[A-Z]$/.test(key) === false &&
+    /^Digit[0-9]$/.test(key) === false &&
+    /^F([1-9]|1[0-9]|2[0-4])$/.test(key) === false &&
+    [
+      "Backquote",
+      "Backslash",
+      "BracketLeft",
+      "BracketRight",
+      "Comma",
+      "Delete",
+      "End",
+      "Enter",
+      "Equal",
+      "Home",
+      "Insert",
+      "Minus",
+      "PageDown",
+      "PageUp",
+      "Period",
+      "Quote",
+      "Semicolon",
+      "Slash",
+      "Space",
+      "Tab",
+    ].includes(key) === false
+  ) {
+    throw hotkeyError("unsupportedHotkey", "This shortcut is not supported.");
+  }
+
+  const canonicalModifiers = modifiers.map((modifier) => {
+    if (modifier === "CTRL") return "Control";
+    if (modifier === "OPTION") return "Alt";
+    if (modifier === "CMD") return "Super";
+    return modifier[0] + modifier.slice(1).toLowerCase();
+  });
+
+  const canonicalKey =
+    /^Key[A-Z]$/.test(key) || /^Digit[0-9]$/.test(key) ? key : key;
+
   return {
-    accelerator: parts.join("+"),
-    label: parts
-      .map((part) => part.replace(/^Key/, "").replace(/^Digit/, ""))
-      .join("+"),
+    accelerator: [...canonicalModifiers, canonicalKey].join("+"),
+    label: [
+      ...canonicalModifiers.map((modifier) =>
+        browserModifierLabel(modifier, isMacLikePlatform()),
+      ),
+      key.replace(/^Key/, "").replace(/^Digit/, ""),
+    ].join(" + "),
   };
+}
+
+function browserModifierLabel(modifier: string, mac: boolean): string {
+  if (modifier === "Control") return mac ? "Control" : "Ctrl";
+  if (modifier === "Alt") return mac ? "Option" : "Alt";
+  if (modifier === "Shift") return "Shift";
+  if (modifier === "Super") return mac ? "Command" : "Super";
+  return modifier;
 }
 
 function maskBrowserApiKey(apiKey: string): string {
@@ -230,10 +296,7 @@ export function resetHotkeyToDefault(): Promise<HotkeyStatus> {
   if (!isTauriRuntime()) {
     browserAppSettings = {
       ...browserAppSettings,
-      hotkey: {
-        accelerator: "Control+Shift+Space",
-        label: "Control+Shift+Space",
-      },
+      hotkey: browserDefaultHotkey(),
     };
     browserHotkeyRegistered = true;
     browserHotkeyRegistrationError = null;

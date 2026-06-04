@@ -104,8 +104,8 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 Floe uses the Tauri 2 global shortcut plugin and listens for both press and release events. The default push-to-talk hotkey is:
 
-- macOS: `CommandOrControl+Shift+Space` shown as `Command+Shift+Space`.
-- Windows/Linux: `Control+Shift+Space`.
+- macOS: `Alt+Space` shown as `Option + Space`.
+- Windows/Linux: `Control+Space` shown as `Ctrl + Space`.
 
 Change the hotkey from Settings with `Change hotkey`, then press the new shortcut. Press `Escape` or `Cancel` to leave the current shortcut unchanged. Floe validates the shortcut, registers it with the OS, saves it in non-secret app settings, and restores the previous working shortcut if the new one cannot be registered. `Reset default` restores the platform default.
 
@@ -144,7 +144,7 @@ Cleanup is fixed: after Groq STT, Floe sends the transcript text to Groq using t
 - If Groq cleanup is slow or unavailable, Floe will fall back to the raw Groq transcript and show `Cleanup failed`. The rest of the flow still works.
 - If the hotkey does not register, choose a less common shortcut; another app or the OS may already own it.
 - On macOS, allow Floe in Privacy & Security settings if global shortcuts or paste automation are blocked. Depending on the OS version, Accessibility and Input Monitoring permissions may be relevant.
-- On Windows/Linux, desktop environments and input methods can reserve shortcuts. Try `Control+Alt+Shift+Space` or another three-key combination if registration fails.
+- On Windows/Linux, desktop environments and input methods can reserve shortcuts. Try `Control+Shift+KeyB` or another two-modifier combination if registration fails.
 - If Start at login is unavailable, check OS login item permissions and desktop environment support. Linux tray visibility depends on the desktop shell and AppIndicator support.
 - If clicking the window X seems to make Floe disappear, look in the system tray. Floe stays alive in the tray so the global hotkey keeps working. Use the tray `Quit` menu to fully exit. On Linux desktops without an AppIndicator extension, the tray icon may not be visible; use the OS task manager to quit if needed.
 

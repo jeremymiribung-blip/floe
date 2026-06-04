@@ -60,18 +60,40 @@ describe("browser settings fallback", () => {
     vi.resetModules();
   });
 
-  it("uses a customization-ready default hotkey", async () => {
+  it("uses a customization-ready default hotkey on Windows/Linux", async () => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
+      "Win32" as unknown as string,
+    );
     const { getAppSettings } = await import("./tauri");
 
     await expect(getAppSettings()).resolves.toEqual({
       hotkey: {
-        accelerator: "Control+Shift+Space",
-        label: "Control+Shift+Space",
+        accelerator: "Control+Space",
+        label: "Ctrl + Space",
       },
     });
+    vi.restoreAllMocks();
+  });
+
+  it("uses Option + Space as the default hotkey on macOS", async () => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
+      "MacIntel" as unknown as string,
+    );
+    const { getAppSettings } = await import("./tauri");
+
+    await expect(getAppSettings()).resolves.toEqual({
+      hotkey: {
+        accelerator: "Alt+Space",
+        label: "Option + Space",
+      },
+    });
+    vi.restoreAllMocks();
   });
 
   it("saves trimmed hotkey settings", async () => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
+      "Win32" as unknown as string,
+    );
     const { getAppSettings, saveAppSettings } = await import("./tauri");
 
     await saveAppSettings({
@@ -84,34 +106,71 @@ describe("browser settings fallback", () => {
     await expect(getAppSettings()).resolves.toEqual({
       hotkey: {
         accelerator: "Control+Shift+KeyA",
-        label: "Control+Shift+A",
+        label: "Ctrl + Shift + A",
       },
     });
+    vi.restoreAllMocks();
   });
 
-  it("changes and resets browser hotkey settings", async () => {
+  it("accepts single-modifier shortcuts like Control+Space", async () => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
+      "Win32" as unknown as string,
+    );
+    const { getHotkeySettings, setHotkey } = await import("./tauri");
+
+    await expect(setHotkey("Control+Space")).resolves.toMatchObject({
+      configured: {
+        accelerator: "Control+Space",
+        label: "Ctrl + Space",
+      },
+      isRegistered: true,
+    });
+    await expect(getHotkeySettings()).resolves.toMatchObject({
+      registered: {
+        accelerator: "Control+Space",
+        label: "Ctrl + Space",
+      },
+    });
+    vi.restoreAllMocks();
+  });
+
+  it("rejects plain Space without a modifier", async () => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
+      "Win32" as unknown as string,
+    );
+    const { setHotkey } = await import("./tauri");
+
+    expect(() => setHotkey("Space")).toThrow(/This shortcut is not supported/);
+    vi.restoreAllMocks();
+  });
+
+  it("changes and resets browser hotkey settings on Windows/Linux", async () => {
+    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
+      "Win32" as unknown as string,
+    );
     const { getHotkeySettings, resetHotkeyToDefault, setHotkey } =
       await import("./tauri");
 
     await expect(setHotkey("Control+Shift+KeyB")).resolves.toMatchObject({
       configured: {
         accelerator: "Control+Shift+KeyB",
-        label: "Control+Shift+B",
+        label: "Ctrl + Shift + B",
       },
       isRegistered: true,
     });
     await expect(getHotkeySettings()).resolves.toMatchObject({
       registered: {
         accelerator: "Control+Shift+KeyB",
-        label: "Control+Shift+B",
+        label: "Ctrl + Shift + B",
       },
     });
     await expect(resetHotkeyToDefault()).resolves.toMatchObject({
       configured: {
-        accelerator: "Control+Shift+Space",
-        label: "Control+Shift+Space",
+        accelerator: "Control+Space",
+        label: "Ctrl + Space",
       },
     });
+    vi.restoreAllMocks();
   });
 
   it("gets and updates browser start at login status", async () => {
