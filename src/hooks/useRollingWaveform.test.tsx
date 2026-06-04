@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useRollingWaveform } from "./useRollingWaveform";
-import { WAVEFORM_SAMPLE_COUNT } from "../lib/waveform";
+import { WAVEFORM_BUCKET_MS, WAVEFORM_SAMPLE_COUNT } from "../lib/waveform";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
@@ -75,26 +75,55 @@ describe("useRollingWaveform", () => {
     harness.unmount();
   });
 
-  it("appends smoothed level samples from recording-level events", async () => {
+  it("appends a max-pool sample from recording-level events after one bucket", async () => {
     const { harness } = renderHookHarness(true);
     await flushPromises();
 
-    emit(1);
-    flushNextRaf(40);
+    emit(0.8);
+    flushNextRaf(0);
+    flushNextRaf(WAVEFORM_BUCKET_MS + 20);
 
     expect(harness.current).toHaveLength(WAVEFORM_SAMPLE_COUNT);
     expect(harness.current[harness.current.length - 1]).toBeGreaterThan(0);
     harness.unmount();
   });
 
-  it("continues appending low samples for silence", async () => {
+  it("does not shift the buffer before a bucket boundary is crossed", async () => {
     const { harness } = renderHookHarness(true);
     await flushPromises();
 
-    flushNextRaf(40);
+    emit(1);
+    flushNextRaf(0);
+    flushNextRaf(WAVEFORM_BUCKET_MS - 20);
+
+    expect(harness.current[harness.current.length - 1]).toBe(0);
+    harness.unmount();
+  });
+
+  it("appends zero for buckets with no level events", async () => {
+    const { harness } = renderHookHarness(true);
+    await flushPromises();
+
+    flushNextRaf(0);
+    flushNextRaf(WAVEFORM_BUCKET_MS + 20);
 
     expect(harness.current).toHaveLength(WAVEFORM_SAMPLE_COUNT);
     expect(harness.current[harness.current.length - 1]).toBe(0);
+    harness.unmount();
+  });
+
+  it("takes the loudest peak within a bucket (max-pool)", async () => {
+    const { harness } = renderHookHarness(true);
+    await flushPromises();
+
+    emit(0.3);
+    flushNextRaf(0);
+    emit(0.9);
+    flushNextRaf(40);
+    emit(0.2);
+    flushNextRaf(WAVEFORM_BUCKET_MS + 20);
+
+    expect(harness.current[harness.current.length - 1]).toBeGreaterThan(0.8);
     harness.unmount();
   });
 
@@ -103,7 +132,8 @@ describe("useRollingWaveform", () => {
     await flushPromises();
 
     emit(1);
-    flushNextRaf(40);
+    flushNextRaf(0);
+    flushNextRaf(WAVEFORM_BUCKET_MS + 20);
     expect(harness.current[harness.current.length - 1]).toBeGreaterThan(0);
 
     setActive(false);

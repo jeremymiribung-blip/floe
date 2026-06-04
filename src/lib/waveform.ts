@@ -1,4 +1,5 @@
-export const WAVEFORM_SAMPLE_COUNT: number = 48;
+export const WAVEFORM_SAMPLE_COUNT: number = 11;
+export const WAVEFORM_BUCKET_MS: number = 200;
 export const SILENT_SAMPLE_LEVEL: number = 0;
 
 const MIN_BAR_RATIO: number = 0.18;

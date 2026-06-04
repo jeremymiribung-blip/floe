@@ -7,19 +7,17 @@ import {
   clamp01,
   createSilentWaveformBuffer,
   SILENT_SAMPLE_LEVEL,
-  smoothWaveformInput,
+  WAVEFORM_BUCKET_MS,
 } from "../lib/waveform";
-
-const SAMPLE_INTERVAL_MS: number = 40;
 
 export function useRollingWaveform(active: boolean): number[] {
   const [samples, setSamples] = useState<number[]>(() =>
     createSilentWaveformBuffer(),
   );
-  const targetLevelRef = useRef(SILENT_SAMPLE_LEVEL);
-  const smoothedLevelRef = useRef(SILENT_SAMPLE_LEVEL);
+  const bucketMaxRef = useRef(SILENT_SAMPLE_LEVEL);
+  const bucketStartRef = useRef(0);
+  const bucketInitializedRef = useRef(false);
   const rafRef = useRef<number | null>(null);
-  const lastSampleAtRef = useRef(0);
 
   useEffect(() => {
     resetWaveformState();
@@ -32,7 +30,10 @@ export function useRollingWaveform(active: boolean): number[] {
     let cancelled = false;
 
     listen<RecordingLevelPayload>("recording-level", (event) => {
-      targetLevelRef.current = clamp01(event.payload.level);
+      const level = clamp01(event.payload.level);
+      if (level > bucketMaxRef.current) {
+        bucketMaxRef.current = level;
+      }
     })
       .then((nextUnlisten) => {
         if (cancelled) {
@@ -61,27 +62,25 @@ export function useRollingWaveform(active: boolean): number[] {
         return;
       }
 
-      if (
-        lastSampleAtRef.current === 0 ||
-        timestamp - lastSampleAtRef.current >= SAMPLE_INTERVAL_MS
-      ) {
-        lastSampleAtRef.current = timestamp;
-        smoothedLevelRef.current = smoothWaveformInput(
-          smoothedLevelRef.current,
-          targetLevelRef.current,
-        );
-        setSamples((current) =>
-          appendWaveformSample(current, smoothedLevelRef.current),
-        );
+      if (!bucketInitializedRef.current) {
+        bucketStartRef.current = timestamp;
+        bucketInitializedRef.current = true;
+      }
+
+      while (timestamp - bucketStartRef.current >= WAVEFORM_BUCKET_MS) {
+        const finalized = bucketMaxRef.current;
+        setSamples((current) => appendWaveformSample(current, finalized));
+        bucketMaxRef.current = SILENT_SAMPLE_LEVEL;
+        bucketStartRef.current += WAVEFORM_BUCKET_MS;
       }
 
       rafRef.current = requestAnimationFrame(tick);
     }
 
     function resetWaveformState(): void {
-      targetLevelRef.current = SILENT_SAMPLE_LEVEL;
-      smoothedLevelRef.current = SILENT_SAMPLE_LEVEL;
-      lastSampleAtRef.current = 0;
+      bucketMaxRef.current = SILENT_SAMPLE_LEVEL;
+      bucketStartRef.current = 0;
+      bucketInitializedRef.current = false;
       setSamples(createSilentWaveformBuffer());
     }
   }, [active]);

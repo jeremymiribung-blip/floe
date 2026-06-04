@@ -5,9 +5,9 @@ use crate::lifecycle::{log_lifecycle, LifecycleLevel};
 
 pub const OVERLAY_WINDOW_LABEL: &str = "recording-bubble";
 const OVERLAY_STATE_EVENT: &str = "recording-bubble-state";
-const OVERLAY_WIDTH: f64 = 240.0;
-const OVERLAY_HEIGHT: f64 = 56.0;
-const OVERLAY_BOTTOM_MARGIN: f64 = 96.0;
+const OVERLAY_WIDTH: f64 = 170.0;
+const OVERLAY_HEIGHT: f64 = 48.0;
+const OVERLAY_BOTTOM_MARGIN: f64 = 64.0;
 
 pub fn show_overlay<R: Runtime>(app: &AppHandle<R>) {
     let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
@@ -178,8 +178,8 @@ mod tests {
             OVERLAY_BOTTOM_MARGIN,
         );
 
-        assert_eq!(position.x, 840.0);
-        assert_eq!(position.y, 928.0);
+        assert_eq!(position.x, 875.0);
+        assert_eq!(position.y, 968.0);
     }
 
     #[test]
@@ -198,8 +198,8 @@ mod tests {
             OVERLAY_BOTTOM_MARGIN,
         );
 
-        assert_eq!(position.x, 620.0);
-        assert_eq!(position.y, 788.0);
+        assert_eq!(position.x, 655.0);
+        assert_eq!(position.y, 828.0);
     }
 
     #[test]
@@ -218,12 +218,26 @@ mod tests {
             OVERLAY_BOTTOM_MARGIN,
         );
 
-        assert_eq!(position.x, -1080.0);
-        assert_eq!(position.y, 808.0);
+        assert_eq!(position.x, -1045.0);
+        assert_eq!(position.y, 848.0);
     }
 
     #[test]
-    fn uses_ninety_six_px_bottom_margin() {
-        assert_eq!(OVERLAY_BOTTOM_MARGIN, 96.0);
+    fn uses_expected_bottom_margin() {
+        const { assert!(OVERLAY_BOTTOM_MARGIN == 64.0) };
+    }
+
+    #[test]
+    fn bubble_sits_below_prior_baseline() {
+        const {
+            assert!(
+                OVERLAY_BOTTOM_MARGIN < 80.0,
+                "bubble must sit clearly lower than the prior 96px baseline",
+            );
+            assert!(
+                OVERLAY_BOTTOM_MARGIN >= 32.0,
+                "bubble must not clip into the screen edge",
+            );
+        };
     }
 }

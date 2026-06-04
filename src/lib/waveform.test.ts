@@ -4,6 +4,7 @@ import {
   createSilentWaveformBuffer,
   levelToBarRatio,
   smoothWaveformInput,
+  WAVEFORM_BUCKET_MS,
   WAVEFORM_SAMPLE_COUNT,
 } from "./waveform";
 
@@ -13,6 +14,16 @@ describe("waveform helpers", () => {
 
     expect(buffer).toHaveLength(WAVEFORM_SAMPLE_COUNT);
     expect(buffer.every((sample) => sample === 0)).toBe(true);
+  });
+
+  it("keeps the visible bar count in the recorder-style range", () => {
+    expect(WAVEFORM_SAMPLE_COUNT).toBeGreaterThanOrEqual(5);
+    expect(WAVEFORM_SAMPLE_COUNT).toBeLessThanOrEqual(15);
+  });
+
+  it("uses a bucket interval that preserves a longer recent history", () => {
+    expect(WAVEFORM_BUCKET_MS).toBeGreaterThanOrEqual(150);
+    expect(WAVEFORM_BUCKET_MS).toBeLessThanOrEqual(400);
   });
 
   it("appends new samples on the right", () => {
