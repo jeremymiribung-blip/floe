@@ -13,7 +13,9 @@ use serde::Serialize;
 use crate::audio::{fold_level, normalize_rms, LevelMeter, EMIT_INTERVAL_MS};
 
 pub const MAX_RECORDING_DURATION_SECONDS: u64 = 120;
+const TARGET_WAV_SAMPLE_RATE: u32 = 16_000;
 const OUTPUT_CHANNELS: u16 = 1;
+const WAV_FORMAT: &str = "wav";
 
 type SharedBuffer = Arc<Mutex<RecordingBuffer>>;
 type LevelEmitterFn = Box<dyn Fn(f32) + Send + Sync>;
@@ -25,6 +27,9 @@ pub struct RecordingInfo {
     pub sample_rate: u32,
     pub input_channels: u16,
     pub output_channels: u16,
+    pub wav_format: &'static str,
+    pub wav_sample_rate: u32,
+    pub wav_channels: u16,
     pub duration_ms: u64,
     pub sample_count: u64,
     pub wav_byte_count: u64,
@@ -745,6 +750,9 @@ impl RecordingBuffer {
             sample_rate: self.sample_rate,
             input_channels: self.input_channels,
             output_channels: OUTPUT_CHANNELS,
+            wav_format: WAV_FORMAT,
+            wav_sample_rate: TARGET_WAV_SAMPLE_RATE,
+            wav_channels: OUTPUT_CHANNELS,
             duration_ms: self.duration_ms(),
             sample_count: self.samples.len() as u64,
             wav_byte_count: 0,
@@ -757,7 +765,7 @@ impl RecordingBuffer {
             ended_reason,
         };
         let encode_started = Instant::now();
-        let wav_bytes = encode_pcm16_wav(&self.samples, self.sample_rate, OUTPUT_CHANNELS)?;
+        let wav_bytes = encode_recording_wav(&self.samples, self.sample_rate)?;
         let info = RecordingInfo {
             wav_byte_count: wav_bytes.len() as u64,
             audio_encode_ms: elapsed_ms(encode_started),
@@ -788,6 +796,9 @@ impl RecordingBuffer {
             sample_rate: self.sample_rate,
             input_channels: self.input_channels,
             output_channels: OUTPUT_CHANNELS,
+            wav_format: WAV_FORMAT,
+            wav_sample_rate: TARGET_WAV_SAMPLE_RATE,
+            wav_channels: OUTPUT_CHANNELS,
             duration_ms: self.duration_ms(),
             sample_count: self.samples.len() as u64,
             wav_byte_count: 0,
@@ -800,7 +811,7 @@ impl RecordingBuffer {
             ended_reason,
         };
         let encode_started = Instant::now();
-        let wav_bytes = encode_pcm16_wav(&self.samples, self.sample_rate, OUTPUT_CHANNELS)?;
+        let wav_bytes = encode_recording_wav(&self.samples, self.sample_rate)?;
         let info = RecordingInfo {
             wav_byte_count: wav_bytes.len() as u64,
             audio_encode_ms: elapsed_ms(encode_started),
@@ -814,6 +825,54 @@ impl RecordingBuffer {
 const WAV_HEADER_LEN: usize = 44;
 const WAV_AUDIO_FORMAT_PCM: u16 = 1;
 const WAV_BITS_PER_SAMPLE: u16 = 16;
+
+fn encode_recording_wav(
+    samples: &[f32],
+    input_sample_rate: u32,
+) -> Result<Vec<u8>, RecordingError> {
+    let output_samples = resample_mono_linear(samples, input_sample_rate, TARGET_WAV_SAMPLE_RATE)?;
+    encode_pcm16_wav(&output_samples, TARGET_WAV_SAMPLE_RATE, OUTPUT_CHANNELS)
+}
+
+fn resample_mono_linear(
+    samples: &[f32],
+    input_sample_rate: u32,
+    output_sample_rate: u32,
+) -> Result<Vec<f32>, RecordingError> {
+    if input_sample_rate == 0 || output_sample_rate == 0 {
+        return Err(wav_encoding_error());
+    }
+
+    if samples.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if input_sample_rate == output_sample_rate {
+        return Ok(samples
+            .iter()
+            .map(|sample| sanitize_sample(*sample))
+            .collect());
+    }
+
+    let output_len = ((samples.len() as f64) * (output_sample_rate as f64)
+        / (input_sample_rate as f64))
+        .round()
+        .max(1.0) as usize;
+    let mut output = Vec::with_capacity(output_len);
+
+    for index in 0..output_len {
+        let source_position =
+            (index as f64) * (input_sample_rate as f64) / (output_sample_rate as f64);
+        let left_index = source_position.floor() as usize;
+        let right_index = left_index.saturating_add(1).min(samples.len() - 1);
+        let fraction = (source_position - left_index as f64) as f32;
+        let left = sanitize_sample(samples[left_index.min(samples.len() - 1)]);
+        let right = sanitize_sample(samples[right_index]);
+        output.push(left + (right - left) * fraction);
+    }
+
+    Ok(output)
+}
 
 fn encode_pcm16_wav(
     samples: &[f32],
@@ -906,11 +965,19 @@ fn validate_pcm16_wav_header(
 }
 
 fn float_to_pcm16(sample: f32) -> i16 {
-    let clamped = sample.clamp(-1.0, 1.0);
+    let clamped = sanitize_sample(sample);
     if clamped < 0.0 {
         (clamped * 32_768.0).round() as i16
     } else {
         (clamped * 32_767.0).round() as i16
+    }
+}
+
+fn sanitize_sample(sample: f32) -> f32 {
+    if sample.is_finite() {
+        sample.clamp(-1.0, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -1046,10 +1113,11 @@ mod tests {
     };
 
     use super::{
-        encode_pcm16_wav, float_to_pcm16, normalize_rms, read_u16_le, read_u32_le, LevelMeter,
-        RecordingBuffer, RecordingEndReason, RecordingErrorCode, RecordingInput, RecordingManager,
-        RecordingStream, ShutdownRecordingResult, StartedRecording, MAX_RECORDING_DURATION_SECONDS,
-        WAV_HEADER_LEN,
+        encode_pcm16_wav, encode_recording_wav, float_to_pcm16, normalize_rms, read_u16_le,
+        read_u32_le, resample_mono_linear, LevelMeter, RecordingBuffer, RecordingEndReason,
+        RecordingErrorCode, RecordingInput, RecordingManager, RecordingStream,
+        ShutdownRecordingResult, StartedRecording, MAX_RECORDING_DURATION_SECONDS,
+        TARGET_WAV_SAMPLE_RATE, WAV_HEADER_LEN,
     };
 
     struct FakeStream;
@@ -1137,9 +1205,12 @@ mod tests {
         assert_eq!(completed.info.sample_rate, 1_000);
         assert_eq!(completed.info.input_channels, 2);
         assert_eq!(completed.info.output_channels, 1);
+        assert_eq!(completed.info.wav_format, "wav");
+        assert_eq!(completed.info.wav_sample_rate, TARGET_WAV_SAMPLE_RATE);
+        assert_eq!(completed.info.wav_channels, 1);
         assert_eq!(completed.info.sample_count, 3);
         assert_eq!(completed.info.duration_ms, 3);
-        assert_eq!(completed.info.wav_byte_count, 50);
+        assert_eq!(completed.info.wav_byte_count, 140);
         assert_eq!(completed.info.wav_bits_per_sample, 16);
         assert_eq!(completed.info.recording_stop_to_encode_start_ms, 0);
         assert!(completed.info.audio_encode_ms < 1_000);
@@ -1169,6 +1240,50 @@ mod tests {
     }
 
     #[test]
+    fn recording_wav_is_optimized_for_groq_upload() {
+        let input: Vec<f32> = (0..48_000)
+            .map(|index| if index % 2 == 0 { 0.5 } else { -0.5 })
+            .collect();
+        let wav = encode_recording_wav(&input, 48_000).expect("wav encoding should succeed");
+
+        assert_eq!(&wav[0..4], b"RIFF");
+        assert_eq!(read_u16_le(&wav, 20), Some(1));
+        assert_eq!(read_u16_le(&wav, 22), Some(1));
+        assert_eq!(read_u32_le(&wav, 24), Some(16_000));
+        assert_eq!(read_u32_le(&wav, 28), Some(32_000));
+        assert_eq!(read_u16_le(&wav, 32), Some(2));
+        assert_eq!(read_u16_le(&wav, 34), Some(16));
+        assert_eq!(read_u32_le(&wav, 40), Some(32_000));
+        assert_eq!(wav.len(), WAV_HEADER_LEN + 32_000);
+    }
+
+    #[test]
+    fn linear_resampler_preserves_duration_approximately() {
+        let input = vec![0.25_f32; 48_000];
+        let output =
+            resample_mono_linear(&input, 48_000, 16_000).expect("resampling should succeed");
+
+        assert_eq!(output.len(), 16_000);
+        let input_duration = input.len() as f64 / 48_000.0;
+        let output_duration = output.len() as f64 / 16_000.0;
+        assert!((input_duration - output_duration).abs() < 0.001);
+    }
+
+    #[test]
+    fn silence_encodes_as_valid_wav() {
+        let wav = encode_recording_wav(&[0.0_f32; 480], 48_000)
+            .expect("silence should encode successfully");
+        let pcm: Vec<i16> = wav[WAV_HEADER_LEN..]
+            .chunks_exact(2)
+            .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]))
+            .collect();
+
+        assert_eq!(read_u32_le(&wav, 24), Some(16_000));
+        assert_eq!(pcm.len(), 160);
+        assert!(pcm.iter().all(|sample| *sample == 0));
+    }
+
+    #[test]
     fn wav_encoding_writes_clamped_pcm16_samples() {
         let wav = encode_pcm16_wav(&[-2.0, -0.5, 0.0, 0.5, 2.0], 48_000, 1)
             .expect("wav encoding should succeed");
@@ -1179,6 +1294,7 @@ mod tests {
 
         assert_eq!(pcm, vec![-32768, -16384, 0, 16384, 32767]);
         assert_eq!(float_to_pcm16(f32::NAN), 0);
+        assert_eq!(float_to_pcm16(f32::INFINITY), 0);
     }
 
     #[test]
@@ -1220,9 +1336,14 @@ mod tests {
             .expect("latest wav exists");
 
         assert_eq!(info.wav_byte_count, wav.len() as u64);
-        assert_eq!(wav.len(), WAV_HEADER_LEN + 4);
+        assert_eq!(info.sample_rate, 8_000);
+        assert_eq!(info.wav_sample_rate, 16_000);
+        assert_eq!(info.wav_channels, 1);
+        assert_eq!(info.wav_format, "wav");
+        assert_eq!(wav.len(), WAV_HEADER_LEN + 8);
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[36..40], b"data");
+        assert_eq!(read_u32_le(&wav, 24), Some(16_000));
     }
 
     #[test]

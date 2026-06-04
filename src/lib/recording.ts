@@ -22,7 +22,8 @@ export function formatDurationMs(durationMs: number): string {
 export function formatRecordingInfo(info: RecordingInfo): string {
   return [
     formatDurationMs(info.durationMs),
-    `${info.sampleRate} Hz`,
+    `${info.sampleRate} Hz input`,
+    `${info.wavSampleRate} Hz ${info.wavFormat.toUpperCase()}`,
     `${info.inputChannels}->${info.outputChannels} channel`,
     `${info.sampleCount} samples`,
     `${info.wavByteCount} WAV bytes`,

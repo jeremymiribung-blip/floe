@@ -3,7 +3,11 @@
 - Respect the STT rule: one Groq STT request after recording stops.
 - Do not add streaming, chunking, transcript merging, or realtime partials.
 - Floe uses Groq for STT.
+- Floe uses Groq Whisper Turbo (`whisper-large-v3-turbo`) for STT.
 - Floe uses Groq for transcript cleanup; there is no provider switching, no cleanup modes, and no behavior settings.
+- Floe uses Groq Llama 3.1 8B Instant (`llama-3.1-8b-instant`) for cleanup.
+- Floe sends optimized 16 kHz mono 16-bit PCM WAV to Groq after recording stops.
+- Do not add Cerebras.
 - The same Groq API key handles both STT and cleanup; it is stored under `groq-api-key` in the OS keychain.
 - Audio is never sent for cleanup. Only transcript text is sent for cleanup.
 - If cleanup fails, Floe falls back to pasting the raw Groq transcript and surfaces a `Cleanup failed` warning.

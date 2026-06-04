@@ -12,6 +12,9 @@ const recordingInfo: RecordingInfo = {
   sampleRate: 16_000,
   inputChannels: 2,
   outputChannels: 1,
+  wavFormat: "wav",
+  wavSampleRate: 16_000,
+  wavChannels: 1,
   durationMs: 3_200,
   sampleCount: 51_200,
   wavByteCount: 102_444,
@@ -37,6 +40,11 @@ describe("diagnostics", () => {
         text: "private transcript",
         model: "whisper-large-v3-turbo",
         retryCount: 0,
+        rateLimit: {
+          remainingRequests: "9",
+          remainingTokens: "1000",
+          resetRequests: "2s",
+        },
       },
       cleanupDurationMs: 190,
       cleanup: {
@@ -60,6 +68,8 @@ describe("diagnostics", () => {
     expect(diagnostics.pipeline.total_ms).toBe(1_420);
     expect(diagnostics.pipeline.recording_duration_ms).toBe(3_200);
     expect(diagnostics.audio.bytes).toBe(102_444);
+    expect(diagnostics.audio.sample_rate).toBe(16_000);
+    expect(diagnostics.rate_limit?.stt?.remaining_requests).toBe("9");
     expect(diagnostics.retries.cleanup).toBe(1);
     expect(diagnostics.bottleneck).toEqual({
       stage: "stt",

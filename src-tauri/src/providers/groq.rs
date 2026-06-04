@@ -3,17 +3,34 @@ use std::time::{Duration, Instant};
 use reqwest::{header::HeaderMap, multipart, StatusCode};
 use serde::{Deserialize, Serialize};
 
+use crate::prompts::cleanup::CLEANUP_SYSTEM_PROMPT;
+
 const GROQ_BASE_URL: &str = "https://api.groq.com";
 const TRANSCRIPTIONS_PATH: &str = "/openai/v1/audio/transcriptions";
 const CHAT_COMPLETIONS_PATH: &str = "/openai/v1/chat/completions";
-const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
-const GROQ_CLEANUP_MODEL: &str = "llama-3.1-8b-instant";
+pub const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
+pub const DEFAULT_STT_LANGUAGE: &str = "de";
+pub const GROQ_CLEANUP_MODEL: &str = "llama-3.1-8b-instant";
 const STT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const CLEANUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const CLEANUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_ATTEMPTS: usize = 3;
 const INITIAL_RETRY_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
-const CLEANUP_SYSTEM_PROMPT: &str = "You are a transcript cleanup engine for a push-to-talk dictation app.\n\nYour job:\n\n- Correct capitalization.\n- Correct punctuation.\n- Fix obvious speech-to-text transcription errors only when the intended word is clear.\n- Preserve the user's language.\n- Preserve the user's meaning.\n- Preserve the user's tone.\n- Do not summarize.\n- Do not rewrite stylistically.\n- Do not add new information.\n- Do not remove information.\n- Do not answer the text.\n- Return only the cleaned transcript text.";
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GroqRateLimitMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_requests: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_tokens: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_requests: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reset_tokens: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_after_seconds: Option<u64>,
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +38,8 @@ pub struct GroqTranscription {
     pub text: String,
     pub model: String,
     pub retry_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<Box<GroqRateLimitMetadata>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -30,6 +49,8 @@ pub struct GroqTranscriptionError {
     pub message: String,
     pub model: String,
     pub retry_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<Box<GroqRateLimitMetadata>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -56,6 +77,7 @@ impl GroqTranscriptionError {
 pub struct GroqTranscriptionClient {
     http_client: reqwest::Client,
     base_url: String,
+    request_timeout: Duration,
     max_attempts: usize,
     retry_backoff: Duration,
 }
@@ -63,6 +85,7 @@ pub struct GroqTranscriptionClient {
 struct AttemptError {
     error: GroqTranscriptionError,
     retryable: bool,
+    retry_after: Option<Duration>,
 }
 
 #[derive(Deserialize)]
@@ -71,8 +94,9 @@ struct TranscriptionResponse {
 }
 
 impl GroqTranscriptionClient {
-    pub fn new() -> Result<Self, GroqTranscriptionError> {
+    pub fn new(http_client: reqwest::Client) -> Self {
         Self::with_config(
+            http_client,
             GROQ_BASE_URL.to_string(),
             STT_REQUEST_TIMEOUT,
             MAX_ATTEMPTS,
@@ -81,22 +105,19 @@ impl GroqTranscriptionClient {
     }
 
     fn with_config(
+        http_client: reqwest::Client,
         base_url: String,
         timeout: Duration,
         max_attempts: usize,
         retry_backoff: Duration,
-    ) -> Result<Self, GroqTranscriptionError> {
-        let http_client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|_| server_error())?;
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             http_client,
             base_url,
+            request_timeout: timeout,
             max_attempts: max_attempts.max(1),
             retry_backoff,
-        })
+        }
     }
 
     #[cfg(test)]
@@ -106,8 +127,13 @@ impl GroqTranscriptionClient {
         max_attempts: usize,
         retry_backoff: Duration,
     ) -> Self {
-        Self::with_config(base_url, timeout, max_attempts, retry_backoff)
-            .expect("test client should build")
+        Self::with_config(
+            crate::providers::http::build_shared_http_client().expect("test client should build"),
+            base_url,
+            timeout,
+            max_attempts,
+            retry_backoff,
+        )
     }
 
     pub async fn transcribe_wav(
@@ -136,7 +162,7 @@ impl GroqTranscriptionClient {
                     return Ok(transcription);
                 }
                 Err(attempt_error) if attempt_error.retryable && attempt < self.max_attempts => {
-                    tokio::time::sleep(retry_delay(self.retry_backoff, attempt)).await;
+                    tokio::time::sleep(attempt_error.delay(self.retry_backoff, attempt)).await;
                 }
                 Err(mut attempt_error) => {
                     attempt_error.error.retry_count = retry_count_for_attempt(attempt);
@@ -159,23 +185,28 @@ impl GroqTranscriptionClient {
             .map_err(|_| non_retryable(server_error()))?;
         let form = multipart::Form::new()
             .text("model", GROQ_STT_MODEL)
+            .text("temperature", "0")
+            .text("language", DEFAULT_STT_LANGUAGE)
             .part("file", file_part);
         let response = self
             .http_client
             .post(self.transcriptions_url())
+            .timeout(self.request_timeout)
             .bearer_auth(api_key)
             .multipart(form)
             .send()
             .await
             .map_err(classify_request_error)?;
         let status = response.status();
+        let rate_limit = rate_limit_metadata(response.headers());
+        let retry_after = retry_after(response.headers());
         let body = response.text().await.unwrap_or_default();
 
         if status.is_success() {
-            return parse_transcription_response(&body).map_err(non_retryable);
+            return parse_transcription_response(&body, rate_limit).map_err(non_retryable);
         }
 
-        Err(classify_http_error(status, &body))
+        Err(classify_http_error(status, &body, retry_after, rate_limit))
     }
 
     fn transcriptions_url(&self) -> String {
@@ -187,7 +218,18 @@ impl GroqTranscriptionClient {
     }
 }
 
-fn parse_transcription_response(body: &str) -> Result<GroqTranscription, GroqTranscriptionError> {
+impl AttemptError {
+    fn delay(&self, base: Duration, attempt: usize) -> Duration {
+        self.retry_after
+            .unwrap_or_else(|| retry_delay(base, attempt))
+            .min(MAX_RETRY_DELAY)
+    }
+}
+
+fn parse_transcription_response(
+    body: &str,
+    rate_limit: Option<GroqRateLimitMetadata>,
+) -> Result<GroqTranscription, GroqTranscriptionError> {
     let response: TranscriptionResponse = serde_json::from_str(body).map_err(|_| {
         groq_error(
             GroqTranscriptionErrorCode::MalformedResponse,
@@ -206,6 +248,7 @@ fn parse_transcription_response(body: &str) -> Result<GroqTranscription, GroqTra
         text,
         model: GROQ_STT_MODEL.to_string(),
         retry_count: 0,
+        rate_limit: rate_limit.map(Box::new),
     })
 }
 
@@ -223,35 +266,58 @@ fn classify_request_error(error: reqwest::Error) -> AttemptError {
     ))
 }
 
-fn classify_http_error(status: StatusCode, body: &str) -> AttemptError {
+fn classify_http_error(
+    status: StatusCode,
+    body: &str,
+    retry_after: Option<Duration>,
+    rate_limit: Option<GroqRateLimitMetadata>,
+) -> AttemptError {
     match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => non_retryable(groq_error(
-            GroqTranscriptionErrorCode::InvalidApiKey,
-            "The configured Groq API key was rejected.",
-        )),
-        StatusCode::REQUEST_TIMEOUT => retryable(groq_error(
-            GroqTranscriptionErrorCode::Timeout,
-            "The Groq transcription request timed out.",
-        )),
-        StatusCode::TOO_MANY_REQUESTS => retryable(groq_error(
-            GroqTranscriptionErrorCode::RateLimit,
-            "Groq rate limited the transcription request. Try again shortly.",
-        )),
-        StatusCode::BAD_REQUEST => non_retryable(groq_error(
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            non_retryable(groq_error_with_rate_limit(
+                GroqTranscriptionErrorCode::InvalidApiKey,
+                "The configured Groq API key was rejected.",
+                rate_limit,
+            ))
+        }
+        StatusCode::REQUEST_TIMEOUT => retryable_with_retry_after(
+            groq_error_with_rate_limit(
+                GroqTranscriptionErrorCode::Timeout,
+                "The Groq transcription request timed out.",
+                rate_limit,
+            ),
+            retry_after,
+        ),
+        StatusCode::TOO_MANY_REQUESTS => retryable_with_retry_after(
+            groq_error_with_rate_limit(
+                GroqTranscriptionErrorCode::RateLimit,
+                "Groq rate limited the transcription request. Try again shortly.",
+                rate_limit,
+            ),
+            retry_after,
+        ),
+        StatusCode::BAD_REQUEST => non_retryable(groq_error_with_rate_limit(
             invalid_request_code(body),
             invalid_request_message(body),
+            rate_limit,
         )),
-        StatusCode::UNSUPPORTED_MEDIA_TYPE => non_retryable(groq_error(
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => non_retryable(groq_error_with_rate_limit(
             GroqTranscriptionErrorCode::UnsupportedAudio,
             "Groq could not transcribe the uploaded audio file.",
+            rate_limit,
         )),
-        status if status.is_server_error() => retryable(groq_error(
-            GroqTranscriptionErrorCode::ServerError,
-            "Groq could not complete the transcription request.",
-        )),
-        _ => non_retryable(groq_error(
+        status if status.is_server_error() => retryable_with_retry_after(
+            groq_error_with_rate_limit(
+                GroqTranscriptionErrorCode::ServerError,
+                "Groq could not complete the transcription request.",
+                rate_limit,
+            ),
+            retry_after,
+        ),
+        _ => non_retryable(groq_error_with_rate_limit(
             GroqTranscriptionErrorCode::InvalidRequest,
             "Groq rejected the transcription request.",
+            rate_limit,
         )),
     }
 }
@@ -293,6 +359,18 @@ fn retryable(error: GroqTranscriptionError) -> AttemptError {
     AttemptError {
         error,
         retryable: true,
+        retry_after: None,
+    }
+}
+
+fn retryable_with_retry_after(
+    error: GroqTranscriptionError,
+    retry_after: Option<Duration>,
+) -> AttemptError {
+    AttemptError {
+        error,
+        retryable: true,
+        retry_after,
     }
 }
 
@@ -300,6 +378,7 @@ fn non_retryable(error: GroqTranscriptionError) -> AttemptError {
     AttemptError {
         error,
         retryable: false,
+        retry_after: None,
     }
 }
 
@@ -311,11 +390,20 @@ fn server_error() -> GroqTranscriptionError {
 }
 
 fn groq_error(code: GroqTranscriptionErrorCode, message: &'static str) -> GroqTranscriptionError {
+    groq_error_with_rate_limit(code, message, None)
+}
+
+fn groq_error_with_rate_limit(
+    code: GroqTranscriptionErrorCode,
+    message: &'static str,
+    rate_limit: Option<GroqRateLimitMetadata>,
+) -> GroqTranscriptionError {
     GroqTranscriptionError {
         code,
         message: message.to_string(),
         model: GROQ_STT_MODEL.to_string(),
         retry_count: 0,
+        rate_limit: rate_limit.map(Box::new),
     }
 }
 
@@ -326,6 +414,8 @@ pub struct GroqCleanup {
     pub model: String,
     pub retry_count: u32,
     pub validation_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<Box<GroqRateLimitMetadata>>,
 }
 
 impl PartialEq<&str> for GroqCleanup {
@@ -342,6 +432,8 @@ pub struct GroqCleanupError {
     pub model: String,
     pub retry_count: u32,
     pub validation_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<Box<GroqRateLimitMetadata>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -369,6 +461,7 @@ impl GroqCleanupError {
 pub struct GroqCleanupClient {
     http_client: reqwest::Client,
     base_url: String,
+    request_timeout: Duration,
     max_attempts: usize,
     retry_backoff: Duration,
 }
@@ -409,8 +502,9 @@ struct ChatResponseMessage {
 }
 
 impl GroqCleanupClient {
-    pub fn new() -> Result<Self, GroqCleanupError> {
+    pub fn new(http_client: reqwest::Client) -> Self {
         Self::with_config(
+            http_client,
             GROQ_BASE_URL.to_string(),
             CLEANUP_REQUEST_TIMEOUT,
             MAX_ATTEMPTS,
@@ -419,22 +513,19 @@ impl GroqCleanupClient {
     }
 
     fn with_config(
+        http_client: reqwest::Client,
         base_url: String,
         timeout: Duration,
         max_attempts: usize,
         retry_backoff: Duration,
-    ) -> Result<Self, GroqCleanupError> {
-        let http_client = reqwest::Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|_| cleanup_server_error())?;
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             http_client,
             base_url,
+            request_timeout: timeout,
             max_attempts: max_attempts.max(1),
             retry_backoff,
-        })
+        }
     }
 
     #[cfg(test)]
@@ -444,8 +535,13 @@ impl GroqCleanupClient {
         max_attempts: usize,
         retry_backoff: Duration,
     ) -> Self {
-        Self::with_config(base_url, timeout, max_attempts, retry_backoff)
-            .expect("test client should build")
+        Self::with_config(
+            crate::providers::http::build_shared_http_client().expect("test client should build"),
+            base_url,
+            timeout,
+            max_attempts,
+            retry_backoff,
+        )
     }
 
     pub async fn cleanup_transcript(
@@ -500,20 +596,23 @@ impl GroqCleanupClient {
         let response = self
             .http_client
             .post(self.chat_completions_url())
+            .timeout(self.request_timeout)
             .bearer_auth(api_key)
             .json(&cleanup_request_body(transcript))
             .send()
             .await
             .map_err(classify_cleanup_request_error)?;
         let status = response.status();
-        let retry_after = cleanup_retry_after(response.headers());
+        let retry_after = retry_after(response.headers());
+        let rate_limit = rate_limit_metadata(response.headers());
         let body = response.text().await.unwrap_or_default();
 
         if status.is_success() {
-            return parse_cleanup_response(&body, transcript).map_err(cleanup_non_retryable);
+            return parse_cleanup_response(&body, transcript, rate_limit)
+                .map_err(cleanup_non_retryable);
         }
 
-        Err(classify_cleanup_http_error(status, retry_after))
+        Err(classify_cleanup_http_error(status, retry_after, rate_limit))
     }
 
     fn chat_completions_url(&self) -> String {
@@ -545,9 +644,7 @@ fn cleanup_request_body(transcript: &str) -> ChatCompletionRequest {
             },
             ChatMessage {
                 role: "user",
-                content: format!(
-                    "Clean this transcript:\n\n<transcript>\n{transcript}\n</transcript>"
-                ),
+                content: format!("<transcript>\n{transcript}\n</transcript>"),
             },
         ],
         temperature: 0.0,
@@ -564,7 +661,11 @@ fn cleanup_max_tokens_for(transcript: &str) -> u32 {
         .unwrap_or(512)
 }
 
-fn parse_cleanup_response(body: &str, input: &str) -> Result<GroqCleanup, GroqCleanupError> {
+fn parse_cleanup_response(
+    body: &str,
+    input: &str,
+    rate_limit: Option<GroqRateLimitMetadata>,
+) -> Result<GroqCleanup, GroqCleanupError> {
     let response: ChatCompletionResponse = serde_json::from_str(body).map_err(|_| {
         groq_cleanup_error(
             GroqCleanupErrorCode::MalformedResponse,
@@ -594,6 +695,7 @@ fn parse_cleanup_response(body: &str, input: &str) -> Result<GroqCleanup, GroqCl
         model: GROQ_CLEANUP_MODEL.to_string(),
         retry_count: 0,
         validation_ms: elapsed_ms(validation_started),
+        rate_limit: rate_limit.map(Box::new),
     })
 }
 
@@ -610,6 +712,8 @@ pub fn validate_cleanup_output(input: &str, output: &str) -> Result<String, Groq
 
     if output_len > max_len
         || cleanup_looks_like_markdown(trimmed)
+        || cleanup_looks_like_json(trimmed)
+        || cleanup_looks_like_yaml(trimmed)
         || cleanup_looks_like_commentary(trimmed)
     {
         return Err(cleanup_validation_error());
@@ -633,6 +737,8 @@ fn cleanup_looks_like_commentary(value: &str) -> bool {
     let rejected_prefixes = [
         "corrected:",
         "output:",
+        "here is",
+        "here's",
         "here's the cleaned text:",
         "here is the cleaned text:",
         "cleaned transcript:",
@@ -642,6 +748,25 @@ fn cleanup_looks_like_commentary(value: &str) -> bool {
     rejected_prefixes
         .iter()
         .any(|prefix| lower.starts_with(prefix))
+        || lower.contains("i corrected")
+        || lower.contains("i have corrected")
+}
+
+fn cleanup_looks_like_json(value: &str) -> bool {
+    let trimmed = value.trim();
+    (trimmed.starts_with('{') && trimmed.ends_with('}'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+        || trimmed.starts_with("\"text\"")
+        || trimmed.contains("\":")
+}
+
+fn cleanup_looks_like_yaml(value: &str) -> bool {
+    let trimmed = value.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("---")
+        || lower.starts_with("transcript:")
+        || lower.starts_with("cleaned:")
+        || lower.starts_with("text:")
 }
 
 fn classify_cleanup_request_error(error: reqwest::Error) -> CleanupAttemptError {
@@ -661,52 +786,51 @@ fn classify_cleanup_request_error(error: reqwest::Error) -> CleanupAttemptError 
 fn classify_cleanup_http_error(
     status: StatusCode,
     retry_after: Option<Duration>,
+    rate_limit: Option<GroqRateLimitMetadata>,
 ) -> CleanupAttemptError {
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-            cleanup_non_retryable(groq_cleanup_error(
+            cleanup_non_retryable(groq_cleanup_error_with_rate_limit(
                 GroqCleanupErrorCode::InvalidApiKey,
                 "The configured Groq API key was rejected.",
+                rate_limit,
             ))
         }
-        StatusCode::BAD_REQUEST => cleanup_non_retryable(groq_cleanup_error(
+        StatusCode::BAD_REQUEST => cleanup_non_retryable(groq_cleanup_error_with_rate_limit(
             GroqCleanupErrorCode::InvalidRequest,
             "Groq rejected the cleanup request.",
+            rate_limit,
         )),
         StatusCode::REQUEST_TIMEOUT => cleanup_retryable_with_retry_after(
-            groq_cleanup_error(
+            groq_cleanup_error_with_rate_limit(
                 GroqCleanupErrorCode::Timeout,
                 "The Groq cleanup request timed out.",
+                rate_limit,
             ),
             retry_after,
         ),
         StatusCode::TOO_MANY_REQUESTS => cleanup_retryable_with_retry_after(
-            groq_cleanup_error(
+            groq_cleanup_error_with_rate_limit(
                 GroqCleanupErrorCode::RateLimit,
                 "Groq rate limited the cleanup request. Try again shortly.",
+                rate_limit,
             ),
             retry_after,
         ),
         status if status.is_server_error() => cleanup_retryable_with_retry_after(
-            groq_cleanup_error(
+            groq_cleanup_error_with_rate_limit(
                 GroqCleanupErrorCode::ServerError,
                 "Groq could not complete the cleanup request.",
+                rate_limit,
             ),
             retry_after,
         ),
-        _ => cleanup_non_retryable(groq_cleanup_error(
+        _ => cleanup_non_retryable(groq_cleanup_error_with_rate_limit(
             GroqCleanupErrorCode::InvalidRequest,
             "Groq rejected the cleanup request.",
+            rate_limit,
         )),
     }
-}
-
-fn cleanup_retry_after(headers: &HeaderMap) -> Option<Duration> {
-    headers
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(Duration::from_secs)
 }
 
 fn cleanup_retryable(error: GroqCleanupError) -> CleanupAttemptError {
@@ -751,13 +875,55 @@ fn cleanup_validation_error() -> GroqCleanupError {
 }
 
 fn groq_cleanup_error(code: GroqCleanupErrorCode, message: &'static str) -> GroqCleanupError {
+    groq_cleanup_error_with_rate_limit(code, message, None)
+}
+
+fn groq_cleanup_error_with_rate_limit(
+    code: GroqCleanupErrorCode,
+    message: &'static str,
+    rate_limit: Option<GroqRateLimitMetadata>,
+) -> GroqCleanupError {
     GroqCleanupError {
         code,
         message: message.to_string(),
         model: GROQ_CLEANUP_MODEL.to_string(),
         retry_count: 0,
         validation_ms: 0,
+        rate_limit: rate_limit.map(Box::new),
     }
+}
+
+fn retry_after(headers: &HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+}
+
+fn rate_limit_metadata(headers: &HeaderMap) -> Option<GroqRateLimitMetadata> {
+    let metadata = GroqRateLimitMetadata {
+        remaining_requests: header_value(headers, "x-ratelimit-remaining-requests"),
+        remaining_tokens: header_value(headers, "x-ratelimit-remaining-tokens"),
+        reset_requests: header_value(headers, "x-ratelimit-reset-requests"),
+        reset_tokens: header_value(headers, "x-ratelimit-reset-tokens"),
+        retry_after_seconds: retry_after(headers).map(|duration| duration.as_secs()),
+    };
+
+    if metadata == GroqRateLimitMetadata::default() {
+        None
+    } else {
+        Some(metadata)
+    }
+}
+
+fn header_value(headers: &HeaderMap, name: &'static str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn elapsed_ms(started: Instant) -> u64 {
@@ -779,8 +945,8 @@ mod tests {
 
     use super::{
         cleanup_max_tokens_for, GroqCleanupClient, GroqCleanupErrorCode, GroqTranscriptionClient,
-        GroqTranscriptionErrorCode, CHAT_COMPLETIONS_PATH, GROQ_CLEANUP_MODEL, GROQ_STT_MODEL,
-        TRANSCRIPTIONS_PATH,
+        GroqTranscriptionErrorCode, CHAT_COMPLETIONS_PATH, DEFAULT_STT_LANGUAGE,
+        GROQ_CLEANUP_MODEL, GROQ_STT_MODEL, TRANSCRIPTIONS_PATH,
     };
 
     #[tokio::test]
@@ -802,8 +968,43 @@ mod tests {
         assert!(request.starts_with(&format!("POST {TRANSCRIPTIONS_PATH} HTTP/1.1")));
         assert!(request_lower.contains("authorization: bearer gsk_test_key"));
         assert!(request.contains(GROQ_STT_MODEL));
+        assert!(request.contains(DEFAULT_STT_LANGUAGE));
+        assert!(request.contains("temperature"));
+        assert!(request.contains("\r\n0\r\n"));
+        assert!(request.contains("language"));
         assert!(request.contains("recording.wav"));
         assert!(request.contains("audio/wav"));
+    }
+
+    #[tokio::test]
+    async fn stt_rate_limit_respects_retry_after_and_tracks_metadata() {
+        let server = MockServer::start(vec![
+            MockResponse::json(429, r#"{"error":"rate limited"}"#)
+                .with_header("Retry-After", "1")
+                .with_header("x-ratelimit-remaining-requests", "0"),
+            MockResponse::json(200, r#"{"text":"ok"}"#)
+                .with_header("x-ratelimit-remaining-requests", "12")
+                .with_header("x-ratelimit-remaining-tokens", "42"),
+        ]);
+        let client = GroqTranscriptionClient::for_test(
+            server.base_url(),
+            Duration::from_secs(2),
+            2,
+            Duration::from_millis(10),
+        );
+
+        let result = client
+            .transcribe_wav("gsk_test_key", minimal_wav())
+            .await
+            .expect("retry should succeed");
+
+        assert_eq!(result.retry_count, 1);
+        let rate_limit = result
+            .rate_limit
+            .expect("rate limit metadata should be captured");
+        assert_eq!(rate_limit.remaining_requests.as_deref(), Some("12"));
+        assert_eq!(rate_limit.remaining_tokens.as_deref(), Some("42"));
+        assert_eq!(server.request_count(), 2);
     }
 
     #[tokio::test]
@@ -1098,7 +1299,9 @@ mod tests {
         assert!(request.contains(r#""role":"system""#));
         assert!(request.contains(r#""role":"user""#));
         assert!(request.contains(r#""temperature":0"#));
-        assert!(request.contains("Clean this transcript"));
+        assert!(request.contains("You are a transcript cleanup engine."));
+        assert!(request.contains("Preserve the original language."));
+        assert!(!request.contains("Clean this transcript"));
         assert!(request.contains("<transcript>"));
         assert!(request.contains("raw transcript"));
     }
@@ -1128,6 +1331,37 @@ mod tests {
         assert!(body.contains(r#""temperature":0"#));
         assert!(body_lower.contains("\"max_tokens\":64"));
         assert!(body.contains(r#""model":"llama-3.1-8b-instant""#));
+    }
+
+    #[tokio::test]
+    async fn cleanup_rate_limit_respects_retry_after_and_tracks_metadata() {
+        let server = MockServer::start(vec![
+            MockResponse::json(429, r#"{"error":{"message":"slow down"}}"#)
+                .with_header("Retry-After", "1")
+                .with_header("x-ratelimit-remaining-requests", "0"),
+            MockResponse::json(200, r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#)
+                .with_header("x-ratelimit-remaining-requests", "8")
+                .with_header("x-ratelimit-reset-requests", "2s"),
+        ]);
+        let client = GroqCleanupClient::for_test(
+            server.base_url(),
+            Duration::from_secs(2),
+            2,
+            Duration::ZERO,
+        );
+
+        let result = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect("cleanup should eventually succeed");
+
+        assert_eq!(result.retry_count, 1);
+        let rate_limit = result
+            .rate_limit
+            .expect("rate limit metadata should be captured");
+        assert_eq!(rate_limit.remaining_requests.as_deref(), Some("8"));
+        assert_eq!(rate_limit.reset_requests.as_deref(), Some("2s"));
+        assert_eq!(server.request_count(), 2);
     }
 
     #[tokio::test]
@@ -1303,6 +1537,54 @@ mod tests {
         assert_eq!(server.request_count(), 1);
     }
 
+    #[tokio::test]
+    async fn cleanup_rejects_json_like_output() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"{\"text\":\"Cleaned.\"}"}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("json output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_yaml_like_output() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"text: Cleaned."}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("yaml output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_overly_long_output() {
+        let long = "word ".repeat(100);
+        let body = format!(r#"{{"choices":[{{"message":{{"content":"{}"}}}}]}}"#, long);
+        let leaked: &'static str = Box::leak(body.into_boxed_str());
+        let server = MockServer::start(vec![MockResponse::json(200, leaked)]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("overly long output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+    }
+
     #[test]
     fn cleanup_token_limit_uses_bounded_word_count() {
         assert_eq!(cleanup_max_tokens_for("short text"), 64);
@@ -1366,11 +1648,16 @@ mod tests {
     }
 
     fn test_client(base_url: String) -> GroqTranscriptionClient {
-        GroqTranscriptionClient::for_test(base_url, Duration::from_secs(2), 3, Duration::ZERO)
+        GroqTranscriptionClient::for_test(
+            base_url,
+            Duration::from_secs(5),
+            3,
+            Duration::from_millis(10),
+        )
     }
 
     fn test_cleanup_client(base_url: String) -> GroqCleanupClient {
-        GroqCleanupClient::for_test(base_url, Duration::from_secs(2), 3, Duration::ZERO)
+        GroqCleanupClient::for_test(base_url, Duration::from_secs(5), 3, Duration::ZERO)
     }
 
     fn extract_request_body(request: &str) -> String {
@@ -1409,6 +1696,7 @@ mod tests {
         status: u16,
         body: &'static str,
         delay: Duration,
+        headers: Vec<(&'static str, &'static str)>,
     }
 
     impl MockResponse {
@@ -1417,6 +1705,7 @@ mod tests {
                 status,
                 body,
                 delay: Duration::ZERO,
+                headers: Vec::new(),
             }
         }
 
@@ -1425,7 +1714,13 @@ mod tests {
                 status,
                 body,
                 delay,
+                headers: Vec::new(),
             }
+        }
+
+        fn with_header(mut self, name: &'static str, value: &'static str) -> Self {
+            self.headers.push((name, value));
+            self
         }
     }
 
@@ -1532,7 +1827,9 @@ mod tests {
                     let headers = String::from_utf8_lossy(&buffer[..header_end]);
                     let content_len = headers
                         .lines()
-                        .find_map(|line| line.strip_prefix("Content-Length: "))
+                        .filter_map(|line| line.split_once(':'))
+                        .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+                        .map(|(_, value)| value)
                         .and_then(|value| value.trim().parse::<usize>().ok())
                         .unwrap_or(0);
                     expected_len = Some(header_end + 4 + content_len);
@@ -1558,10 +1855,16 @@ mod tests {
             503 => "Service Unavailable",
             _ => "Error",
         };
+        let headers = response
+            .headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\r\n"))
+            .collect::<String>();
         let raw = format!(
-            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+            "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nConnection: close\r\n{}Content-Length: {}\r\n\r\n{}",
             response.status,
             status_text,
+            headers,
             response.body.len(),
             response.body
         );

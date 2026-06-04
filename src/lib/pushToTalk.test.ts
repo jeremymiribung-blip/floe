@@ -12,6 +12,9 @@ const latestRecording: RecordingInfo = {
   sampleRate: 48_000,
   inputChannels: 1,
   outputChannels: 1,
+  wavFormat: "wav",
+  wavSampleRate: 16_000,
+  wavChannels: 1,
   durationMs: 1_000,
   sampleCount: 48_000,
   wavByteCount: 96_044,
@@ -464,7 +467,7 @@ describe("PushToTalkController", () => {
     expect(diagnostics.models.cleanup).toBe("llama-3.1-8b-instant");
     expect(diagnostics.audio).toEqual({
       format: "wav",
-      sample_rate: 48_000,
+      sample_rate: 16_000,
       channels: 1,
       bytes: 96_044,
     });

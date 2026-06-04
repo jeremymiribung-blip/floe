@@ -13,15 +13,15 @@ use crate::{
 pub async fn transcribe_latest_recording(
     recording_manager: State<'_, RecordingManager>,
     settings_manager: State<'_, SettingsManager>,
+    groq_client: State<'_, GroqTranscriptionClient>,
 ) -> Result<GroqTranscription, GroqTranscriptionError> {
     let wav_bytes = latest_wav_bytes(recording_manager.get_latest_recording_wav_bytes()?)?;
     let api_key = settings_manager
         .get_groq_api_key_secret()
         .map_err(map_settings_error)?
         .ok_or_else(missing_api_key_error)?;
-    let client = GroqTranscriptionClient::new()?;
 
-    client.transcribe_wav(&api_key, wav_bytes).await
+    groq_client.transcribe_wav(&api_key, wav_bytes).await
 }
 
 fn latest_wav_bytes(wav_bytes: Option<Vec<u8>>) -> Result<Vec<u8>, GroqTranscriptionError> {

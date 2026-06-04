@@ -2,6 +2,7 @@ mod audio;
 mod cleanup;
 mod commands;
 mod lifecycle;
+mod prompts;
 mod providers;
 mod recording;
 mod settings;
@@ -29,7 +30,12 @@ pub fn run() {
 
             let is_background_launch = system::startup::is_background_launch_from_env();
             let config_dir = app.path().app_config_dir()?;
+            let groq_http_client = providers::http::build_shared_http_client()?;
             app.manage(settings::SettingsManager::new(config_dir));
+            app.manage(providers::groq::GroqTranscriptionClient::new(
+                groq_http_client.clone(),
+            ));
+            app.manage(providers::groq::GroqCleanupClient::new(groq_http_client));
             system::tray::setup_tray(app)?;
             system::hotkey::register_startup_hotkey(app.handle());
 

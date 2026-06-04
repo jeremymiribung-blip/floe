@@ -14,7 +14,7 @@ Floe aims to feel fast, private by default, and boringly reliable. The STT path 
 - React, TypeScript, Vite
 - Rust backend
 - `cpal` microphone recording
-- In-memory 16-bit PCM WAV generation
+- In-memory 16 kHz mono 16-bit PCM WAV generation
 - Groq Speech-to-Text with `whisper-large-v3-turbo`
 - Groq transcript cleanup with `llama-3.1-8b-instant`
 - OS keychain storage for the Groq API key
@@ -24,7 +24,7 @@ Floe aims to feel fast, private by default, and boringly reliable. The STT path 
 
 1. Start recording on push-to-talk.
 2. Stop recording on release.
-3. Convert the full recording to WAV in memory.
+3. Convert the full recording to optimized 16 kHz mono 16-bit PCM WAV in memory.
 4. Send the WAV once to Groq STT.
 5. Clean the transcript with Groq.
 6. Copy and paste the final text.
@@ -33,7 +33,7 @@ Retries are bounded and only used for temporary network/API failures. If Groq cl
 
 ## Non-goals
 
-Floe does not include streaming, rolling transcription, audio chunking, overlap windows, realtime partial transcripts, transcript merging, analytics, or permanent audio storage. Floe also does not expose a user-selectable cleanup provider or mode; the only flow is Groq STT followed by Groq cleanup using the same API key.
+Floe does not include Cerebras, streaming, rolling transcription, audio chunking, overlap windows, realtime partial transcripts, transcript merging, analytics, or permanent audio storage. Floe also does not expose a user-selectable cleanup provider or mode; the only flow is Groq STT followed by Groq cleanup using the same Groq API key.
 
 ## Current Scaffold Scope
 
@@ -59,7 +59,7 @@ Floe is Groq-only and intentionally minimal. There are no cleanup modes, no Beha
 
 ## Privacy Model
 
-- Audio is kept in memory and sent once to Groq after recording stops.
+- Audio is kept in memory, converted to 16 kHz mono 16-bit PCM WAV, and sent once to Groq after recording stops.
 - Audio is not written to disk by default.
 - Audio is never sent for cleanup. Only transcript text is sent to Groq for cleanup.
 - If Groq cleanup fails, Floe pastes the raw Groq transcript and shows a short `Cleanup failed` warning.
@@ -151,7 +151,7 @@ The frontend never receives the full API key. It only receives whether a key is 
 
 If the native keychain is unavailable in the current environment, Floe does not fall back to plaintext secret files. Saving or clearing a secret returns a sanitized error, and the API key status remains unconfigured until OS keychain access works.
 
-Cleanup is fixed: after Groq STT, Floe sends the transcript text to Groq using the same API key. Only transcript text is sent for cleanup; audio is never sent. If Groq cleanup fails (for example, missing or invalid key, network error, rate limit, malformed response), Floe pastes the raw Groq transcript and surfaces a short `Cleanup failed` warning. The flow does not block on cleanup success.
+Transcription is fixed: Floe sends optimized WAV audio to Groq Whisper Turbo (`whisper-large-v3-turbo`) once after recording stops. Cleanup is fixed: after Groq STT, Floe sends the transcript text to Groq Llama 3.1 8B Instant (`llama-3.1-8b-instant`) using the same API key. Only transcript text is sent for cleanup; audio is never sent. There are no cleanup modes and no provider switching. If Groq cleanup fails (for example, missing or invalid key, network error, rate limit, malformed response), Floe pastes the raw Groq transcript and surfaces a short `Cleanup failed` warning. The flow does not block on cleanup success.
 
 ## Troubleshooting
 

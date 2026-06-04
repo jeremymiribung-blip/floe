@@ -104,6 +104,9 @@ export interface RecordingInfo {
   sampleRate: number;
   inputChannels: number;
   outputChannels: 1;
+  wavFormat: "wav";
+  wavSampleRate: number;
+  wavChannels: 1;
   durationMs: number;
   sampleCount: number;
   wavByteCount: number;
@@ -145,6 +148,7 @@ export interface GroqTranscription {
   text: string;
   model: string;
   retryCount: number;
+  rateLimit?: GroqRateLimitMetadata;
 }
 
 export interface GroqTranscriptionError {
@@ -152,6 +156,7 @@ export interface GroqTranscriptionError {
   message: string;
   model?: string;
   retryCount?: number;
+  rateLimit?: GroqRateLimitMetadata;
 }
 
 export interface TranscriptCleanupResult {
@@ -161,6 +166,7 @@ export interface TranscriptCleanupResult {
   retryCount?: number;
   validationMs?: number;
   fallbackUsed?: boolean;
+  rateLimit?: GroqRateLimitMetadata;
   errorCode?:
     | "missingApiKey"
     | "invalidApiKey"
@@ -172,6 +178,14 @@ export interface TranscriptCleanupResult {
     | "emptyTranscript"
     | "validationFailed"
     | "serverError";
+}
+
+export interface GroqRateLimitMetadata {
+  remainingRequests?: string;
+  remainingTokens?: string;
+  resetRequests?: string;
+  resetTokens?: string;
+  retryAfterSeconds?: number;
 }
 
 export type ClipboardErrorCode = "clipboardUnavailable" | "pasteUnavailable";

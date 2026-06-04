@@ -49,6 +49,22 @@ export interface PipelineDiagnostics {
     channels: number;
     bytes: number;
   };
+  rate_limit?: {
+    stt?: {
+      remaining_requests?: string;
+      remaining_tokens?: string;
+      reset_requests?: string;
+      reset_tokens?: string;
+      retry_after_seconds?: number;
+    };
+    cleanup?: {
+      remaining_requests?: string;
+      remaining_tokens?: string;
+      reset_requests?: string;
+      reset_tokens?: string;
+      retry_after_seconds?: number;
+    };
+  };
   retries: {
     stt: number;
     cleanup: number;
@@ -125,11 +141,14 @@ export function createPipelineDiagnostics(
       cleanup: input.cleanup?.model ?? CLEANUP_MODEL,
     },
     audio: {
-      format: "wav",
-      sample_rate: recordingInfo?.sampleRate ?? 0,
-      channels: recordingInfo?.outputChannels ?? 1,
+      format: recordingInfo?.wavFormat ?? "wav",
+      sample_rate:
+        recordingInfo?.wavSampleRate ?? recordingInfo?.sampleRate ?? 0,
+      channels:
+        recordingInfo?.wavChannels ?? recordingInfo?.outputChannels ?? 1,
       bytes: recordingInfo?.wavByteCount ?? 0,
     },
+    rate_limit: rateLimitDiagnostics(input),
     retries: {
       stt: input.stt?.retryCount ?? input.sttError?.retryCount ?? 0,
       cleanup: input.cleanup?.retryCount ?? 0,
@@ -156,6 +175,50 @@ export function createPipelineDiagnostics(
       paste: pipeline.paste_ms,
     }),
   };
+}
+
+function rateLimitDiagnostics(
+  input: PipelineDiagnosticsInput,
+): PipelineDiagnostics["rate_limit"] {
+  const stt = sanitizeRateLimit(
+    input.stt?.rateLimit ?? input.sttError?.rateLimit,
+  );
+  const cleanup = sanitizeRateLimit(input.cleanup?.rateLimit);
+
+  if (!stt && !cleanup) {
+    return undefined;
+  }
+
+  return {
+    ...(stt ? { stt } : {}),
+    ...(cleanup ? { cleanup } : {}),
+  };
+}
+
+function sanitizeRateLimit(
+  metadata:
+    | NonNullable<GroqTranscription["rateLimit"]>
+    | NonNullable<TranscriptCleanupResult["rateLimit"]>
+    | undefined,
+):
+  | NonNullable<NonNullable<PipelineDiagnostics["rate_limit"]>["stt"]>
+  | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const sanitized = {
+    remaining_requests: metadata.remainingRequests,
+    remaining_tokens: metadata.remainingTokens,
+    reset_requests: metadata.resetRequests,
+    reset_tokens: metadata.resetTokens,
+    retry_after_seconds: metadata.retryAfterSeconds,
+  };
+  const hasValue = Object.values(sanitized).some(
+    (value) => value !== undefined && value !== null && value !== "",
+  );
+
+  return hasValue ? sanitized : undefined;
 }
 
 export function diagnosticsToJson(diagnostics: PipelineDiagnostics): string {

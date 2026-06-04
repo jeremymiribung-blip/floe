@@ -21,6 +21,8 @@ pub struct TranscriptCleanupResult {
     pub validation_ms: u64,
     pub fallback_used: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<Box<crate::providers::groq::GroqRateLimitMetadata>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<GroqCleanupErrorCode>,
 }
 
@@ -33,6 +35,7 @@ impl TranscriptCleanupResult {
             retry_count: cleaned.retry_count,
             validation_ms: cleaned.validation_ms,
             fallback_used: false,
+            rate_limit: cleaned.rate_limit,
             error_code: None,
         }
     }
@@ -44,6 +47,7 @@ impl TranscriptCleanupResult {
             .unwrap_or_else(|| CLEANUP_MODEL.to_string());
         let retry_count = error.as_ref().map(|error| error.retry_count).unwrap_or(0);
         let validation_ms = error.as_ref().map(|error| error.validation_ms).unwrap_or(0);
+        let rate_limit = error.as_ref().and_then(|error| error.rate_limit.clone());
         let error_code = error.map(|error| error.code);
 
         Self {
@@ -53,6 +57,7 @@ impl TranscriptCleanupResult {
             retry_count,
             validation_ms,
             fallback_used: true,
+            rate_limit,
             error_code,
         }
     }
@@ -60,12 +65,11 @@ impl TranscriptCleanupResult {
 
 pub async fn cleanup_transcript(
     manager: &SettingsManager,
+    groq_client: &crate::providers::groq::GroqCleanupClient,
     transcript: String,
 ) -> TranscriptCleanupResult {
     cleanup_transcript_with(manager, transcript, |api_key, transcript| async move {
-        crate::providers::groq::GroqCleanupClient::new()?
-            .cleanup_transcript(&api_key, &transcript)
-            .await
+        groq_client.cleanup_transcript(&api_key, &transcript).await
     })
     .await
 }
@@ -152,6 +156,7 @@ mod tests {
                 retry_count: 0,
                 validation_ms: 1,
                 fallback_used: false,
+                rate_limit: None,
                 error_code: None,
             }
         );
@@ -244,6 +249,7 @@ mod tests {
             model: "llama-3.1-8b-instant".to_string(),
             retry_count: 0,
             validation_ms: 1,
+            rate_limit: None,
         }
     }
 
