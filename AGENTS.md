@@ -15,3 +15,4 @@
 - Do not log raw transcripts, raw audio, full API keys, or auth headers.
 - Prefer small modules and focused tests.
 - Floe runs as a single app instance via the Tauri 2 single-instance plugin; secondary launches show/focus the existing main window and never reinitialize the tray, hotkey, audio manager, recording, or paste.
+- The main window is gated by a `setupState` (`setup_groq`, `setup_hotkey`, `ready`) derived from the live Groq key and hotkey status. Onboarding shows when the key is missing or the hotkey is not registered; it does not call Groq, the microphone, recording, or paste. If the key is cleared or the hotkey becomes invalid later, the app returns to the matching setup step. The overview never shows cleanup modes, Behavior, or provider labels.

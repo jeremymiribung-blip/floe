@@ -69,29 +69,26 @@ ul {
 }
 
 .status-view,
-.settings-view {
+.overview-view,
+.settings-view,
+.onboarding-view {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.status-view__status {
+.overview-view__status {
   font-size: 18px;
   font-weight: 400;
   line-height: 1.2;
 }
 
-.status-view__hotkey {
+.overview-view__hotkey {
   font-size: 14px;
   color: #6b6b6b;
 }
 
-.status-view__error {
-  font-size: 14px;
-  color: #111111;
-}
-
-.status-view__settings {
+.overview-view__settings {
   align-self: flex-start;
   background: none;
   border: 0;
@@ -104,13 +101,106 @@ ul {
   text-decoration-thickness: 1px;
 }
 
-.status-view__settings:hover {
+.overview-view__settings:hover {
   text-decoration-thickness: 1px;
 }
 
-.status-view__settings:focus-visible {
+.overview-view__settings:focus-visible {
   outline: 2px solid #111111;
   outline-offset: 2px;
+}
+
+.onboarding-view {
+  gap: 24px;
+  padding-top: 24px;
+}
+
+.setup-step {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.setup-step__label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b6b6b;
+}
+
+.setup-step__field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.setup-step__input {
+  flex: 1 1 200px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+  font: inherit;
+}
+
+.setup-step__input:focus {
+  outline: none;
+  border-color: #111111;
+  box-shadow: 0 0 0 2px #f5f5f5;
+}
+
+.setup-step__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14px;
+  color: #111111;
+}
+
+.setup-step__button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #111111;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: opacity 100ms ease;
+}
+
+.setup-step__button:hover:not(:disabled) {
+  background: #f5f5f5;
+}
+
+.setup-step__button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.setup-step__button:focus-visible {
+  outline: none;
+  border-color: #111111;
+  box-shadow: 0 0 0 2px #f5f5f5;
+}
+
+.setup-step__button--primary {
+  border-color: #111111;
+  background: #111111;
+  color: #ffffff;
+}
+
+.setup-step__button--primary:hover:not(:disabled) {
+  background: #000000;
+  border-color: #000000;
+}
+
+.setup-step__error {
+  font-size: 13px;
+  color: #6b6b6b;
 }
 
 .settings-view__header {

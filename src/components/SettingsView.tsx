@@ -47,7 +47,7 @@ export function SettingsView({
       </header>
 
       <div className="settings-view__group">
-        <h2 className="settings-view__heading">API Keys</h2>
+        <h2 className="settings-view__heading">API Key</h2>
         <ApiKeyRow
           label="Groq"
           status={groqStatus}

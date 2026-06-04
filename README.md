@@ -2,7 +2,7 @@
 
 Floe is a minimal desktop push-to-talk transcription utility. Hold a global hotkey, speak, release it, and Floe sends the completed recording once to Groq Speech-to-Text, cleans the transcript with Groq, copies the cleaned text to the clipboard, and pastes it into the focused app.
 
-This repository is currently an early V1 implementation. The desktop shell, settings storage, manual recording, configurable global push-to-talk hotkeys, Groq transcription, Groq transcript cleanup, clipboard writes, and paste automation are in place.
+This repository is currently an early V1 implementation. The desktop shell, settings storage, manual recording, configurable global push-to-talk hotkeys, Groq transcription, Groq transcript cleanup, clipboard writes, paste automation, and a minimal first-run onboarding flow are in place.
 
 ## Product Goal
 
@@ -38,11 +38,23 @@ Floe does not include streaming, rolling transcription, audio chunking, overlap 
 ## Current Scaffold Scope
 
 - Minimal Tauri 2 app named Floe.
-- React UI with a status view (wordmark, current state, current hotkey) and a settings view (`API Keys`, `Hotkey`, `Start at login`, `Privacy`).
+- React UI with a first-run onboarding flow (Groq API key, then hotkey), a minimal overview (wordmark, current state, current hotkey, `Settings`), and a settings view (`API Key`, `Hotkey`, `Start at login`, `Privacy`).
 - Rust commands for app status, secure settings, recording checks, Groq transcription, Groq cleanup, clipboard writes, and paste automation.
 - Tauri 2 global shortcut registration with press/release events for push-to-talk.
 - Optional start-at-login support that launches Floe hidden in the background.
 - GitHub Actions CI for frontend and Rust checks.
+
+## First Run
+
+The first time Floe is opened, the main window shows a short onboarding flow instead of the overview:
+
+1. **Groq API key** — enter the Groq API key and press `Continue`. The key is stored in the OS keychain and the app moves to the next step.
+2. **Hotkey** — confirm the default hotkey (`Ctrl + Space` on Windows/Linux, `Option + Space` on macOS) or press `Change` to capture a new shortcut, then press `Continue`.
+3. **Overview** — the minimal overview appears, showing the wordmark, status, hotkey, and a `Settings` link.
+
+Floe only calls Groq for transcription and cleanup; it does not validate the API key with a network call during onboarding. If the key is cleared later or the hotkey becomes invalid, Floe returns to the matching onboarding step. The main overview never shows cleanup modes, provider labels, or behavior settings. Floe is Groq-only.
+
+Floe is Groq-only and intentionally minimal. There are no cleanup modes, no Behavior section, and no provider switching — the only flow is `Groq STT → Groq cleanup → clipboard → paste`.
 
 ## Privacy Model
 
@@ -79,14 +91,16 @@ pnpm tauri:dev
 ## Manual Test Flow
 
 1. Run `pnpm tauri:dev`.
-2. Save a Groq API key in Settings.
-3. Confirm the global hotkey appears as the current shortcut on the status view.
-4. Focus a target text field in another app.
-5. Hold the configured global hotkey, speak briefly, then release it.
-6. Confirm the cleaned transcript is pasted into the focused target.
-7. If the OS blocks paste automation, Floe shows `Copied` on the status view. Paste manually with Command+V on macOS or Control+V on Windows/Linux.
-8. Use `Change` in the Hotkey section, press a new key combination, and confirm Floe re-registers it. `Reset` restores the platform default.
-9. Enable `Start at login`, quit Floe from the tray, log out/in or restart, and confirm Floe starts hidden with the tray icon present and the hotkey active.
+2. On the first launch, the Groq API key step appears. Enter a Groq API key and press `Continue`.
+3. The Hotkey step appears. Press `Continue` to keep the default, or `Change` to capture a new shortcut, then `Continue`.
+4. The minimal overview appears showing the wordmark, status, current hotkey, and a `Settings` link.
+5. Focus a target text field in another app.
+6. Hold the configured global hotkey, speak briefly, then release it.
+7. Confirm the cleaned transcript is pasted into the focused target.
+8. If the OS blocks paste automation, Floe shows `Copied` on the status view. Paste manually with Command+V on macOS or Control+V on Windows/Linux.
+9. Use `Change` in the Hotkey section, press a new key combination, and confirm Floe re-registers it. `Reset` restores the platform default.
+10. Enable `Start at login`, quit Floe from the tray, log out/in or restart, and confirm Floe starts hidden with the tray icon present and the hotkey active.
+11. In Settings, clear the Groq API key. The app returns to the Groq setup step automatically. Re-enter the key and continue to the Hotkey step.
 
 Useful checks:
 

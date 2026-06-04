@@ -1,9 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "./components/AppShell";
+import { OnboardingView } from "./components/OnboardingView";
+import { OverviewView } from "./components/OverviewView";
 import { SettingsView } from "./components/SettingsView";
-import { StatusView } from "./components/StatusView";
 import { PushToTalkController } from "./lib/pushToTalk";
+import { computeSetupState } from "./lib/setupState";
 import { statusLabel } from "./lib/status";
 import {
   bubbleHide,
@@ -38,16 +40,17 @@ import type {
   StartAtLoginStatus,
 } from "./types/app";
 
-type View = "status" | "settings";
+type View = "overview" | "settings";
 
 export default function App() {
-  const [view, setView] = useState<View>("status");
+  const [view, setView] = useState<View>("overview");
   const [appState, setAppState] = useState<AppState>("ready");
   const [error, setError] = useState<string | null>(null);
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyStatus | null>(null);
   const [startAtLoginStatus, setStartAtLoginStatus] =
     useState<StartAtLoginStatus | null>(null);
   const [groqStatus, setGroqStatus] = useState<GroqApiKeyStatus | null>(null);
+  const [hotkeyStepConfirmed, setHotkeyStepConfirmed] = useState(false);
   const controllerRef = useRef<PushToTalkController | null>(null);
 
   if (controllerRef.current === null) {
@@ -77,16 +80,9 @@ export default function App() {
       .then(([groq, hotkey]) => {
         setGroqStatus(groq);
         setHotkeyStatus(hotkey);
-        if (!hotkey.isRegistered) {
-          setError(hotkey.registrationError ?? "Hotkey unavailable");
-          setAppState("error");
-        } else {
-          setAppState("ready");
-        }
       })
       .catch(() => {
         setError("Floe could not load setup state.");
-        setAppState("error");
       });
 
     getStartAtLoginStatus()
@@ -123,7 +119,6 @@ export default function App() {
       .catch(() => {
         if (isActive) {
           setError("Floe could not listen for the global hotkey.");
-          setAppState("error");
         }
       });
 
@@ -166,22 +161,18 @@ export default function App() {
       const next = await saveGroqApiKey(value);
       setGroqStatus(next);
       setError(null);
-      setAppState("ready");
     } catch (caught) {
-      setError(settingsErrorMessage(caught));
-      setAppState("error");
-      throw caught;
+      throw settingsErrorForOnboarding(caught);
     }
   }, []);
 
   const handleClearGroq = useCallback(async () => {
     try {
-      setGroqStatus(await clearGroqApiKey());
+      const next = await clearGroqApiKey();
+      setGroqStatus(next);
       setError(null);
-      setAppState("ready");
     } catch (caught) {
       setError(settingsErrorMessage(caught));
-      setAppState("error");
       throw caught;
     }
   }, []);
@@ -191,11 +182,8 @@ export default function App() {
       const next = await setHotkey(accelerator);
       setHotkeyStatus(next);
       setError(null);
-      setAppState("ready");
     } catch (caught) {
-      setError(hotkeyErrorMessage(caught));
-      setAppState("error");
-      throw caught;
+      throw hotkeyErrorForOnboarding(caught);
     }
   }, []);
 
@@ -204,10 +192,8 @@ export default function App() {
       const next = await resetHotkeyToDefault();
       setHotkeyStatus(next);
       setError(null);
-      setAppState("ready");
     } catch (caught) {
       setError(hotkeyErrorMessage(caught));
-      setAppState("error");
     }
   }, []);
 
@@ -216,13 +202,30 @@ export default function App() {
       const next = await setStartAtLoginEnabled(enabled);
       setStartAtLoginStatus(next);
       setError(null);
-      setAppState("ready");
     } catch (caught) {
       setError(startAtLoginErrorMessage(caught, enabled));
-      setAppState("error");
       throw caught;
     }
   }, []);
+
+  const handleCompleteOnboarding = useCallback(() => {
+    setHotkeyStepConfirmed(true);
+    setView("overview");
+  }, []);
+
+  const setupState = (() => {
+    const base = computeSetupState(groqStatus, hotkeyStatus);
+    if (base === "ready" && !hotkeyStepConfirmed) {
+      return "setup_hotkey" as ReturnType<typeof computeSetupState>;
+    }
+    return base;
+  })();
+
+  useEffect(() => {
+    if (setupState === "ready") {
+      setError(null);
+    }
+  }, [setupState]);
 
   const hotkeyLabel = hotkeyStatus?.configured.label ?? "Loading";
   const flowBusy =
@@ -230,8 +233,7 @@ export default function App() {
     appState === "cleaning" ||
     appState === "pasting" ||
     appState === "recording";
-  const statusText =
-    error && appState === "error" ? "Error" : statusLabel(appState);
+  const dynamicStatus = error ?? statusLabel(appState);
 
   useEffect(() => {
     if (appState === "recording") {
@@ -241,21 +243,29 @@ export default function App() {
     }
   }, [appState]);
 
-  return (
-    <AppShell>
-      {view === "status" ? (
-        <StatusView
-          status={statusText}
-          hotkeyLabel={hotkeyLabel}
-          error={appState === "error" ? error : null}
-          onOpenSettings={() => setView("settings")}
+  if (setupState !== "ready") {
+    return (
+      <AppShell>
+        <OnboardingView
+          step={setupState}
+          hotkeyStatus={hotkeyStatus}
+          onSaveGroq={handleSaveGroq}
+          onChangeHotkey={handleChangeHotkey}
+          onComplete={handleCompleteOnboarding}
+          busy={flowBusy}
         />
-      ) : (
+      </AppShell>
+    );
+  }
+
+  if (view === "settings") {
+    return (
+      <AppShell>
         <SettingsView
           groqStatus={groqStatus}
           hotkeyStatus={hotkeyStatus}
           startAtLoginStatus={startAtLoginStatus}
-          onClose={() => setView("status")}
+          onClose={() => setView("overview")}
           onSaveGroq={handleSaveGroq}
           onClearGroq={handleClearGroq}
           onChangeHotkey={handleChangeHotkey}
@@ -263,9 +273,29 @@ export default function App() {
           onSetStartAtLogin={handleSetStartAtLogin}
           busy={flowBusy}
         />
-      )}
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell>
+      <OverviewView
+        status={dynamicStatus}
+        hotkeyLabel={hotkeyLabel}
+        onOpenSettings={() => setView("settings")}
+      />
     </AppShell>
   );
+}
+
+function settingsErrorForOnboarding(caught: unknown): Error {
+  const settingsError = caught as Partial<SettingsError>;
+
+  if (typeof settingsError.message === "string") {
+    return new Error(settingsError.message);
+  }
+
+  return new Error("Could not save key");
 }
 
 function settingsErrorMessage(caught: unknown): string {
@@ -276,6 +306,16 @@ function settingsErrorMessage(caught: unknown): string {
   }
 
   return "Settings could not be saved.";
+}
+
+function hotkeyErrorForOnboarding(caught: unknown): Error {
+  const message = hotkeyErrorMessage(caught);
+
+  if (message === "Hotkey unavailable") {
+    return new Error(message);
+  }
+
+  return new Error(message);
 }
 
 function hotkeyErrorMessage(caught: unknown): string {

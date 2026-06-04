@@ -6,6 +6,8 @@ All notable changes to Floe will be documented in this file.
 
 ### Added
 
+- Minimal first-run onboarding flow. The main window shows three short steps on a fresh install: Groq API key, hotkey, and the minimal overview. The setup state is derived purely from the live Groq key and hotkey status, so the app returns to the matching setup step if the key is cleared or the hotkey becomes invalid. Floe does not call Groq, the microphone, recording, or paste during onboarding. New `OnboardingView`, `GroqSetupStep`, `HotkeySetupStep`, and `OverviewView` components drive the flow. The `lib/setupState` module exposes the pure `computeSetupState` helper.
+
 - Single-instance enforcement via the Tauri 2 single-instance plugin. Secondary launches show and focus the existing main window instead of reinitializing the tray, global hotkey, audio manager, recording, Groq calls, or paste. This makes Start at login plus a later manual launch resolve to a single running instance.
 
 - Groq transcript cleanup as part of the fixed Groq STT → Groq cleanup → clipboard → paste flow. The `cleanup_transcript` command now always sends the Groq transcript through the Groq Chat Completions API and copies the result to the clipboard; if cleanup fails, the raw Groq transcript is pasted instead and a short `Cleanup failed` warning is shown.
@@ -34,9 +36,12 @@ All notable changes to Floe will be documented in this file.
 
 ### Changed
 
+- The main window is gated by an app-level `setupState` (`setup_groq` / `setup_hotkey` / `ready`) derived from the live Groq key and hotkey status. While setup is incomplete, the window renders the new `OnboardingView`. Once both the key is configured and the hotkey is registered, the window shows the minimal `OverviewView` with a `Settings` link.
+- `StatusView` is renamed to `OverviewView` and the separate error paragraph is removed. Short status messages (`Hotkey unavailable`, `Cleanup failed`, etc.) are now rendered through the single status line.
+- The Settings view's API key section is now labeled `API Key` (singular). Privacy copy, hotkey, and start-at-login sections are unchanged.
 - Refactored transcript cleanup to use Groq Chat Completions with `openai/gpt-oss-20b` and a strict system prompt; cleanup is a single non-streaming call, with bounded retries for network/timeout/429/5xx and respect for `Retry-After`. Only transcript text is sent; audio is never sent for cleanup.
 - The main window close button now hides Floe to the system tray instead of quitting the app, so the global push-to-talk hotkey remains registered and active while the window is hidden. Use the new tray `Quit` menu item to fully exit Floe. The tray menu now offers `Show Floe`, `Hide Floe`, `Settings`, and `Quit`. Closing the window while recording continues to record and does not interrupt the audio stream; closing while quitting first unregisters the hotkey and stops recording safely through the existing shutdown path.
-- Simplified the desktop UI to a minimal, light, black-and-white, two-view design: a status view showing only the wordmark, current state, current hotkey, and a `Settings` link, plus a settings view with `API Keys`, `Hotkey`, `Start at login`, and `Privacy` sections.
+- Simplified the desktop UI to a minimal, light, black-and-white design: a first-run onboarding flow, an overview showing only the wordmark, current state, current hotkey, and a `Settings` link, plus a settings view with `API Key`, `Hotkey`, `Start at login`, and `Privacy` sections.
 - `AppState` now includes `ready` and `copied` so the status view can show `Ready` and `Copied` instead of internal "Idle" and "Needs attention" labels.
 - Privacy note in Settings now reads `Audio → Groq` and `Text → Groq`, reflecting the single-provider flow.
 - The default push-to-talk hotkey is now `Control+Space` (shown as `Ctrl + Space`) on Windows/Linux and `Alt+Space` (shown as `Option + Space`) on macOS. Labels use a `Ctrl + Space` style format with spaces and `Ctrl`/`Option` modifier names. The `Control+Space` blocklist entry was removed so the new default can register on Windows/Linux. Legacy saved hotkeys (e.g. `Control+Shift+Space`) remain valid and are loaded unchanged; use `Reset default` in Settings to adopt the new platform default.

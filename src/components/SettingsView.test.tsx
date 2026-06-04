@@ -51,6 +51,13 @@ describe("SettingsView", () => {
     expect(container.textContent).not.toContain("Behavior");
   });
 
+  it("uses a single API Key heading", () => {
+    const { container } = renderSettingsView();
+
+    expect(container.textContent).toContain("API Key");
+    expect(container.textContent).not.toContain("API Keys");
+  });
+
   it("does not render any cleanup mode selector", () => {
     const { container } = renderSettingsView();
 
