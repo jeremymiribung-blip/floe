@@ -80,7 +80,8 @@ export type RecordingEndReason =
   | "manual"
   | "maxDuration"
   | "deviceDisconnected"
-  | "shutdown";
+  | "shutdown"
+  | "watchdogTimeout";
 
 export type RecordingErrorCode =
   | "noInputDevice"
@@ -93,6 +94,8 @@ export type RecordingErrorCode =
   | "streamBuildFailed"
   | "streamPlayFailed"
   | "wavEncodingFailed"
+  | "stopFailed"
+  | "watchdogTimeout"
   | "internal";
 
 export interface RecordingError {

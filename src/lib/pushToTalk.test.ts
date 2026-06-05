@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PushToTalkController } from "./pushToTalk";
 import type {
   AppState,
@@ -67,6 +67,25 @@ function createHarness(options: HarnessOptions = {}) {
   const errors: Array<string | null> = [];
   const transcripts: Array<string | null> = [];
   const diagnostics: Array<string | null> = [];
+  let watchdogCallback: (() => void) | null = null;
+  const watchdog = {
+    fire: vi.fn(async () => {
+      if (watchdogCallback) {
+        const cb = watchdogCallback;
+        watchdogCallback = null;
+        await cb();
+      }
+    }),
+  };
+  vi.spyOn(globalThis, "setTimeout").mockImplementation(((
+    handler: () => void,
+  ) => {
+    watchdogCallback = handler;
+    return 1 as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout);
+  vi.spyOn(globalThis, "clearTimeout").mockImplementation(() => {
+    watchdogCallback = null;
+  });
   let now = 1_000;
   const nowMs = () => {
     now += 10;
@@ -160,10 +179,14 @@ function createHarness(options: HarnessOptions = {}) {
     states,
     transcripts,
     transcribeLatestRecording,
+    watchdog,
   };
 }
 
 describe("PushToTalkController", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("starts once for repeated pressed events", async () => {
     let resolveStart: (status: RecordingStatus) => void = () => undefined;
     const startPromise = new Promise<RecordingStatus>((resolve) => {
@@ -554,6 +577,81 @@ describe("PushToTalkController", () => {
     expect(diagnostics.result.sanitized_error_code).toBe("validationFailed");
     expect(diagnostics.pipeline.cleanup_validation_ms).toBe(2);
     expect(lastState(harness.states)).toBe("pasted");
+  });
+
+  describe("stuck recording guard", () => {
+    it("transitions to error and calls stopRecording when the watchdog fires", async () => {
+      let resolveStart: (status: RecordingStatus) => void = () => undefined;
+      const startPromise = new Promise<RecordingStatus>((resolve) => {
+        resolveStart = resolve;
+      });
+      const harness = createHarness({
+        startRecording: () => startPromise,
+      });
+
+      const press = harness.controller.handleShortcutState("Pressed");
+      resolveStart(recordingStatus);
+      await press;
+
+      expect(harness.watchdog.fire).not.toHaveBeenCalled();
+
+      await harness.watchdog.fire();
+
+      expect(harness.stopRecording).toHaveBeenCalledTimes(1);
+      expect(harness.errors).toContain("Recording failed");
+      expect(lastState(harness.states)).toBe("error");
+    });
+
+    it("does not fire the watchdog when recording stops normally", async () => {
+      const harness = createHarness();
+
+      await harness.controller.handleShortcutState("Pressed");
+      await harness.controller.handleShortcutState("Released");
+
+      await harness.watchdog.fire();
+
+      expect(harness.stopRecording).toHaveBeenCalledTimes(1);
+      expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
+      expect(lastState(harness.states)).toBe("pasted");
+    });
+
+    it("treats backend watchdogTimeout as a forced error", async () => {
+      const watchdogError = new Error("Recording failed") as Error & {
+        code?: string;
+      };
+      watchdogError.code = "watchdogTimeout";
+      const harness = createHarness({
+        stopRecording: async () => {
+          harness.calls.push("stop");
+          throw watchdogError;
+        },
+      });
+
+      await harness.controller.handleShortcutState("Pressed");
+      await harness.controller.handleShortcutState("Released");
+
+      expect(harness.errors).toContain("Recording failed");
+      expect(lastState(harness.states)).toBe("error");
+    });
+
+    it("treats backend stopFailed as a forced error", async () => {
+      const stopError = new Error("Recording failed") as Error & {
+        code?: string;
+      };
+      stopError.code = "stopFailed";
+      const harness = createHarness({
+        stopRecording: async () => {
+          harness.calls.push("stop");
+          throw stopError;
+        },
+      });
+
+      await harness.controller.handleShortcutState("Pressed");
+      await harness.controller.handleShortcutState("Released");
+
+      expect(harness.errors).toContain("Recording failed");
+      expect(lastState(harness.states)).toBe("error");
+    });
   });
 });
 

@@ -32,4 +32,27 @@ describe("recording helpers", () => {
       "2s | 48000 Hz input | 16000 Hz WAV | 2->1 channel | 120000 samples | 240044 WAV bytes | 16-bit PCM | Stopped manually",
     );
   });
+
+  it("formats watchdog timeout end reason", () => {
+    const info: RecordingInfo = {
+      sampleRate: 48_000,
+      inputChannels: 1,
+      outputChannels: 1,
+      wavFormat: "wav",
+      wavSampleRate: 16_000,
+      wavChannels: 1,
+      durationMs: 125_000,
+      sampleCount: 6_000_000,
+      wavByteCount: 12_000_044,
+      wavBitsPerSample: 16,
+      recordingStopToEncodeStartMs: 0,
+      audioEncodeMs: 1,
+      startedAtMs: 1_000,
+      endedAtMs: 126_000,
+      maxDurationReached: true,
+      endedReason: "watchdogTimeout",
+    };
+
+    expect(formatRecordingInfo(info)).toContain("Stopped after timeout");
+  });
 });

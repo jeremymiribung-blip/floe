@@ -5,6 +5,7 @@ const endReasonLabels: Record<RecordingEndReason, string> = {
   maxDuration: "Stopped at max duration",
   deviceDisconnected: "Device disconnected",
   shutdown: "Stopped during shutdown",
+  watchdogTimeout: "Stopped after timeout",
 };
 
 export function formatDurationMs(durationMs: number): string {

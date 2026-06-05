@@ -90,6 +90,8 @@ fn recording_shutdown_error_event(code: RecordingErrorCode) -> &'static str {
         RecordingErrorCode::StreamBuildFailed => "shutdown_recording_error_stream_build_failed",
         RecordingErrorCode::StreamPlayFailed => "shutdown_recording_error_stream_play_failed",
         RecordingErrorCode::WavEncodingFailed => "shutdown_recording_error_wav_encoding_failed",
+        RecordingErrorCode::StopFailed => "shutdown_recording_error_stop_failed",
+        RecordingErrorCode::WatchdogTimeout => "shutdown_recording_error_watchdog_timeout",
         RecordingErrorCode::Internal => "shutdown_recording_error_internal",
     }
 }

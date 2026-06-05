@@ -15,6 +15,10 @@ import {
 
 export type ShortcutState = "Pressed" | "Released";
 
+const MAX_RECORDING_DURATION_MS = 120_000;
+const WATCHDOG_GRACE_MS = 5_000;
+const WATCHDOG_TIMEOUT_MS = MAX_RECORDING_DURATION_MS + WATCHDOG_GRACE_MS;
+
 export interface PushToTalkDependencies {
   startRecording: () => Promise<RecordingStatus>;
   stopRecording: () => Promise<RecordingInfo>;
@@ -44,6 +48,7 @@ export class PushToTalkController {
   private activeTraceStartedAt = 0;
   private hotkeyToRecordingStartMs = 0;
   private latestDiagnosticsJson: string | null = null;
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly dependencies: PushToTalkDependencies,
@@ -107,6 +112,7 @@ export class PushToTalkController {
       this.hotkeyToRecordingStartMs = this.nowMs() - this.activeTraceStartedAt;
       this.callbacks.onRecordingStatusChange(status);
       this.callbacks.onStateChange("recording");
+      this.scheduleWatchdog();
     } catch (caught) {
       this.recording = false;
       this.callbacks.onErrorChange(this.callbacks.errorMessage(caught));
@@ -121,12 +127,44 @@ export class PushToTalkController {
     }
   }
 
+  private scheduleWatchdog(): void {
+    this.clearWatchdog();
+    this.watchdogTimer = setTimeout(() => {
+      this.watchdogTimer = null;
+      void this.forceStopRecording();
+    }, WATCHDOG_TIMEOUT_MS);
+  }
+
+  private clearWatchdog(): void {
+    if (this.watchdogTimer !== null) {
+      clearTimeout(this.watchdogTimer);
+      this.watchdogTimer = null;
+    }
+  }
+
+  private async forceStopRecording(): Promise<void> {
+    this.clearWatchdog();
+    if (!this.recording || this.finishing) {
+      return;
+    }
+
+    this.recording = false;
+    try {
+      await this.dependencies.stopRecording();
+    } catch {
+      // Backend may have already finalized via its own watchdog; ignore.
+    }
+    this.callbacks.onErrorChange("Recording failed");
+    this.callbacks.onStateChange("error");
+  }
+
   private async finishRecording(): Promise<void> {
     if (this.finishing) {
       return;
     }
 
     this.finishing = true;
+    this.clearWatchdog();
     this.callbacks.onErrorChange(null);
     const totalStartedAt = this.activeTraceStartedAt || this.nowMs();
     let latestRecording: RecordingInfo | null = null;
