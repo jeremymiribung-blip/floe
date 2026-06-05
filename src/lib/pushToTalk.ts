@@ -1,6 +1,5 @@
 import type {
   AppState,
-  ClipboardError,
   GroqTranscription,
   GroqTranscriptionError,
   RecordingInfo,
@@ -239,21 +238,17 @@ export class PushToTalkController {
         pasteSuccess = true;
         this.callbacks.onStateChange("pasted");
       } catch (caught) {
-        const maybeClipboardError = caught as Partial<ClipboardError>;
+        sanitizedErrorCode = sanitizedCode(caught);
         if (clipboardSuccess) {
           pasteAttemptMs = this.nowMs() - pasteStartedAt;
           errorStage = "paste";
-        } else {
-          clipboardWriteMs = this.nowMs() - clipboardStartedAt;
-          errorStage = "clipboard";
-        }
-        sanitizedErrorCode = sanitizedCode(caught);
-        if (maybeClipboardError.code === "pasteUnavailable") {
           this.callbacks.onErrorChange(null);
           this.callbacks.onStateChange("copied");
           copiedOnly = true;
           return;
         }
+        clipboardWriteMs = this.nowMs() - clipboardStartedAt;
+        errorStage = "clipboard";
         throw caught;
       }
     } catch (caught) {

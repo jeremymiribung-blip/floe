@@ -8,7 +8,7 @@ const statusLabels: Record<AppState, string> = {
   cleaning: "Cleaning",
   pasting: "Pasting",
   pasted: "Pasted",
-  copied: "Copied",
+  copied: "Copied to clipboard",
   error: "Error",
 };
 

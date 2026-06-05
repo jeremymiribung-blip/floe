@@ -10,7 +10,7 @@ describe("statusLabel", () => {
     expect(statusLabel("cleaning")).toBe("Cleaning");
     expect(statusLabel("pasting")).toBe("Pasting");
     expect(statusLabel("pasted")).toBe("Pasted");
-    expect(statusLabel("copied")).toBe("Copied");
+    expect(statusLabel("copied")).toBe("Copied to clipboard");
     expect(statusLabel("error")).toBe("Error");
   });
 });

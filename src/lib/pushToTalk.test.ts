@@ -1,8 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { clipboardErrorMessage } from "./clipboardErrors";
 import { PushToTalkController } from "./pushToTalk";
+import {
+  MICROPHONE_UNAVAILABLE,
+  RECORDING_ALREADY_ACTIVE,
+  RECORDING_TOO_SHORT,
+  recordingErrorMessage,
+} from "./recordingErrors";
 import type {
   AppState,
+  ClipboardError,
   GroqTranscription,
+  GroqTranscriptionError,
+  RecordingError,
   RecordingInfo,
   RecordingStatus,
   TranscriptCleanupResult,
@@ -59,6 +69,7 @@ interface HarnessOptions {
   cleanupTranscript?: (transcript: string) => Promise<TranscriptCleanupResult>;
   copyTextToClipboard?: (text: string) => Promise<void>;
   pasteClipboard?: () => Promise<void>;
+  errorMessage?: (caught: unknown) => string;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -159,7 +170,7 @@ function createHarness(options: HarnessOptions = {}) {
       onLatestRecordingChange: () => undefined,
       onTranscriptChange: (transcript) => transcripts.push(transcript),
       onDiagnosticsChange: (json) => diagnostics.push(json),
-      errorMessage: errorMessage,
+      errorMessage: options.errorMessage ?? recordingErrorMessage,
     },
     nowMs,
     () => new Date("2026-01-01T12:00:00.000Z"),
@@ -284,6 +295,223 @@ describe("PushToTalkController", () => {
     expect(lastState(harness.states)).toBe("error");
   });
 
+  it("maps a microphone code from start failure to Microphone unavailable", async () => {
+    const harness = createHarness({
+      startRecording: async () => {
+        throw recordingFailure(
+          "noInputDevice",
+          "No default input device is available.",
+        );
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(harness.errors).toContain(MICROPHONE_UNAVAILABLE);
+    expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("maps a permissionDenied code from start failure to Microphone unavailable", async () => {
+    const harness = createHarness({
+      startRecording: async () => {
+        throw recordingFailure(
+          "permissionDenied",
+          "Microphone permission denied.",
+        );
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(harness.errors).toContain(MICROPHONE_UNAVAILABLE);
+    expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("maps a streamBuildFailed code from start failure to Microphone unavailable", async () => {
+    const harness = createHarness({
+      startRecording: async () => {
+        throw recordingFailure(
+          "streamBuildFailed",
+          "Failed to build input stream.",
+        );
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(harness.errors).toContain(MICROPHONE_UNAVAILABLE);
+    expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("maps an unsupportedSampleFormat code from start failure to Microphone unavailable", async () => {
+    const harness = createHarness({
+      startRecording: async () => {
+        throw recordingFailure(
+          "unsupportedSampleFormat",
+          "Sample format unsupported.",
+        );
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(harness.errors).toContain(MICROPHONE_UNAVAILABLE);
+    expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("does not leak backend message text through to the error message", async () => {
+    const harness = createHarness({
+      startRecording: async () => {
+        throw recordingFailure(
+          "noInputDevice",
+          "cpal build_input_stream errored: permission denied for input device",
+        );
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    const lastError = harness.errors[harness.errors.length - 1] ?? "";
+    expect(lastError).toBe(MICROPHONE_UNAVAILABLE);
+    expect(lastError).not.toContain("cpal");
+    expect(lastError).not.toContain("input device");
+    expect(lastError.toLowerCase()).not.toContain("permission");
+  });
+
+  it("hides the recording bubble when a start failure occurs", async () => {
+    const harness = createHarness({
+      startRecording: async () => {
+        throw recordingFailure("noInputDevice", "no mic");
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(harness.states).not.toContain("recording");
+    expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("allows a fresh recording to start after a failed start", async () => {
+    let firstAttempt = true;
+    const harness = createHarness({
+      startRecording: async () => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          throw recordingFailure("noInputDevice", "no mic");
+        }
+        return recordingStatus;
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+    expect(lastState(harness.states)).toBe("error");
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.startRecording).toHaveBeenCalledTimes(2);
+    expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
+    expect(lastState(harness.states)).toBe("pasted");
+  });
+
+  it("allows a fresh recording to start after a too-short stop", async () => {
+    let stopCount = 0;
+    const harness = createHarness({
+      stopRecording: async () => {
+        stopCount += 1;
+        if (stopCount === 1) {
+          throw recordingFailure(
+            "tooShortRecording",
+            "The recording was too short to transcribe.",
+          );
+        }
+        return latestRecording;
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+    expect(harness.errors).toContain(RECORDING_TOO_SHORT);
+    expect(lastState(harness.states)).toBe("error");
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
+    expect(lastState(harness.states)).toBe("pasted");
+  });
+
+  it("clears hotkey state after a failed start so the next press can be processed", async () => {
+    let secondPressProcessed = false;
+    const harness = createHarness({
+      startRecording: async () => {
+        if (!secondPressProcessed) {
+          throw recordingFailure("noInputDevice", "no mic");
+        }
+        return recordingStatus;
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+    expect(harness.startRecording).toHaveBeenCalledTimes(1);
+
+    secondPressProcessed = true;
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+    expect(harness.startRecording).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps an emptyRecording stop failure to Recording too short", async () => {
+    const harness = createHarness({
+      stopRecording: async () => {
+        throw recordingFailure("emptyRecording", "No audio samples captured.");
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.errors).toContain(RECORDING_TOO_SHORT);
+    expect(harness.transcribeLatestRecording).not.toHaveBeenCalled();
+    expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("maps a deviceDisconnected stop failure to Microphone unavailable", async () => {
+    const harness = createHarness({
+      stopRecording: async () => {
+        throw recordingFailure(
+          "deviceDisconnected",
+          "Input device disconnected.",
+        );
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.errors).toContain(MICROPHONE_UNAVAILABLE);
+    expect(harness.transcribeLatestRecording).not.toHaveBeenCalled();
+    expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("keeps the existing alreadyRecording wording", async () => {
+    const harness = createHarness({
+      startRecording: async () => {
+        throw recordingFailure(
+          "alreadyRecording",
+          "A recording is already in progress.",
+        );
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(harness.errors).toContain(RECORDING_ALREADY_ACTIVE);
+    expect(lastState(harness.states)).toBe("error");
+  });
+
   it("continues transcription when stopped status refresh fails", async () => {
     const harness = createHarness({
       getRecordingStatus: async () => {
@@ -396,7 +624,7 @@ describe("PushToTalkController", () => {
     expect(diagnostics.result.cleanup_fallback_used).toBe(true);
   });
 
-  it("copies text before a paste failure is reported", async () => {
+  it("copies text before a paste failure and falls back to copied", async () => {
     const harness = createHarness({
       pasteClipboard: async () => {
         throw new Error("paste failed");
@@ -415,8 +643,148 @@ describe("PushToTalkController", () => {
       "copy:raw transcript.",
     ]);
     expect(harness.copyTextToClipboard).toHaveBeenCalledWith("raw transcript.");
-    expect(harness.errors).toContain("paste failed");
+    expect(harness.pasteClipboard).toHaveBeenCalledTimes(1);
+    expect(harness.errors).toContain(null);
+    expect(lastState(harness.states)).toBe("copied");
+  });
+
+  it("does not attempt paste when clipboard write fails", async () => {
+    const harness = createHarness({
+      copyTextToClipboard: async () => {
+        const error = new Error(
+          "Floe could not write to the clipboard.",
+        ) as Error & { code?: string };
+        error.code = "clipboardUnavailable";
+        throw error;
+      },
+      errorMessage: pushToTalkErrorMessage,
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.copyTextToClipboard).toHaveBeenCalledWith("raw transcript.");
+    expect(harness.pasteClipboard).not.toHaveBeenCalled();
+    expect(harness.errors).toContain("Clipboard unavailable");
     expect(lastState(harness.states)).toBe("error");
+  });
+
+  it("surfaces Clipboard unavailable for clipboard write failures", async () => {
+    const harness = createHarness({
+      copyTextToClipboard: async () => {
+        const error = new Error("backend detail") as Error & { code?: string };
+        error.code = "clipboardUnavailable";
+        throw error;
+      },
+      errorMessage: pushToTalkErrorMessage,
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.errors).toContain("Clipboard unavailable");
+    expect(harness.errors).not.toContain("backend detail");
+  });
+
+  it("falls back to Copied to clipboard when paste fails with a non-pasteUnavailable code", async () => {
+    const harness = createHarness({
+      pasteClipboard: async () => {
+        throw new Error("enigo internal error");
+      },
+      errorMessage: pushToTalkErrorMessage,
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.copyTextToClipboard).toHaveBeenCalledTimes(1);
+    expect(harness.pasteClipboard).toHaveBeenCalledTimes(1);
+    expect(harness.errors).toContain(null);
+    expect(lastState(harness.states)).toBe("copied");
+  });
+
+  it("records clipboard write failure in diagnostics with error_stage clipboard and no clipboard text", async () => {
+    const harness = createHarness({
+      copyTextToClipboard: async () => {
+        const error = new Error("backend detail") as Error & { code?: string };
+        error.code = "clipboardUnavailable";
+        throw error;
+      },
+      errorMessage: pushToTalkErrorMessage,
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const json = harness.controller.getLatestDiagnosticsJson() ?? "";
+    const diagnostics = JSON.parse(json);
+    expect(diagnostics.result.clipboard_success).toBe(false);
+    expect(diagnostics.result.paste_success).toBe(false);
+    expect(diagnostics.result.error_stage).toBe("clipboard");
+    expect(diagnostics.result.sanitized_error_code).toBe(
+      "clipboardUnavailable",
+    );
+    expect(json).not.toContain("raw transcript");
+    expect(json).not.toContain("backend detail");
+  });
+
+  it("records paste failure in diagnostics with error_stage paste and copied_only true", async () => {
+    const harness = createHarness({
+      pasteClipboard: async () => {
+        throw new Error("paste failure detail");
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const json = harness.controller.getLatestDiagnosticsJson() ?? "";
+    const diagnostics = JSON.parse(json);
+    expect(diagnostics.result.clipboard_success).toBe(true);
+    expect(diagnostics.result.paste_success).toBe(false);
+    expect(diagnostics.result.copied_only).toBe(true);
+    expect(diagnostics.result.error_stage).toBe("paste");
+    expect(json).not.toContain("raw transcript");
+    expect(json).not.toContain("paste failure detail");
+  });
+
+  it("does not log transcript, cleaned text, or clipboard text during clipboard and paste", async () => {
+    const privateTranscript =
+      "private transcript gsk_secret authorization bearer";
+    const cleanedText = "cleaned private text";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+
+    const harness = createHarness({
+      transcribeLatestRecording: async () => transcription(privateTranscript),
+      cleanupTranscript: async () => ({
+        text: cleanedText,
+        model: "llama-3.1-8b-instant",
+        retryCount: 0,
+        validationMs: 0,
+        fallbackUsed: false,
+      }),
+      errorMessage: pushToTalkErrorMessage,
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    for (const spy of [logSpy, errorSpy, warnSpy]) {
+      for (const call of spy.mock.calls) {
+        for (const arg of call) {
+          if (typeof arg !== "string") continue;
+          expect(arg).not.toContain(privateTranscript);
+          expect(arg).not.toContain(cleanedText);
+          expect(arg.toLowerCase()).not.toContain("authorization");
+        }
+      }
+    }
   });
 
   it("transitions to copied when paste automation is blocked", async () => {
@@ -655,18 +1023,40 @@ describe("PushToTalkController", () => {
   });
 });
 
-function errorMessage(caught: unknown): string {
-  if (caught instanceof Error) {
-    return caught.message;
-  }
-
-  const maybeError = caught as Partial<{ message: string }>;
-
-  return typeof maybeError.message === "string" ? maybeError.message : "failed";
-}
-
 function lastState(states: AppState[]): AppState | undefined {
   return states[states.length - 1];
+}
+
+function pushToTalkErrorMessage(caught: unknown): string {
+  const maybeClipboardError = caught as Partial<ClipboardError>;
+  if (
+    maybeClipboardError.code === "clipboardUnavailable" ||
+    maybeClipboardError.code === "pasteUnavailable"
+  ) {
+    return clipboardErrorMessage(caught);
+  }
+
+  const maybeTranscriptionError = caught as Partial<GroqTranscriptionError>;
+  if (typeof maybeTranscriptionError.code === "string") {
+    return transcriptionErrorMessage(caught);
+  }
+
+  return recordingErrorMessage(caught);
+}
+
+function transcriptionErrorMessage(caught: unknown): string {
+  const transcriptionError = caught as Partial<GroqTranscriptionError>;
+  if (typeof transcriptionError.message === "string") {
+    return transcriptionError.message;
+  }
+  return "Transcription failed";
+}
+
+function recordingFailure(
+  code: RecordingError["code"],
+  message: string,
+): RecordingError {
+  return { code, message };
 }
 
 function transcription(text: string): GroqTranscription {

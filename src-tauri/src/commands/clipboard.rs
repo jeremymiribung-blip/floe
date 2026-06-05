@@ -8,6 +8,8 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+use crate::lifecycle::{log_lifecycle, LifecycleLevel};
+
 const CLIPBOARD_SETTLE_DELAY: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -52,7 +54,13 @@ impl TextClipboard for TauriTextClipboard {
         self.app
             .clipboard()
             .write_text(text.to_string())
-            .map_err(|_| clipboard_unavailable_error())
+            .map_err(|_| clipboard_unavailable_error())?;
+
+        match self.app.clipboard().read_text() {
+            Ok(read_back) if read_back == text => Ok(()),
+            Ok(_) => Err(clipboard_unavailable_error()),
+            Err(_) => Err(clipboard_unavailable_error()),
+        }
     }
 }
 
@@ -82,7 +90,7 @@ impl PasteSimulator for EnigoPasteSimulator {
 pub fn copy_text_to_clipboard(app: AppHandle, text: String) -> Result<(), ClipboardError> {
     let clipboard = TauriTextClipboard { app };
 
-    copy_text_to_clipboard_with(&clipboard, &text)
+    copy_text_to_clipboard_with(&clipboard, &text, log_clipboard_failure)
 }
 
 #[tauri::command]
@@ -90,21 +98,35 @@ pub fn paste_text(app: AppHandle, text: String) -> Result<(), ClipboardError> {
     let clipboard = TauriTextClipboard { app };
     let paste_simulator = EnigoPasteSimulator;
 
-    paste_text_with(&clipboard, &paste_simulator, &text, std::thread::sleep)
+    paste_text_with(
+        &clipboard,
+        &paste_simulator,
+        &text,
+        std::thread::sleep,
+        log_clipboard_failure,
+        log_paste_failure,
+    )
 }
 
 #[tauri::command]
 pub fn paste_clipboard() -> Result<(), ClipboardError> {
     let paste_simulator = EnigoPasteSimulator;
 
-    paste_clipboard_with(&paste_simulator)
+    paste_clipboard_with(&paste_simulator, log_paste_failure)
 }
 
 fn copy_text_to_clipboard_with(
     clipboard: &impl TextClipboard,
     text: &str,
+    log_failure: impl FnOnce(),
 ) -> Result<(), ClipboardError> {
-    clipboard.write_text(text)
+    match clipboard.write_text(text) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            log_failure();
+            Err(error)
+        }
+    }
 }
 
 fn paste_text_with(
@@ -112,14 +134,34 @@ fn paste_text_with(
     paste_simulator: &impl PasteSimulator,
     text: &str,
     delay: impl FnOnce(Duration),
+    log_clipboard_failure: impl FnOnce(),
+    log_paste_failure: impl FnOnce(),
 ) -> Result<(), ClipboardError> {
-    clipboard.write_text(text)?;
+    if let Err(error) = clipboard.write_text(text) {
+        log_clipboard_failure();
+        return Err(error);
+    }
     delay(CLIPBOARD_SETTLE_DELAY);
-    paste_simulator.paste_shortcut(current_paste_shortcut())
+    match paste_simulator.paste_shortcut(current_paste_shortcut()) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            log_paste_failure();
+            Err(error)
+        }
+    }
 }
 
-fn paste_clipboard_with(paste_simulator: &impl PasteSimulator) -> Result<(), ClipboardError> {
-    paste_simulator.paste_shortcut(current_paste_shortcut())
+fn paste_clipboard_with(
+    paste_simulator: &impl PasteSimulator,
+    log_paste_failure: impl FnOnce(),
+) -> Result<(), ClipboardError> {
+    match paste_simulator.paste_shortcut(current_paste_shortcut()) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            log_paste_failure();
+            Err(error)
+        }
+    }
 }
 
 fn current_paste_shortcut() -> PasteShortcut {
@@ -164,10 +206,19 @@ fn clipboard_error(code: ClipboardErrorCode, message: &'static str) -> Clipboard
     }
 }
 
+fn log_clipboard_failure() {
+    log_lifecycle(LifecycleLevel::Warn, "clipboard_write_failed");
+}
+
+fn log_paste_failure() {
+    log_lifecycle(LifecycleLevel::Warn, "paste_shortcut_failed");
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
         cell::RefCell,
+        sync::{Arc, Mutex},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
@@ -182,6 +233,16 @@ mod tests {
     struct FakeClipboard {
         text: RefCell<Option<String>>,
         fail_write: bool,
+        read_back: RefCell<Option<String>>,
+    }
+
+    impl FakeClipboard {
+        fn with_readback(read_back: Option<String>) -> Self {
+            Self {
+                read_back: RefCell::new(read_back),
+                ..Default::default()
+            }
+        }
     }
 
     impl TextClipboard for FakeClipboard {
@@ -191,7 +252,11 @@ mod tests {
             }
 
             *self.text.borrow_mut() = Some(text.to_string());
-            Ok(())
+            match self.read_back.borrow().as_ref() {
+                Some(read_back) if read_back == text => Ok(()),
+                Some(_) => Err(clipboard_unavailable_error()),
+                None => Ok(()),
+            }
         }
     }
 
@@ -213,11 +278,26 @@ mod tests {
         }
     }
 
+    #[derive(Default, Clone)]
+    struct EventLog {
+        events: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl EventLog {
+        fn record(&self, event: &'static str) {
+            self.events.lock().expect("event log mutex").push(event);
+        }
+
+        fn snapshot(&self) -> Vec<&'static str> {
+            self.events.lock().expect("event log mutex").clone()
+        }
+    }
+
     #[test]
     fn copy_writes_exact_text() {
         let clipboard = FakeClipboard::default();
 
-        copy_text_to_clipboard_with(&clipboard, "hello from Floe").unwrap();
+        copy_text_to_clipboard_with(&clipboard, "hello from Floe", || {}).unwrap();
 
         assert_eq!(clipboard.text.borrow().as_deref(), Some("hello from Floe"));
     }
@@ -228,9 +308,16 @@ mod tests {
         let paste_simulator = FakePasteSimulator::default();
         let mut observed_delay = None;
 
-        paste_text_with(&clipboard, &paste_simulator, "paste me", |delay| {
-            observed_delay = Some(delay)
-        })
+        paste_text_with(
+            &clipboard,
+            &paste_simulator,
+            "paste me",
+            |delay| {
+                observed_delay = Some(delay);
+            },
+            || {},
+            || {},
+        )
         .unwrap();
 
         assert_eq!(clipboard.text.borrow().as_deref(), Some("paste me"));
@@ -246,18 +333,53 @@ mod tests {
             ..Default::default()
         };
 
-        let error = paste_text_with(&clipboard, &paste_simulator, "still copied", |_| {})
-            .expect_err("paste failure should return an error");
+        let error = paste_text_with(
+            &clipboard,
+            &paste_simulator,
+            "still copied",
+            |_| {},
+            || {},
+            || {},
+        )
+        .expect_err("paste failure should return an error");
 
         assert_eq!(error.code, ClipboardErrorCode::PasteUnavailable);
         assert_eq!(clipboard.text.borrow().as_deref(), Some("still copied"));
     }
 
     #[test]
+    fn paste_is_not_attempted_when_clipboard_write_fails() {
+        let clipboard = FakeClipboard {
+            fail_write: true,
+            ..Default::default()
+        };
+        let paste_simulator = FakePasteSimulator::default();
+        let clipboard_log = EventLog::default();
+        let paste_log = EventLog::default();
+
+        let error = paste_text_with(
+            &clipboard,
+            &paste_simulator,
+            "private text gsk_secret authorization bearer",
+            |_| {},
+            || clipboard_log.record("clipboard_write_failed"),
+            || paste_log.record("paste_shortcut_failed"),
+        )
+        .expect_err("clipboard failure should return an error");
+
+        assert_eq!(error.code, ClipboardErrorCode::ClipboardUnavailable);
+        assert_eq!(paste_simulator.shortcuts.borrow().len(), 0);
+        assert_eq!(clipboard_log.snapshot(), vec!["clipboard_write_failed"]);
+        assert_eq!(paste_log.snapshot(), Vec::<&str>::new());
+        assert!(!error.message.contains("private text"));
+        assert!(!error.message.contains("gsk_secret"));
+    }
+
+    #[test]
     fn paste_clipboard_sends_shortcut_without_touching_clipboard_text() {
         let paste_simulator = FakePasteSimulator::default();
 
-        paste_clipboard_with(&paste_simulator).unwrap();
+        paste_clipboard_with(&paste_simulator, || {}).unwrap();
 
         assert_eq!(paste_simulator.shortcuts.borrow().len(), 1);
     }
@@ -286,11 +408,88 @@ mod tests {
             ..Default::default()
         };
 
-        let error = copy_text_to_clipboard_with(&clipboard, &private_text)
+        let error = copy_text_to_clipboard_with(&clipboard, &private_text, || {})
             .expect_err("clipboard failure should return an error");
 
         assert_eq!(error.code, ClipboardErrorCode::ClipboardUnavailable);
         assert!(!error.message.contains(&private_text));
+    }
+
+    #[test]
+    fn clipboard_write_rejects_mismatched_readback() {
+        let clipboard = FakeClipboard::with_readback(Some("stale clipboard text".to_string()));
+        let clipboard_log = EventLog::default();
+
+        let error = copy_text_to_clipboard_with(&clipboard, "expected text", || {
+            clipboard_log.record("clipboard_write_failed")
+        })
+        .expect_err("mismatched readback should be reported as a write failure");
+
+        assert_eq!(error.code, ClipboardErrorCode::ClipboardUnavailable);
+        assert!(!error.message.contains("expected text"));
+        assert!(!error.message.contains("stale clipboard text"));
+        assert_eq!(clipboard_log.snapshot(), vec!["clipboard_write_failed"]);
+    }
+
+    #[test]
+    fn clipboard_write_accepts_matching_readback() {
+        let clipboard = FakeClipboard::with_readback(Some("verified text".to_string()));
+        let clipboard_log = EventLog::default();
+
+        copy_text_to_clipboard_with(&clipboard, "verified text", || {
+            clipboard_log.record("clipboard_write_failed")
+        })
+        .unwrap();
+
+        assert_eq!(clipboard.text.borrow().as_deref(), Some("verified text"));
+        assert_eq!(clipboard_log.snapshot(), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn paste_failure_emits_only_paste_failure_event() {
+        let clipboard = FakeClipboard::default();
+        let paste_simulator = FakePasteSimulator {
+            fail_paste: true,
+            ..Default::default()
+        };
+        let clipboard_log = EventLog::default();
+        let paste_log = EventLog::default();
+
+        let error = paste_text_with(
+            &clipboard,
+            &paste_simulator,
+            "private text gsk_secret authorization bearer",
+            |_| {},
+            || clipboard_log.record("clipboard_write_failed"),
+            || paste_log.record("paste_shortcut_failed"),
+        )
+        .expect_err("paste failure should return an error");
+
+        assert_eq!(error.code, ClipboardErrorCode::PasteUnavailable);
+        assert_eq!(clipboard_log.snapshot(), Vec::<&str>::new());
+        assert_eq!(paste_log.snapshot(), vec!["paste_shortcut_failed"]);
+        assert!(!error.message.contains("private text"));
+        assert!(!error.message.contains("gsk_secret"));
+    }
+
+    #[test]
+    fn clipboard_log_events_use_static_names_only() {
+        let private_text = unique_private_text();
+        let clipboard = FakeClipboard {
+            fail_write: true,
+            ..Default::default()
+        };
+        let clipboard_log = EventLog::default();
+
+        let _ = copy_text_to_clipboard_with(&clipboard, &private_text, || {
+            clipboard_log.record("clipboard_write_failed")
+        });
+
+        let events = clipboard_log.snapshot();
+        for event in events {
+            assert!(!event.contains(&private_text));
+            assert!(event.chars().all(|c| c.is_ascii_lowercase() || c == '_'));
+        }
     }
 
     fn unique_private_text() -> String {

@@ -4,7 +4,9 @@ import { AppShell } from "./components/AppShell";
 import { OnboardingView } from "./components/OnboardingView";
 import { OverviewView } from "./components/OverviewView";
 import { SettingsView } from "./components/SettingsView";
+import { clipboardErrorMessage } from "./lib/clipboardErrors";
 import { PushToTalkController } from "./lib/pushToTalk";
+import { recordingErrorMessage } from "./lib/recordingErrors";
 import { computeVisibleSetupState } from "./lib/setupState";
 import { statusLabel } from "./lib/status";
 import {
@@ -34,7 +36,6 @@ import type {
   GroqTranscriptionError,
   HotkeyError,
   HotkeyStatus,
-  RecordingError,
   SettingsError,
   StartAtLoginError,
   StartAtLoginStatus,
@@ -383,21 +384,7 @@ function pushToTalkErrorMessage(caught: unknown): string {
     return transcriptionErrorMessage(caught);
   }
 
-  return recordingErrorMessage("push-to-talk", caught);
-}
-
-function recordingErrorMessage(action: string, caught: unknown): string {
-  const recordingError = caught as Partial<RecordingError>;
-  if (recordingError.code === "alreadyRecording") {
-    return "Recording already active";
-  }
-  if (action === "start" && typeof recordingError.message !== "string") {
-    return "Recording could not start";
-  }
-  if (typeof recordingError.message === "string") {
-    return recordingError.message;
-  }
-  return "Recording failed";
+  return recordingErrorMessage(caught);
 }
 
 function transcriptionErrorMessage(caught: unknown): string {
@@ -406,15 +393,4 @@ function transcriptionErrorMessage(caught: unknown): string {
     return transcriptionError.message;
   }
   return "Transcription failed";
-}
-
-function clipboardErrorMessage(caught: unknown): string {
-  const clipboardError = caught as Partial<ClipboardError>;
-  if (clipboardError.code === "pasteUnavailable") {
-    return "Paste failed";
-  }
-  if (typeof clipboardError.message === "string") {
-    return clipboardError.message;
-  }
-  return "Clipboard failed";
 }

@@ -134,6 +134,54 @@ describe("diagnostics", () => {
     expect(json).not.toContain("raw_audio");
   });
 
+  it("does not include clipboard text in diagnostics for a paste fallback", () => {
+    const clipboardText =
+      "clipboard-only-sentinel authorization bearer gsk_clipboard_secret";
+    const json = diagnosticsToJson(
+      createPipelineDiagnostics({
+        createdAt: new Date("2026-01-01T12:00:00.000Z"),
+        platform: "windows",
+        totalMs: 10,
+        hotkeyToRecordingStartMs: 1,
+        recordingInfo,
+        sttDurationMs: 2,
+        stt: {
+          text: "transcript sentinel",
+          model: "whisper-large-v3-turbo",
+          retryCount: 0,
+        },
+        cleanupDurationMs: 3,
+        cleanup: {
+          text: "cleaned sentinel",
+          model: "llama-3.1-8b-instant",
+          retryCount: 0,
+          validationMs: 1,
+          fallbackUsed: false,
+        },
+        cleanupFallbackUsed: false,
+        cleanupValidationMs: 1,
+        clipboardWriteMs: 7,
+        pasteAttemptMs: 12,
+        clipboardSuccess: true,
+        pasteSuccess: false,
+        copiedOnly: true,
+        errorStage: "paste",
+        sanitizedErrorCode: "internal",
+      }),
+    );
+
+    expect(json).not.toContain(clipboardText);
+    expect(json).not.toContain("transcript sentinel");
+    expect(json).not.toContain("cleaned sentinel");
+    expect(json.toLowerCase()).not.toContain("authorization bearer");
+    expect(json).not.toContain("gsk_clipboard_secret");
+    const parsed = JSON.parse(json);
+    expect(parsed.result.clipboard_success).toBe(true);
+    expect(parsed.result.paste_success).toBe(false);
+    expect(parsed.result.copied_only).toBe(true);
+    expect(parsed.result.error_stage).toBe("paste");
+  });
+
   it("uses llama-3.1-8b-instant for cleanup and whisper-large-v3-turbo for stt", () => {
     expect(CLEANUP_MODEL).toBe("llama-3.1-8b-instant");
     expect(STT_MODEL).toBe("whisper-large-v3-turbo");
