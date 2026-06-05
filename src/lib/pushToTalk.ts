@@ -319,9 +319,17 @@ export class PushToTalkController {
   private storeDiagnostics(
     input: Parameters<typeof createPipelineDiagnostics>[0],
   ): void {
-    const diagnostics = createPipelineDiagnostics(input);
-    this.latestDiagnosticsJson = diagnosticsToJson(diagnostics);
-    this.callbacks.onDiagnosticsChange?.(this.latestDiagnosticsJson);
+    try {
+      const diagnostics = createPipelineDiagnostics(input);
+      this.latestDiagnosticsJson = diagnosticsToJson(diagnostics);
+      this.callbacks.onDiagnosticsChange?.(this.latestDiagnosticsJson);
+    } catch {
+      // Diagnostics are best-effort and must never break the push-to-talk
+      // pipeline. A safety-guard throw here means a contributor added a
+      // forbidden key or pattern; the tests will catch it in CI.
+      this.latestDiagnosticsJson = null;
+      this.callbacks.onDiagnosticsChange?.(null);
+    }
   }
 }
 

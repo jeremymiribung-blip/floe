@@ -896,6 +896,40 @@ describe("PushToTalkController", () => {
     expect(json).not.toContain("clipboard contents");
   });
 
+  it("does not leak raw Groq response bodies or audio samples into diagnostics on transcription failure", async () => {
+    const audioSamplesSentinel = "rawAudio:12345,67890,11111";
+    const error = new Error("backend detail") as Error & {
+      code?: string;
+      message?: string;
+      retryCount?: number;
+      model?: string;
+    };
+    error.code = "malformedResponse";
+    error.message =
+      '{"error":{"message":"Authorization: Bearer abcdefghijklmnop"}}';
+    error.retryCount = 1;
+    error.model = "whisper-large-v3-turbo";
+    const harness = createHarness({
+      transcribeLatestRecording: async () => {
+        throw error;
+      },
+      errorMessage: pushToTalkErrorMessage,
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const json = harness.controller.getLatestDiagnosticsJson() ?? "";
+    expect(json).not.toContain(audioSamplesSentinel);
+    expect(json).not.toMatch(/\bBearer\s+[A-Za-z0-9._\-+/=]{8,}/i);
+    expect(json).not.toMatch(/Authorization\s*[:=]/i);
+    expect(json).not.toContain("backend detail");
+    const parsed = JSON.parse(json);
+    expect(parsed.result.error_stage).toBe("stt");
+    expect(parsed.result.sanitized_error_code).toBe("malformedResponse");
+    expect(parsed.retries.stt).toBe(1);
+  });
+
   it("tracks failed STT with a sanitized stage and retry count", async () => {
     const error = new Error("Transcription failed") as Error & {
       code?: string;

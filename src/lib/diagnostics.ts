@@ -129,7 +129,7 @@ export function createPipelineDiagnostics(
     paste_ms: normalizeDuration(input.pasteAttemptMs),
   };
 
-  return {
+  const diagnostics: PipelineDiagnostics = {
     app: "Floe",
     trace_version: TRACE_VERSION,
     created_at: input.createdAt.toISOString(),
@@ -175,6 +175,8 @@ export function createPipelineDiagnostics(
       paste: pipeline.paste_ms,
     }),
   };
+  assertDiagnosticsSafe(diagnostics);
+  return diagnostics;
 }
 
 function rateLimitDiagnostics(
@@ -243,6 +245,96 @@ export function bottleneckFor(
     stage,
     duration_ms: Math.max(0, durationMs),
   };
+}
+
+const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
+  "transcript",
+  "transcripts",
+  "cleaned",
+  "cleaned_text",
+  "text",
+  "api_key",
+  "apikey",
+  "api-key",
+  "key",
+  "bearer",
+  "authorization",
+  "auth",
+  "samples",
+  "raw_audio",
+  "rawaudio",
+  "audio_data",
+  "audiodata",
+  "audio_bytes",
+  "audiobytes",
+  "wav",
+  "wav_bytes",
+  "wavbytes",
+  "pcm",
+  "pcm_samples",
+  "pcmsamples",
+  "clipboard",
+  "clipboard_text",
+  "clipboardtext",
+  "response",
+  "response_body",
+  "responsebody",
+  "body",
+  "payload",
+  "headers",
+  "request",
+  "url",
+  "endpoint",
+]);
+
+const FORBIDDEN_SUBSTRINGS: ReadonlyArray<{
+  pattern: RegExp;
+  name: string;
+}> = [
+  { pattern: /\bBearer\s+[A-Za-z0-9._\-+/=]{8,}/i, name: "Bearer token" },
+  { pattern: /gsk_[A-Za-z0-9]{8,}/, name: "Groq API key prefix" },
+  {
+    pattern: /Authorization\s*[:=]/i,
+    name: "Authorization header",
+  },
+  {
+    pattern: /x-api-key\s*[:=]/i,
+    name: "x-api-key header",
+  },
+];
+
+export function assertDiagnosticsSafe(diagnostics: PipelineDiagnostics): void {
+  assertNoForbiddenKeys(diagnostics, "");
+  const json = diagnosticsToJson(diagnostics);
+  for (const { pattern, name } of FORBIDDEN_SUBSTRINGS) {
+    if (pattern.test(json)) {
+      throw new Error(`Diagnostics contain forbidden pattern: ${name}`);
+    }
+  }
+}
+
+function assertNoForbiddenKeys(value: unknown, path: string): void {
+  if (value === null || value === undefined) {
+    return;
+  }
+  if (typeof value !== "object") {
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      assertNoForbiddenKeys(value[i], `${path}[${i}]`);
+    }
+    return;
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (FORBIDDEN_KEYS.has(key.toLowerCase())) {
+      throw new Error(
+        `Diagnostics contain forbidden key: ${path ? `${path}.` : ""}${key}`,
+      );
+    }
+    assertNoForbiddenKeys(record[key], path ? `${path}.${key}` : key);
+  }
 }
 
 function normalizeDuration(value: number): number {
