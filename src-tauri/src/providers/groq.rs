@@ -9,7 +9,7 @@ const GROQ_BASE_URL: &str = "https://api.groq.com";
 const TRANSCRIPTIONS_PATH: &str = "/openai/v1/audio/transcriptions";
 const CHAT_COMPLETIONS_PATH: &str = "/openai/v1/chat/completions";
 pub const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
-pub const GROQ_CLEANUP_MODEL: &str = "llama-3.1-8b-instant";
+pub const GROQ_CLEANUP_MODEL: &str = "qwen/qwen3-32b";
 const STT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CLEANUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_ATTEMPTS: usize = 3;
@@ -654,9 +654,9 @@ fn cleanup_max_tokens_for(transcript: &str) -> u32 {
     let input_word_count = transcript.split_whitespace().count();
     input_word_count
         .saturating_mul(2)
-        .clamp(64, 512)
+        .clamp(64, 1024)
         .try_into()
-        .unwrap_or(512)
+        .unwrap_or(1024)
 }
 
 fn parse_cleanup_response(
@@ -741,6 +741,10 @@ fn cleanup_looks_like_commentary(value: &str) -> bool {
         "here is the cleaned text:",
         "cleaned transcript:",
         "the cleaned transcript is:",
+        "cleaned:",
+        "sure,",
+        "okay,",
+        "here you go,",
     ];
 
     rejected_prefixes
@@ -1322,15 +1326,17 @@ mod tests {
         assert!(request.contains(r#""role":"system""#));
         assert!(request.contains(r#""role":"user""#));
         assert!(request.contains(r#""temperature":0"#));
-        assert!(request.contains("You are a transcript cleanup engine."));
+        assert!(request
+            .contains("You are a transcript cleanup engine for a push-to-talk dictation app."));
         assert!(request.contains("Preserve the original language."));
+        assert!(request.contains("Technical vocabulary:"));
         assert!(!request.contains("Clean this transcript"));
         assert!(request.contains("<transcript>"));
         assert!(request.contains("raw transcript"));
     }
 
     #[tokio::test]
-    async fn cleanup_request_uses_llama_instant_and_sends_no_gpt_oss_parameters() {
+    async fn cleanup_request_uses_qwen3_32b_and_sends_no_unsupported_parameters() {
         let server = MockServer::start(vec![MockResponse::json(
             200,
             r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#,
@@ -1342,8 +1348,8 @@ mod tests {
             .await
             .expect("cleanup should succeed");
 
-        assert_eq!(result.model, "llama-3.1-8b-instant");
-        assert_eq!(GROQ_CLEANUP_MODEL, "llama-3.1-8b-instant");
+        assert_eq!(result.model, "qwen/qwen3-32b");
+        assert_eq!(GROQ_CLEANUP_MODEL, "qwen/qwen3-32b");
 
         let request = server.requests()[0].clone();
         let body = extract_request_body(&request);
@@ -1353,7 +1359,7 @@ mod tests {
         assert!(!body_lower.contains("\"reasoning\""));
         assert!(body.contains(r#""temperature":0"#));
         assert!(body_lower.contains("\"max_tokens\":64"));
-        assert!(body.contains(r#""model":"llama-3.1-8b-instant""#));
+        assert!(body.contains(r#""model":"qwen/qwen3-32b""#));
     }
 
     #[tokio::test]
@@ -1616,7 +1622,10 @@ mod tests {
         assert_eq!(cleanup_max_tokens_for(&medium), 200);
 
         let large = "word ".repeat(300);
-        assert_eq!(cleanup_max_tokens_for(&large), 512);
+        assert_eq!(cleanup_max_tokens_for(&large), 600);
+
+        let very_large = "word ".repeat(2_000);
+        assert_eq!(cleanup_max_tokens_for(&very_large), 1024);
     }
 
     #[tokio::test]
@@ -1631,6 +1640,54 @@ mod tests {
             .cleanup_transcript("gsk_test_key", "raw")
             .await
             .expect_err("commentary output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_sure_prefixed_output() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"Sure, here is the cleaned text."}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("sure-prefixed output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_okay_prefixed_output() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"Okay, ich habe den Text bereinigt."}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("okay-prefixed output should fail");
+
+        assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
+    }
+
+    #[tokio::test]
+    async fn cleanup_rejects_here_you_go_prefixed_output() {
+        let server = MockServer::start(vec![MockResponse::json(
+            200,
+            r#"{"choices":[{"message":{"content":"Here you go, Cleaned transcript."}}]}"#,
+        )]);
+        let client = test_cleanup_client(server.base_url());
+
+        let error = client
+            .cleanup_transcript("gsk_test_key", "raw")
+            .await
+            .expect_err("here-you-go-prefixed output should fail");
 
         assert_eq!(error.code, GroqCleanupErrorCode::ValidationFailed);
     }

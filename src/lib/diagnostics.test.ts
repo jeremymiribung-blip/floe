@@ -52,7 +52,7 @@ function fullInput() {
     cleanupDurationMs: 190,
     cleanup: {
       text: "private cleaned text",
-      model: "llama-3.1-8b-instant",
+      model: "qwen/qwen3-32b",
       retryCount: 1,
       validationMs: 2,
       fallbackUsed: false,
@@ -97,7 +97,7 @@ describe("diagnostics", () => {
       cleanupDurationMs: 190,
       cleanup: {
         text: "private cleaned text",
-        model: "llama-3.1-8b-instant",
+        model: "qwen/qwen3-32b",
         retryCount: 1,
         validationMs: 2,
         fallbackUsed: false,
@@ -158,7 +158,7 @@ describe("diagnostics", () => {
         cleanupDurationMs: 3,
         cleanup: {
           text: "cleaned secret authorization bearer",
-          model: "llama-3.1-8b-instant",
+          model: "qwen/qwen3-32b",
           retryCount: 0,
           validationMs: 1,
           fallbackUsed: false,
@@ -201,7 +201,7 @@ describe("diagnostics", () => {
         cleanupDurationMs: 3,
         cleanup: {
           text: "cleaned sentinel",
-          model: "llama-3.1-8b-instant",
+          model: "qwen/qwen3-32b",
           retryCount: 0,
           validationMs: 1,
           fallbackUsed: false,
@@ -230,14 +230,14 @@ describe("diagnostics", () => {
     expect(parsed.result.error_stage).toBe("paste");
   });
 
-  it("uses llama-3.1-8b-instant for cleanup and whisper-large-v3-turbo for stt", () => {
-    expect(CLEANUP_MODEL).toBe("llama-3.1-8b-instant");
+  it("uses qwen/qwen3-32b for cleanup and whisper-large-v3-turbo for stt", () => {
+    expect(CLEANUP_MODEL).toBe("qwen/qwen3-32b");
     expect(STT_MODEL).toBe("whisper-large-v3-turbo");
     expect(CLEANUP_MODEL).not.toContain("gpt-oss");
     expect(CLEANUP_MODEL).not.toContain("openai/");
   });
 
-  it("falls back to llama-3.1-8b-instant when cleanup data is missing", () => {
+  it("falls back to qwen/qwen3-32b when cleanup data is missing", () => {
     const diagnostics = createPipelineDiagnostics({
       createdAt: new Date("2026-01-01T12:00:00.000Z"),
       platform: "windows",
@@ -257,7 +257,7 @@ describe("diagnostics", () => {
       sanitizedErrorCode: null,
     });
 
-    expect(diagnostics.models.cleanup).toBe("llama-3.1-8b-instant");
+    expect(diagnostics.models.cleanup).toBe("qwen/qwen3-32b");
     expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
     expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
   });

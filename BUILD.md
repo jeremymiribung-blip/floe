@@ -2,7 +2,7 @@
 
 This guide explains how to build release installers for Floe, a Tauri 2 desktop app with a React, TypeScript, Vite frontend and a Rust backend.
 
-Floe keeps audio in memory by default, converts recordings to 16 kHz mono 16-bit PCM WAV, and sends one complete Groq Whisper Turbo (`whisper-large-v3-turbo`) Speech-to-Text request only after recording stops. The transcript text is then sent to Groq Llama 3.1 8B Instant (`llama-3.1-8b-instant`) for cleanup using the same Groq API key. Installer builds must not add Cerebras, provider switching, cleanup modes, streaming, transcript chunking, transcript merging, realtime partials, or any behavior that sends audio for cleanup.
+Floe keeps audio in memory by default, converts recordings to 16 kHz mono 16-bit PCM WAV, and sends one complete Groq Whisper Turbo (`whisper-large-v3-turbo`) Speech-to-Text request only after recording stops. The transcript text is then sent to Groq Qwen 3 32B (`qwen/qwen3-32b`) for cleanup using the same Groq API key. Installer builds must not add Cerebras, provider switching, cleanup modes, streaming, transcript chunking, transcript merging, realtime partials, or any behavior that sends audio for cleanup.
 
 The packaged app registers a configurable global push-to-talk hotkey through the Tauri 2 global shortcut plugin. The default is `Alt+Space` (shown as `Option + Space`) on macOS and `Control+Space` (shown as `Ctrl + Space`) on Windows/Linux.
 

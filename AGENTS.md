@@ -5,7 +5,7 @@
 - Floe uses Groq for STT.
 - Floe uses Groq Whisper Turbo (`whisper-large-v3-turbo`) for STT.
 - Floe uses Groq for transcript cleanup; there is no provider switching, no cleanup modes, and no behavior settings.
-- Floe uses Groq Llama 3.1 8B Instant (`llama-3.1-8b-instant`) for cleanup.
+- Floe uses Groq Qwen 3 32B (`qwen/qwen3-32b`) for cleanup.
 - Floe sends optimized 16 kHz mono 16-bit PCM WAV to Groq after recording stops.
 - Do not add Cerebras.
 - The same Groq API key handles both STT and cleanup; it is stored under `groq-api-key` in the OS keychain.

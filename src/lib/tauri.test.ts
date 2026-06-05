@@ -46,6 +46,19 @@ describe("browser transcription fallback", () => {
     await expect(getLatestRecordingInfo()).resolves.toBeNull();
   });
 
+  it("rejects too-short browser recordings without creating a latest recording", async () => {
+    const { getLatestRecordingInfo, startRecording, stopRecording } =
+      await import("./tauri");
+
+    await startRecording();
+    vi.setSystemTime(1_100);
+
+    await expect(stopRecording()).rejects.toMatchObject({
+      code: "tooShortRecording",
+    });
+    await expect(getLatestRecordingInfo()).resolves.toBeNull();
+  });
+
   it("rejects overlapping browser recording starts", async () => {
     const { startRecording } = await import("./tauri");
 
@@ -225,18 +238,18 @@ describe("browser settings fallback", () => {
 
     await expect(cleanupTranscript("raw text")).resolves.toEqual({
       text: "raw text",
-      model: "llama-3.1-8b-instant",
+      model: "qwen/qwen3-32b",
       retryCount: 0,
       validationMs: 0,
       fallbackUsed: false,
     });
   });
 
-  it("browser cleanupTranscript uses llama-3.1-8b-instant and not a gpt-oss model", async () => {
+  it("browser cleanupTranscript uses qwen/qwen3-32b and not a gpt-oss model", async () => {
     const { cleanupTranscript } = await import("./tauri");
 
     const result = await cleanupTranscript("raw text");
-    expect(result.model).toBe("llama-3.1-8b-instant");
+    expect(result.model).toBe("qwen/qwen3-32b");
     expect(result.model).not.toContain("gpt-oss");
     expect(result.model).not.toContain("openai/");
   });

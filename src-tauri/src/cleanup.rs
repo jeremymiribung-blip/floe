@@ -8,7 +8,7 @@ use crate::{
 };
 
 const CLEANUP_FAILED_WARNING: &str = "Cleanup failed";
-const CLEANUP_MODEL: &str = "llama-3.1-8b-instant";
+const CLEANUP_MODEL: &str = "qwen/qwen3-32b";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -152,7 +152,7 @@ mod tests {
             super::TranscriptCleanupResult {
                 text: "Cleaned transcript.".to_string(),
                 warning: None,
-                model: "llama-3.1-8b-instant".to_string(),
+                model: "qwen/qwen3-32b".to_string(),
                 retry_count: 0,
                 validation_ms: 1,
                 fallback_used: false,
@@ -229,7 +229,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_model_uses_llama_instant_constant() {
+    async fn fallback_model_uses_qwen3_32b_constant() {
         let manager = test_manager();
 
         let result =
@@ -239,14 +239,14 @@ mod tests {
             .await;
 
         assert_eq!(result.text, "raw transcript");
-        assert_eq!(result.model, "llama-3.1-8b-instant");
+        assert_eq!(result.model, "qwen/qwen3-32b");
         assert!(result.fallback_used);
     }
 
     fn test_cleanup(text: &str) -> GroqCleanup {
         GroqCleanup {
             text: text.to_string(),
-            model: "llama-3.1-8b-instant".to_string(),
+            model: "qwen/qwen3-32b".to_string(),
             retry_count: 0,
             validation_ms: 1,
             rate_limit: None,

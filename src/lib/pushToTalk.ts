@@ -295,7 +295,7 @@ export class PushToTalkController {
       return {
         text: transcript,
         warning: "Cleanup failed",
-        model: "llama-3.1-8b-instant",
+        model: "qwen/qwen3-32b",
         retryCount: 0,
         validationMs: 0,
         fallbackUsed: true,

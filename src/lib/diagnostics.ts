@@ -6,7 +6,7 @@ import type {
 } from "../types/app";
 
 export const STT_MODEL = "whisper-large-v3-turbo";
-export const CLEANUP_MODEL = "llama-3.1-8b-instant";
+export const CLEANUP_MODEL = "qwen/qwen3-32b";
 
 const APP_VERSION = "0.1.0";
 const TRACE_VERSION = 1;

@@ -494,7 +494,7 @@ export function cleanupTranscript(
   if (!isTauriRuntime()) {
     return Promise.resolve({
       text: transcript,
-      model: "llama-3.1-8b-instant",
+      model: "qwen/qwen3-32b",
       retryCount: 0,
       validationMs: 0,
       fallbackUsed: false,

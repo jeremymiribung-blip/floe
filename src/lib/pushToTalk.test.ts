@@ -607,7 +607,7 @@ describe("PushToTalkController", () => {
     expect(lastState(harness.states)).toBe("pasted");
   });
 
-  it("uses llama-3.1-8b-instant as the cleanup fallback model when cleanup throws", async () => {
+  it("uses qwen/qwen3-32b as the cleanup fallback model when cleanup throws", async () => {
     const harness = createHarness({
       cleanupTranscript: async () => {
         throw new Error("cleanup failed");
@@ -619,7 +619,7 @@ describe("PushToTalkController", () => {
 
     const json = harness.controller.getLatestDiagnosticsJson() ?? "";
     const diagnostics = JSON.parse(json);
-    expect(diagnostics.models.cleanup).toBe("llama-3.1-8b-instant");
+    expect(diagnostics.models.cleanup).toBe("qwen/qwen3-32b");
     expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
     expect(diagnostics.result.cleanup_fallback_used).toBe(true);
   });
@@ -764,7 +764,7 @@ describe("PushToTalkController", () => {
       transcribeLatestRecording: async () => transcription(privateTranscript),
       cleanupTranscript: async () => ({
         text: cleanedText,
-        model: "llama-3.1-8b-instant",
+        model: "qwen/qwen3-32b",
         retryCount: 0,
         validationMs: 0,
         fallbackUsed: false,
@@ -855,7 +855,7 @@ describe("PushToTalkController", () => {
     );
     expect(diagnostics.pipeline.audio_encode_ms).toBe(4);
     expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
-    expect(diagnostics.models.cleanup).toBe("llama-3.1-8b-instant");
+    expect(diagnostics.models.cleanup).toBe("qwen/qwen3-32b");
     expect(diagnostics.audio).toEqual({
       format: "wav",
       sample_rate: 16_000,
@@ -876,7 +876,7 @@ describe("PushToTalkController", () => {
       transcribeLatestRecording: async () => transcription(privateTranscript),
       cleanupTranscript: async () => ({
         text: cleanedText,
-        model: "llama-3.1-8b-instant",
+        model: "qwen/qwen3-32b",
         retryCount: 0,
         validationMs: 1,
         fallbackUsed: false,
@@ -961,7 +961,7 @@ describe("PushToTalkController", () => {
       cleanupTranscript: async (transcript) => ({
         text: transcript,
         warning: "Cleanup failed",
-        model: "llama-3.1-8b-instant",
+        model: "qwen/qwen3-32b",
         retryCount: 0,
         validationMs: 2,
         fallbackUsed: true,
