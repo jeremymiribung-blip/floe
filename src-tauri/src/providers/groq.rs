@@ -9,7 +9,6 @@ const GROQ_BASE_URL: &str = "https://api.groq.com";
 const TRANSCRIPTIONS_PATH: &str = "/openai/v1/audio/transcriptions";
 const CHAT_COMPLETIONS_PATH: &str = "/openai/v1/chat/completions";
 pub const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
-pub const DEFAULT_STT_LANGUAGE: &str = "de";
 pub const GROQ_CLEANUP_MODEL: &str = "llama-3.1-8b-instant";
 const STT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CLEANUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -186,7 +185,6 @@ impl GroqTranscriptionClient {
         let form = multipart::Form::new()
             .text("model", GROQ_STT_MODEL)
             .text("temperature", "0")
-            .text("language", DEFAULT_STT_LANGUAGE)
             .part("file", file_part);
         let response = self
             .http_client
@@ -945,8 +943,8 @@ mod tests {
 
     use super::{
         cleanup_max_tokens_for, GroqCleanupClient, GroqCleanupErrorCode, GroqTranscriptionClient,
-        GroqTranscriptionErrorCode, CHAT_COMPLETIONS_PATH, DEFAULT_STT_LANGUAGE,
-        GROQ_CLEANUP_MODEL, GROQ_STT_MODEL, TRANSCRIPTIONS_PATH,
+        GroqTranscriptionErrorCode, CHAT_COMPLETIONS_PATH, GROQ_CLEANUP_MODEL, GROQ_STT_MODEL,
+        TRANSCRIPTIONS_PATH,
     };
 
     #[tokio::test]
@@ -968,12 +966,37 @@ mod tests {
         assert!(request.starts_with(&format!("POST {TRANSCRIPTIONS_PATH} HTTP/1.1")));
         assert!(request_lower.contains("authorization: bearer gsk_test_key"));
         assert!(request.contains(GROQ_STT_MODEL));
-        assert!(request.contains(DEFAULT_STT_LANGUAGE));
         assert!(request.contains("temperature"));
         assert!(request.contains("\r\n0\r\n"));
-        assert!(request.contains("language"));
+        assert!(!request_lower.contains("name=\"language\""));
+        assert!(!request_lower.contains("name=\"de\""));
         assert!(request.contains("recording.wav"));
         assert!(request.contains("audio/wav"));
+    }
+
+    #[tokio::test]
+    async fn stt_request_omits_language_field_by_default() {
+        let server = MockServer::start(vec![MockResponse::json(200, r#"{"text":"hello"}"#)]);
+        let client = test_client(server.base_url());
+
+        let result = client
+            .transcribe_wav("gsk_test_key", minimal_wav())
+            .await
+            .expect("transcription should succeed");
+
+        assert_eq!(result.text, "hello");
+        assert_eq!(result.model, GROQ_STT_MODEL);
+        assert_eq!(result.retry_count, 0);
+        assert_eq!(server.request_count(), 1);
+        let request = server.requests()[0].clone();
+        let request_lower = request.to_ascii_lowercase();
+        assert!(request.contains(GROQ_STT_MODEL));
+        assert!(request.contains("temperature"));
+        assert!(request.contains("\r\n0\r\n"));
+        assert!(!request_lower.contains("name=\"language\""));
+        assert!(!request_lower.contains("name=\"en\""));
+        assert!(!request_lower.contains("name=\"de\""));
+        assert!(!request_lower.contains("name=\"auto\""));
     }
 
     #[tokio::test]

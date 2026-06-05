@@ -34,6 +34,7 @@ All notable changes to Floe will be documented in this file.
 - The `cleanup_transcript_local` helper and the `src/lib/transcriptCleanup.ts` local cleanup module.
 - The `SettingsErrorCode::MissingCerebrasApiKey` and `SettingsErrorCode::InvalidCerebrasApiKey` variants and the `"missingCerebrasApiKey"` / `"invalidCerebrasApiKey"` `SettingsError` codes, since the new cleanup path never hard-errors on a missing key.
 - Tests that asserted mode persistence, `mode: "raw" | "fast" | "clean"` return values, force-fast fallback on Cerebras key removal, or Cerebras-only key storage and masking.
+- The hardcoded `language: "de"` field from the Groq STT multipart request. Floe no longer forces a STT language; the multipart body now omits the `language` field so Groq Whisper Turbo auto-detects the spoken language.
 
 ### Changed
 
@@ -43,7 +44,7 @@ All notable changes to Floe will be documented in this file.
 - The Settings view's API key section is now labeled `API Key` (singular). Privacy copy, hotkey, and start-at-login sections are unchanged.
 - Refactored transcript cleanup to use Groq Chat Completions with `llama-3.1-8b-instant` and a strict system prompt; cleanup is a single non-streaming call, with bounded retries for network/timeout/429/5xx and respect for `Retry-After`. Only transcript text is sent; audio is never sent for cleanup. GPT-OSS cleanup models are no longer required.
 - Cleanup requests now use a bounded word-count-based output limit, and the cleanup command runs asynchronously instead of blocking on the async runtime.
-- Optimized the Groq-only transcription pipeline to upload 16 kHz mono 16-bit PCM WAV, send STT requests with `whisper-large-v3-turbo`, `temperature: 0`, and default language `de`, reuse a shared HTTP client for Groq calls, validate cleanup output before paste, and capture safe timing/rate-limit metadata in diagnostics.
+- Optimized the Groq-only transcription pipeline to upload 16 kHz mono 16-bit PCM WAV, send STT requests with `whisper-large-v3-turbo` and `temperature: 0`, reuse a shared HTTP client for Groq calls, validate cleanup output before paste, and capture safe timing/rate-limit metadata in diagnostics. The STT request no longer sends a `language` field, so Groq Whisper Turbo auto-detects the spoken language.
 - The main window close button now hides Floe to the system tray instead of quitting the app, so the global push-to-talk hotkey remains registered and active while the window is hidden. Use the new tray `Quit` menu item to fully exit Floe. The tray menu now offers `Show Floe`, `Hide Floe`, `Settings`, and `Quit`. Closing the window while recording continues to record and does not interrupt the audio stream; closing while quitting first unregisters the hotkey and stops recording safely through the existing shutdown path.
 - Simplified the desktop UI to a minimal, light, black-and-white design: a first-run onboarding flow, an overview showing only the wordmark, current state, current hotkey, and a `Settings` link, plus a settings view with `API Key`, `Hotkey`, `Start at login`, and `Privacy` sections.
 - `AppState` now includes `ready` and `copied` so the status view can show `Ready` and `Copied` instead of internal "Idle" and "Needs attention" labels.
