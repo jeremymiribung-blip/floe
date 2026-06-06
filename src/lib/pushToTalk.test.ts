@@ -246,11 +246,38 @@ describe("PushToTalkController", () => {
     ]);
     expect(harness.states).toEqual([
       "recording",
+      "ready",
       "transcribing",
       "cleaning",
       "pasting",
       "pasted",
     ]);
+  });
+
+  it("leaves recording immediately on release before a slow stop resolves", async () => {
+    let resolveStop: (recording: RecordingInfo) => void = () => undefined;
+    const stopPromise = new Promise<RecordingInfo>((resolve) => {
+      resolveStop = resolve;
+    });
+    const harness = createHarness({
+      stopRecording: () => stopPromise,
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    const release = harness.controller.handleShortcutState("Released");
+    await Promise.resolve();
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.stopRecording).toHaveBeenCalledTimes(1);
+    expect(harness.transcribeLatestRecording).not.toHaveBeenCalled();
+    expect(harness.states).toEqual(["recording", "ready"]);
+    expect(harness.states.filter(shouldShowBubble)).toEqual(["recording"]);
+
+    resolveStop(latestRecording);
+    await release;
+
+    expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
+    expect(lastState(harness.states)).toBe("pasted");
   });
 
   it("finishes when release arrives before start resolves", async () => {

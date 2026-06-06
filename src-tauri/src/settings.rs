@@ -195,16 +195,7 @@ impl AppSettingsStore {
         let value: serde_json::Value =
             serde_json::from_str(&raw).map_err(|_| app_settings_error())?;
 
-        let hotkey = match value.get("hotkey") {
-            Some(hotkey_value) => serde_json::from_value::<HotkeySettings>(hotkey_value.clone())
-                .map_err(|_| {
-                    settings_error(
-                        SettingsErrorCode::InvalidAppSettings,
-                        "App settings contain an unsupported hotkey value.",
-                    )
-                })?,
-            None => HotkeySettings::default(),
-        };
+        let hotkey = load_hotkey_settings(value.get("hotkey"))?;
 
         let settings = AppSettings { hotkey };
         validate_app_settings(settings)
@@ -267,6 +258,51 @@ fn validate_api_key(
 
 fn validate_app_settings(settings: AppSettings) -> Result<AppSettings, SettingsError> {
     crate::system::hotkey::validate_app_hotkey_settings(settings)
+}
+
+fn load_hotkey_settings(
+    value: Option<&serde_json::Value>,
+) -> Result<HotkeySettings, SettingsError> {
+    let Some(value) = value else {
+        return Ok(HotkeySettings::default());
+    };
+
+    if value.is_null() {
+        return Ok(HotkeySettings::default());
+    }
+
+    if let Some(accelerator) = value.as_str() {
+        return Ok(HotkeySettings {
+            accelerator: accelerator.to_string(),
+            label: String::new(),
+        });
+    }
+
+    let Some(object) = value.as_object() else {
+        return Err(settings_error(
+            SettingsErrorCode::InvalidAppSettings,
+            "App settings contain an unsupported hotkey value.",
+        ));
+    };
+
+    let Some(accelerator_value) = object.get("accelerator") else {
+        return Ok(HotkeySettings::default());
+    };
+    let Some(accelerator) = accelerator_value.as_str() else {
+        return Err(settings_error(
+            SettingsErrorCode::InvalidAppSettings,
+            "App settings contain an unsupported hotkey value.",
+        ));
+    };
+    let label = object
+        .get("label")
+        .and_then(|label| label.as_str())
+        .unwrap_or_default();
+
+    Ok(HotkeySettings {
+        accelerator: accelerator.to_string(),
+        label: label.to_string(),
+    })
 }
 
 fn status_from_secret(secret: Option<String>) -> ApiKeyStatus {
@@ -458,6 +494,64 @@ mod tests {
     fn app_settings_loads_defaults_from_legacy_empty_file() {
         let path = unique_settings_path();
         fs::write(&path, "{}").expect("legacy settings should write");
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let settings = manager.get_app_settings().unwrap();
+
+        assert_eq!(settings.hotkey, HotkeySettings::default());
+    }
+
+    #[test]
+    fn app_settings_loads_default_from_null_hotkey_without_rewriting_file() {
+        let path = unique_settings_path();
+        fs::write(&path, r#"{"hotkey":null,"cleanupMode":"fast"}"#)
+            .expect("legacy settings should write");
+        let manager = SettingsManager::with_secret_store(
+            Box::new(MemorySecretStore::default()),
+            path.clone(),
+        );
+
+        let settings = manager.get_app_settings().unwrap();
+        let raw = fs::read_to_string(&path).expect("settings should remain readable");
+
+        assert_eq!(settings.hotkey, HotkeySettings::default());
+        assert_eq!(raw, r#"{"hotkey":null,"cleanupMode":"fast"}"#);
+    }
+
+    #[test]
+    fn app_settings_loads_legacy_string_hotkey() {
+        let path = unique_settings_path();
+        fs::write(&path, r#"{"hotkey":"Control+Shift+KeyA"}"#)
+            .expect("legacy settings should write");
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let settings = manager.get_app_settings().unwrap();
+
+        assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
+        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+    }
+
+    #[test]
+    fn app_settings_loads_partial_hotkey_with_missing_label() {
+        let path = unique_settings_path();
+        fs::write(&path, r#"{"hotkey":{"accelerator":"Control+Shift+KeyA"}}"#)
+            .expect("partial settings should write");
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let settings = manager.get_app_settings().unwrap();
+
+        assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
+        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+    }
+
+    #[test]
+    fn app_settings_loads_default_from_partial_hotkey_without_accelerator() {
+        let path = unique_settings_path();
+        fs::write(&path, r#"{"hotkey":{"label":"Ctrl + Space"}}"#)
+            .expect("partial settings should write");
         let manager =
             SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
 

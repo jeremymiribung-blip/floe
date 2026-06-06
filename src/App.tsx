@@ -82,13 +82,25 @@ export default function App() {
   }
 
   useEffect(() => {
-    Promise.all([getGroqApiKeyStatus(), getHotkeySettings()])
-      .then(([groq, hotkey]) => {
+    getGroqApiKeyStatus()
+      .then((groq) => {
         setGroqStatus(groq);
+      })
+      .catch(() => {
+        setGroqStatus({
+          configured: false,
+          maskedPreview: null,
+        });
+        setError("Floe could not load Groq key status.");
+      });
+
+    getHotkeySettings()
+      .then((hotkey) => {
         setHotkeyStatus(hotkey);
       })
       .catch(() => {
-        setError("Floe could not load setup state.");
+        setHotkeyStatus(null);
+        setError("Floe could not load hotkey status.");
       });
 
     getStartAtLoginStatus()
@@ -252,6 +264,10 @@ export default function App() {
     } else {
       void bubbleHide();
     }
+
+    return () => {
+      void bubbleHide();
+    };
   }, [appState]);
 
   if (setupState !== "ready") {

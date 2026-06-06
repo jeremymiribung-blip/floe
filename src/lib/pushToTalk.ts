@@ -166,6 +166,10 @@ export class PushToTalkController {
     this.finishing = true;
     this.clearWatchdog();
     this.callbacks.onErrorChange(null);
+    if (this.recording) {
+      this.recording = false;
+      this.callbacks.onStateChange("ready");
+    }
     const totalStartedAt = this.activeTraceStartedAt || this.nowMs();
     let latestRecording: RecordingInfo | null = null;
     let transcription: GroqTranscription | null = null;
@@ -185,7 +189,6 @@ export class PushToTalkController {
 
     try {
       latestRecording = await this.dependencies.stopRecording();
-      this.recording = false;
       this.callbacks.onLatestRecordingChange(latestRecording);
       await this.refreshRecordingStatus();
 
