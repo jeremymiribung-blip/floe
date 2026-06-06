@@ -5,6 +5,7 @@ import {
   computeVisibleSetupState,
   isReady,
 } from "./setupState";
+import { CLEANUP_MODEL } from "./models";
 
 const groqConfigured: GroqApiKeyStatus = {
   configured: true,
@@ -58,6 +59,14 @@ describe("computeSetupState", () => {
   });
 
   it("returns to the Hotkey step if the hotkey becomes invalid", () => {
+    expect(computeSetupState(groqConfigured, hotkeyUnregistered)).toBe(
+      "setup_hotkey",
+    );
+  });
+
+  it("does not derive setup state from the cleanup model", () => {
+    expect(CLEANUP_MODEL).toBe("llama-3.3-70b-versatile");
+    expect(computeSetupState(groqConfigured, hotkeyRegistered)).toBe("ready");
     expect(computeSetupState(groqConfigured, hotkeyUnregistered)).toBe(
       "setup_hotkey",
     );

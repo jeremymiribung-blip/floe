@@ -52,7 +52,7 @@ function fullInput() {
     cleanupDurationMs: 190,
     cleanup: {
       text: "private cleaned text",
-      model: "qwen/qwen3-32b",
+      model: "llama-3.3-70b-versatile",
       retryCount: 1,
       validationMs: 2,
       fallbackUsed: false,
@@ -97,7 +97,7 @@ describe("diagnostics", () => {
       cleanupDurationMs: 190,
       cleanup: {
         text: "private cleaned text",
-        model: "qwen/qwen3-32b",
+        model: "llama-3.3-70b-versatile",
         retryCount: 1,
         validationMs: 2,
         fallbackUsed: false,
@@ -158,7 +158,7 @@ describe("diagnostics", () => {
         cleanupDurationMs: 3,
         cleanup: {
           text: "cleaned secret authorization bearer",
-          model: "qwen/qwen3-32b",
+          model: "llama-3.3-70b-versatile",
           retryCount: 0,
           validationMs: 1,
           fallbackUsed: false,
@@ -201,7 +201,7 @@ describe("diagnostics", () => {
         cleanupDurationMs: 3,
         cleanup: {
           text: "cleaned sentinel",
-          model: "qwen/qwen3-32b",
+          model: "llama-3.3-70b-versatile",
           retryCount: 0,
           validationMs: 1,
           fallbackUsed: false,
@@ -230,14 +230,15 @@ describe("diagnostics", () => {
     expect(parsed.result.error_stage).toBe("paste");
   });
 
-  it("uses qwen/qwen3-32b for cleanup and whisper-large-v3-turbo for stt", () => {
-    expect(CLEANUP_MODEL).toBe("qwen/qwen3-32b");
+  it("uses llama-3.3-70b-versatile for cleanup and whisper-large-v3-turbo for stt", () => {
+    expect(CLEANUP_MODEL).toBe("llama-3.3-70b-versatile");
     expect(STT_MODEL).toBe("whisper-large-v3-turbo");
     expect(CLEANUP_MODEL).not.toContain("gpt-oss");
     expect(CLEANUP_MODEL).not.toContain("openai/");
+    expect(CLEANUP_MODEL).not.toContain("qwen");
   });
 
-  it("falls back to qwen/qwen3-32b when cleanup data is missing", () => {
+  it("falls back to llama-3.3-70b-versatile when cleanup data is missing", () => {
     const diagnostics = createPipelineDiagnostics({
       createdAt: new Date("2026-01-01T12:00:00.000Z"),
       platform: "windows",
@@ -257,9 +258,10 @@ describe("diagnostics", () => {
       sanitizedErrorCode: null,
     });
 
-    expect(diagnostics.models.cleanup).toBe("qwen/qwen3-32b");
+    expect(diagnostics.models.cleanup).toBe("llama-3.3-70b-versatile");
     expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
     expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
+    expect(diagnostics.models.cleanup).not.toContain("qwen");
   });
 
   it("uses only an allowlist of safe top-level keys", () => {
@@ -415,7 +417,6 @@ describe("diagnostics", () => {
       "alreadyRecording",
       "notRecording",
       "emptyRecording",
-      "tooShortRecording",
       "unsupportedSampleFormat",
       "deviceDisconnected",
       "streamBuildFailed",

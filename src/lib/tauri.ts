@@ -15,6 +15,7 @@ import type {
   StartAtLoginStatus,
   TranscriptCleanupResult,
 } from "../types/app";
+import { CLEANUP_MODEL, STT_MODEL } from "./models";
 import { isMacLikePlatform } from "./hotkeyCapture";
 
 const browserStatus: AppStatus = {
@@ -480,7 +481,7 @@ export function transcribeLatestRecording(): Promise<GroqTranscription> {
 
     return Promise.resolve({
       text: "Mock transcript from the latest manual recording.",
-      model: "whisper-large-v3-turbo",
+      model: STT_MODEL,
       retryCount: 0,
     });
   }
@@ -494,7 +495,7 @@ export function cleanupTranscript(
   if (!isTauriRuntime()) {
     return Promise.resolve({
       text: transcript,
-      model: "qwen/qwen3-32b",
+      model: CLEANUP_MODEL,
       retryCount: 0,
       validationMs: 0,
       fallbackUsed: false,

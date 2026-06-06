@@ -4,9 +4,9 @@ import type {
   RecordingInfo,
   TranscriptCleanupResult,
 } from "../types/app";
+import { CLEANUP_MODEL, STT_MODEL } from "./models";
 
-export const STT_MODEL = "whisper-large-v3-turbo";
-export const CLEANUP_MODEL = "qwen/qwen3-32b";
+export { CLEANUP_MODEL, STT_MODEL } from "./models";
 
 const APP_VERSION = "0.1.0";
 const TRACE_VERSION = 1;

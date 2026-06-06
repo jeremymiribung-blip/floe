@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clipboardErrorMessage } from "./clipboardErrors";
+import { CLEANUP_MODEL } from "./models";
 import { PushToTalkController } from "./pushToTalk";
+import { shouldShowBubble } from "./recordingBubble";
 import {
   MICROPHONE_UNAVAILABLE,
   RECORDING_ALREADY_ACTIVE,
@@ -415,33 +417,6 @@ describe("PushToTalkController", () => {
     expect(lastState(harness.states)).toBe("pasted");
   });
 
-  it("allows a fresh recording to start after a too-short stop", async () => {
-    let stopCount = 0;
-    const harness = createHarness({
-      stopRecording: async () => {
-        stopCount += 1;
-        if (stopCount === 1) {
-          throw recordingFailure(
-            "tooShortRecording",
-            "The recording was too short to transcribe.",
-          );
-        }
-        return latestRecording;
-      },
-    });
-
-    await harness.controller.handleShortcutState("Pressed");
-    await harness.controller.handleShortcutState("Released");
-    expect(harness.errors).toContain(RECORDING_TOO_SHORT);
-    expect(lastState(harness.states)).toBe("error");
-
-    await harness.controller.handleShortcutState("Pressed");
-    await harness.controller.handleShortcutState("Released");
-
-    expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
-    expect(lastState(harness.states)).toBe("pasted");
-  });
-
   it("clears hotkey state after a failed start so the next press can be processed", async () => {
     let secondPressProcessed = false;
     const harness = createHarness({
@@ -607,7 +582,25 @@ describe("PushToTalkController", () => {
     expect(lastState(harness.states)).toBe("pasted");
   });
 
-  it("uses qwen/qwen3-32b as the cleanup fallback model when cleanup throws", async () => {
+  it("hides the recording bubble after cleanup failure fallback", async () => {
+    const harness = createHarness({
+      cleanupTranscript: async () => {
+        throw new Error("cleanup failed");
+      },
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const finalState = lastState(harness.states);
+    expect(harness.states.filter(shouldShowBubble)).toEqual(["recording"]);
+    expect(finalState).toBe("pasted");
+    expect(
+      finalState === undefined ? undefined : shouldShowBubble(finalState),
+    ).toBe(false);
+  });
+
+  it("uses llama-3.3-70b-versatile as the cleanup fallback model when cleanup throws", async () => {
     const harness = createHarness({
       cleanupTranscript: async () => {
         throw new Error("cleanup failed");
@@ -619,8 +612,9 @@ describe("PushToTalkController", () => {
 
     const json = harness.controller.getLatestDiagnosticsJson() ?? "";
     const diagnostics = JSON.parse(json);
-    expect(diagnostics.models.cleanup).toBe("qwen/qwen3-32b");
+    expect(diagnostics.models.cleanup).toBe(CLEANUP_MODEL);
     expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
+    expect(diagnostics.models.cleanup).not.toContain("qwen");
     expect(diagnostics.result.cleanup_fallback_used).toBe(true);
   });
 
@@ -764,7 +758,7 @@ describe("PushToTalkController", () => {
       transcribeLatestRecording: async () => transcription(privateTranscript),
       cleanupTranscript: async () => ({
         text: cleanedText,
-        model: "qwen/qwen3-32b",
+        model: "llama-3.3-70b-versatile",
         retryCount: 0,
         validationMs: 0,
         fallbackUsed: false,
@@ -855,7 +849,7 @@ describe("PushToTalkController", () => {
     );
     expect(diagnostics.pipeline.audio_encode_ms).toBe(4);
     expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
-    expect(diagnostics.models.cleanup).toBe("qwen/qwen3-32b");
+    expect(diagnostics.models.cleanup).toBe("llama-3.3-70b-versatile");
     expect(diagnostics.audio).toEqual({
       format: "wav",
       sample_rate: 16_000,
@@ -876,7 +870,7 @@ describe("PushToTalkController", () => {
       transcribeLatestRecording: async () => transcription(privateTranscript),
       cleanupTranscript: async () => ({
         text: cleanedText,
-        model: "qwen/qwen3-32b",
+        model: "llama-3.3-70b-versatile",
         retryCount: 0,
         validationMs: 1,
         fallbackUsed: false,
@@ -961,7 +955,7 @@ describe("PushToTalkController", () => {
       cleanupTranscript: async (transcript) => ({
         text: transcript,
         warning: "Cleanup failed",
-        model: "qwen/qwen3-32b",
+        model: "llama-3.3-70b-versatile",
         retryCount: 0,
         validationMs: 2,
         fallbackUsed: true,

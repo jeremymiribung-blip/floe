@@ -3,12 +3,11 @@ use std::future::Future;
 use serde::Serialize;
 
 use crate::{
-    providers::groq::{GroqCleanup, GroqCleanupError, GroqCleanupErrorCode},
+    providers::groq::{GroqCleanup, GroqCleanupError, GroqCleanupErrorCode, GROQ_CLEANUP_MODEL},
     settings::SettingsManager,
 };
 
 const CLEANUP_FAILED_WARNING: &str = "Cleanup failed";
-const CLEANUP_MODEL: &str = "qwen/qwen3-32b";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -44,7 +43,7 @@ impl TranscriptCleanupResult {
         let model = error
             .as_ref()
             .map(|error| error.model.clone())
-            .unwrap_or_else(|| CLEANUP_MODEL.to_string());
+            .unwrap_or_else(|| GROQ_CLEANUP_MODEL.to_string());
         let retry_count = error.as_ref().map(|error| error.retry_count).unwrap_or(0);
         let validation_ms = error.as_ref().map(|error| error.validation_ms).unwrap_or(0);
         let rate_limit = error.as_ref().and_then(|error| error.rate_limit.clone());
@@ -104,7 +103,9 @@ mod tests {
 
     use super::cleanup_transcript_with;
     use crate::{
-        providers::groq::{GroqCleanup, GroqCleanupError, GroqCleanupErrorCode},
+        providers::groq::{
+            GroqCleanup, GroqCleanupError, GroqCleanupErrorCode, GROQ_CLEANUP_MODEL,
+        },
         settings::{SecretStore, SettingsError, SettingsManager},
     };
 
@@ -152,7 +153,7 @@ mod tests {
             super::TranscriptCleanupResult {
                 text: "Cleaned transcript.".to_string(),
                 warning: None,
-                model: "qwen/qwen3-32b".to_string(),
+                model: GROQ_CLEANUP_MODEL.to_string(),
                 retry_count: 0,
                 validation_ms: 1,
                 fallback_used: false,
@@ -229,7 +230,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_model_uses_qwen3_32b_constant() {
+    async fn fallback_model_uses_groq_cleanup_model_constant() {
         let manager = test_manager();
 
         let result =
@@ -239,14 +240,14 @@ mod tests {
             .await;
 
         assert_eq!(result.text, "raw transcript");
-        assert_eq!(result.model, "qwen/qwen3-32b");
+        assert_eq!(result.model, GROQ_CLEANUP_MODEL);
         assert!(result.fallback_used);
     }
 
     fn test_cleanup(text: &str) -> GroqCleanup {
         GroqCleanup {
             text: text.to_string(),
-            model: "qwen/qwen3-32b".to_string(),
+            model: GROQ_CLEANUP_MODEL.to_string(),
             retry_count: 0,
             validation_ms: 1,
             rate_limit: None,

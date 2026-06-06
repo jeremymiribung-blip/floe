@@ -9,7 +9,7 @@ const GROQ_BASE_URL: &str = "https://api.groq.com";
 const TRANSCRIPTIONS_PATH: &str = "/openai/v1/audio/transcriptions";
 const CHAT_COMPLETIONS_PATH: &str = "/openai/v1/chat/completions";
 pub const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
-pub const GROQ_CLEANUP_MODEL: &str = "qwen/qwen3-32b";
+pub const GROQ_CLEANUP_MODEL: &str = "llama-3.3-70b-versatile";
 const STT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CLEANUP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_ATTEMPTS: usize = 3;
@@ -737,6 +737,7 @@ fn cleanup_looks_like_commentary(value: &str) -> bool {
         "output:",
         "here is",
         "here's",
+        "here’s",
         "here's the cleaned text:",
         "here is the cleaned text:",
         "cleaned transcript:",
@@ -1336,7 +1337,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cleanup_request_uses_qwen3_32b_and_sends_no_unsupported_parameters() {
+    async fn cleanup_request_uses_llama_3_3_and_sends_no_unsupported_parameters() {
         let server = MockServer::start(vec![MockResponse::json(
             200,
             r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#,
@@ -1348,8 +1349,8 @@ mod tests {
             .await
             .expect("cleanup should succeed");
 
-        assert_eq!(result.model, "qwen/qwen3-32b");
-        assert_eq!(GROQ_CLEANUP_MODEL, "qwen/qwen3-32b");
+        assert_eq!(result.model, "llama-3.3-70b-versatile");
+        assert_eq!(GROQ_CLEANUP_MODEL, "llama-3.3-70b-versatile");
 
         let request = server.requests()[0].clone();
         let body = extract_request_body(&request);
@@ -1357,9 +1358,10 @@ mod tests {
         assert!(!body_lower.contains("gpt-oss"));
         assert!(!body_lower.contains("reasoning_effort"));
         assert!(!body_lower.contains("\"reasoning\""));
+        assert!(!body_lower.contains("qwen"));
         assert!(body.contains(r#""temperature":0"#));
         assert!(body_lower.contains("\"max_tokens\":64"));
-        assert!(body.contains(r#""model":"qwen/qwen3-32b""#));
+        assert!(body.contains(r#""model":"llama-3.3-70b-versatile""#));
     }
 
     #[tokio::test]

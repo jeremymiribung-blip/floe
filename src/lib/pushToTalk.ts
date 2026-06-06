@@ -11,6 +11,7 @@ import {
   diagnosticsToJson,
   type PipelineStage,
 } from "./diagnostics";
+import { CLEANUP_MODEL } from "./models";
 
 export type ShortcutState = "Pressed" | "Released";
 
@@ -295,7 +296,7 @@ export class PushToTalkController {
       return {
         text: transcript,
         warning: "Cleanup failed",
-        model: "qwen/qwen3-32b",
+        model: CLEANUP_MODEL,
         retryCount: 0,
         validationMs: 0,
         fallbackUsed: true,
