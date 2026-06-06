@@ -12,7 +12,6 @@ All notable changes to Floe will be documented in this file.
 
 - Groq transcript cleanup as part of the fixed Groq STT → Groq cleanup → clipboard → paste flow. The `cleanup_transcript` command now always sends the Groq transcript through the Groq Chat Completions API and copies the result to the clipboard; if cleanup fails, the raw Groq transcript is pasted instead and a short `Cleanup failed` warning is shown.
 - Local pipeline diagnostics for the latest push-to-talk run. The overview now has a small `Diagnostics` action that shows copyable JSON with stage timings, retry counts, audio format metadata, sanitized outcome fields, and the largest local bottleneck. Diagnostics stay in memory only and never include transcripts, cleaned text, raw audio, API keys, auth headers, raw Groq responses, or clipboard contents.
-- Best-effort migration of any legacy `cerebras-api-key` keychain entry to silence in `SettingsManager::new`. The legacy value is never read or logged.
 - Initial setup-only Tauri 2, React, TypeScript, Vite, and Rust scaffold.
 - Minimal Floe UI with a status indicator, settings placeholder, and manual-test placeholder buttons.
 - Stub-only Tauri commands for app status, settings, and manual-test checks.

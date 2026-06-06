@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 const KEYRING_SERVICE: &str = "com.floe.app";
 const GROQ_API_KEY_USER: &str = "groq-api-key";
-const LEGACY_CEREBRAS_API_KEY_USER: &str = "cerebras-api-key";
 const MAX_GROQ_API_KEY_LEN: usize = 256;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -103,8 +102,6 @@ pub struct SettingsManager {
 
 impl SettingsManager {
     pub fn new(config_dir: PathBuf) -> Self {
-        Self::migrate_legacy_cerebras_keyring_entry();
-
         Self {
             groq_secret_store: Box::new(KeyringSecretStore::new(GROQ_API_KEY_USER)),
             app_settings_store: AppSettingsStore::new(config_dir.join("settings.json")),
@@ -157,17 +154,6 @@ impl SettingsManager {
         self.app_settings_store.save(&settings)?;
 
         Ok(settings)
-    }
-
-    fn migrate_legacy_cerebras_keyring_entry() {
-        let Ok(entry) = Entry::new(KEYRING_SERVICE, LEGACY_CEREBRAS_API_KEY_USER) else {
-            return;
-        };
-        if let Err(error) = entry.delete_credential() {
-            if !matches!(error, KeyringError::NoEntry) {
-                eprintln!("[floe:settings] legacy Cerebras keyring entry could not be removed");
-            }
-        }
     }
 }
 
