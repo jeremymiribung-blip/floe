@@ -465,6 +465,39 @@ describe("PushToTalkController", () => {
     expect(harness.startRecording).toHaveBeenCalledTimes(2);
   });
 
+  it("clears release-after-start state when a pending start fails", async () => {
+    let rejectStart: (error: RecordingError) => void = () => undefined;
+    const firstStart = new Promise<RecordingStatus>((_, reject) => {
+      rejectStart = reject;
+    });
+    let firstAttempt = true;
+    const harness = createHarness({
+      startRecording: async () => {
+        if (firstAttempt) {
+          firstAttempt = false;
+          return firstStart;
+        }
+        return recordingStatus;
+      },
+    });
+
+    const press = harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+    rejectStart(recordingFailure("noInputDevice", "no mic"));
+    await press;
+
+    expect(harness.stopRecording).not.toHaveBeenCalled();
+
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(lastState(harness.states)).toBe("recording");
+    expect(harness.stopRecording).not.toHaveBeenCalled();
+
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.stopRecording).toHaveBeenCalledTimes(1);
+  });
+
   it("maps an emptyRecording stop failure to Recording too short", async () => {
     const harness = createHarness({
       stopRecording: async () => {

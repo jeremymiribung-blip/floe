@@ -40,6 +40,14 @@ const unregisteredStatus: HotkeyStatus = {
 };
 
 describe("HotkeySetupStep", () => {
+  it("shows Loading only while hotkey status is unknown", () => {
+    const { container } = renderStep({ hotkeyStatus: null });
+
+    expect(container.textContent).toContain("Loading");
+    expect(container.textContent).not.toContain("Hotkey unavailable");
+    expect(continueButton(container).hasAttribute("disabled")).toBe(true);
+  });
+
   it("renders the current hotkey label and Change / Continue buttons", () => {
     const { container } = renderStep();
 
@@ -48,10 +56,32 @@ describe("HotkeySetupStep", () => {
     expect(continueButton(container).textContent).toBe("Continue");
   });
 
+  it("renders the macOS default label when the default hotkey is registered", () => {
+    const { container } = renderStep({
+      hotkeyStatus: {
+        accelerator: "Alt+Space",
+        label: "Option + Space",
+        isDefault: true,
+        isRegistered: true,
+        error: null,
+      },
+    });
+
+    expect(container.textContent).toContain("Option + Space");
+    expect(continueButton(container).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("enables Continue for a registered default hotkey", () => {
+    const { container } = renderStep({ hotkeyStatus: registeredStatus });
+
+    expect(continueButton(container).hasAttribute("disabled")).toBe(false);
+  });
+
   it("disables Continue while a hotkey is not registered", () => {
     const { container } = renderStep({ hotkeyStatus: unregisteredStatus });
 
     expect(container.textContent).toContain("Hotkey unavailable");
+    expect(container.textContent).not.toContain("Loading");
     expect(continueButton(container).hasAttribute("disabled")).toBe(true);
   });
 
@@ -156,7 +186,10 @@ interface RenderOptions {
 }
 
 function renderStep(options: RenderOptions = {}) {
-  const hotkeyStatus = options.hotkeyStatus ?? registeredStatus;
+  const hotkeyStatus: HotkeyStatus | null =
+    "hotkeyStatus" in options
+      ? (options.hotkeyStatus ?? null)
+      : registeredStatus;
   const onChange = options.onChange ?? vi.fn();
   const onContinue = options.onContinue ?? vi.fn();
   const busy = options.busy ?? false;

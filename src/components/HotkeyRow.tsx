@@ -23,7 +23,7 @@ export function HotkeyRow({
       ? "Loading"
       : hotkeyStatus.isRegistered
         ? hotkeyStatus.label
-        : (hotkeyStatus.error ?? hotkeyStatus.label);
+        : "Hotkey unavailable";
 
   const cancelCapture = useCallback(() => {
     setCapturing(false);

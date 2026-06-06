@@ -24,6 +24,13 @@ afterEach(() => {
 });
 
 describe("HotkeyRow", () => {
+  it("shows Loading only while hotkey status is unknown", () => {
+    const { container } = renderHotkeyRow({ hotkeyStatus: null });
+
+    expect(container.textContent).toContain("Loading");
+    expect(container.textContent).not.toContain("Hotkey unavailable");
+  });
+
   it("renders the current hotkey label and Change / Reset buttons", () => {
     const { container } = renderHotkeyRow({
       hotkeyStatus: makeStatus("Ctrl + Space", "Control+Space"),
@@ -50,6 +57,7 @@ describe("HotkeyRow", () => {
     });
 
     expect(container.textContent).toContain("Hotkey unavailable");
+    expect(container.textContent).not.toContain("Loading");
   });
 
   it("enters capture mode and saves a valid shortcut", async () => {
@@ -192,14 +200,16 @@ function makeStatus(label: string, accelerator: string): HotkeyStatus {
 }
 
 interface RenderOptions {
-  hotkeyStatus?: HotkeyStatus;
+  hotkeyStatus?: HotkeyStatus | null;
   onChange?: (accelerator: string) => Promise<void> | void;
   onReset?: () => Promise<void> | void;
 }
 
 function renderHotkeyRow(options: RenderOptions = {}) {
-  const hotkeyStatus =
-    options.hotkeyStatus ?? makeStatus("Ctrl + Space", "Control+Space");
+  const hotkeyStatus: HotkeyStatus | null =
+    "hotkeyStatus" in options
+      ? (options.hotkeyStatus ?? null)
+      : makeStatus("Ctrl + Space", "Control+Space");
   const onChange = options.onChange ?? vi.fn();
   const onReset = options.onReset ?? vi.fn();
 
@@ -210,7 +220,7 @@ function renderHotkeyRow(options: RenderOptions = {}) {
   roots.push(root);
 
   function Harness() {
-    const [status] = useState<HotkeyStatus>(hotkeyStatus);
+    const [status] = useState<HotkeyStatus | null>(hotkeyStatus);
     return (
       <HotkeyRow
         hotkeyStatus={status}

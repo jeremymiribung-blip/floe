@@ -23,7 +23,7 @@ export function HotkeySetupStep({
       ? "Loading"
       : hotkeyStatus.isRegistered
         ? hotkeyStatus.label
-        : (hotkeyStatus.error ?? hotkeyStatus.label);
+        : "Hotkey unavailable";
   const canContinue =
     !busy && !capturing && hotkeyStatus?.isRegistered === true;
 

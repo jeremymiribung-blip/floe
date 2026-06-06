@@ -66,13 +66,20 @@ describe("browser settings fallback", () => {
     vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
       "Win32" as unknown as string,
     );
-    const { getAppSettings } = await import("./tauri");
+    const { getAppSettings, getHotkeySettings } = await import("./tauri");
 
     await expect(getAppSettings()).resolves.toEqual({
       hotkey: {
         accelerator: "Control+Space",
         label: "Ctrl + Space",
       },
+    });
+    await expect(getHotkeySettings()).resolves.toMatchObject({
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isDefault: true,
+      isRegistered: true,
+      error: null,
     });
     vi.restoreAllMocks();
   });
@@ -81,13 +88,20 @@ describe("browser settings fallback", () => {
     vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
       "MacIntel" as unknown as string,
     );
-    const { getAppSettings } = await import("./tauri");
+    const { getAppSettings, getHotkeySettings } = await import("./tauri");
 
     await expect(getAppSettings()).resolves.toEqual({
       hotkey: {
         accelerator: "Alt+Space",
         label: "Option + Space",
       },
+    });
+    await expect(getHotkeySettings()).resolves.toMatchObject({
+      accelerator: "Alt+Space",
+      label: "Option + Space",
+      isDefault: true,
+      isRegistered: true,
+      error: null,
     });
     vi.restoreAllMocks();
   });

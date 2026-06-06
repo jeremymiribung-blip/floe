@@ -43,6 +43,14 @@ import type {
 
 type View = "overview" | "settings";
 
+const HOTKEY_UNAVAILABLE_STATUS: HotkeyStatus = {
+  accelerator: "",
+  label: "Hotkey unavailable",
+  isDefault: false,
+  isRegistered: false,
+  error: "Hotkey unavailable",
+};
+
 export default function App() {
   const [view, setView] = useState<View>("overview");
   const [appState, setAppState] = useState<AppState>("ready");
@@ -99,7 +107,8 @@ export default function App() {
         setHotkeyStatus(hotkey);
       })
       .catch(() => {
-        setHotkeyStatus(null);
+        console.warn("Floe could not load hotkey status.");
+        setHotkeyStatus(HOTKEY_UNAVAILABLE_STATUS);
         setError("Floe could not load hotkey status.");
       });
 
@@ -113,6 +122,23 @@ export default function App() {
       });
   }, []);
 
+  const handleHotkeyEvent = useCallback(
+    async (state: "Pressed" | "Released") => {
+      if (state === "Released") {
+        void bubbleHide();
+      }
+
+      try {
+        await controllerRef.current?.handleShortcutState(state);
+      } catch {
+        setAppState("error");
+        setError("Recording failed");
+        void bubbleHide();
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!isTauriRuntime()) {
       return;
@@ -124,7 +150,7 @@ export default function App() {
     listen<{ state: "Pressed" | "Released" }>(
       "floe-global-hotkey-state",
       (event) => {
-        void controllerRef.current?.handleShortcutState(event.payload.state);
+        void handleHotkeyEvent(event.payload.state);
       },
     )
       .then((nextUnlisten) => {
@@ -137,6 +163,7 @@ export default function App() {
       .catch(() => {
         if (isActive) {
           setError("Floe could not listen for the global hotkey.");
+          void bubbleHide();
         }
       });
 
@@ -144,7 +171,7 @@ export default function App() {
       isActive = false;
       unlisten?.();
     };
-  }, []);
+  }, [handleHotkeyEvent]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {

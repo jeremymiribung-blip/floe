@@ -7,6 +7,7 @@ import type {
   GroqApiKeyStatus,
   HotkeyStatus,
   RecordingInfo,
+  RecordingStatus,
 } from "./types/app";
 
 (
@@ -88,7 +89,9 @@ const eventListeners = hoisted.eventListeners as Map<
 >;
 const groqConfigured = hoisted.groqConfigured as GroqApiKeyStatus;
 const hotkeyRegistered = hoisted.hotkeyRegistered as HotkeyStatus;
+const idleStatus = hoisted.idleStatus as RecordingStatus;
 const latestRecording = hoisted.latestRecording as RecordingInfo;
+const recordingStatus = hoisted.recordingStatus as RecordingStatus;
 
 vi.mock("@tauri-apps/api/event", () => {
   return {
@@ -165,9 +168,27 @@ beforeEach(async () => {
   eventListeners.clear();
   vi.clearAllMocks();
   const tauri = await import("./lib/tauri");
+  vi.mocked(tauri.cleanupTranscript).mockImplementation((transcript: string) =>
+    Promise.resolve({
+      text: transcript,
+      model: "llama-3.3-70b-versatile",
+      retryCount: 0,
+      validationMs: 0,
+      fallbackUsed: false,
+    }),
+  );
+  vi.mocked(tauri.copyTextToClipboard).mockResolvedValue(undefined);
   vi.mocked(tauri.getGroqApiKeyStatus).mockResolvedValue(groqConfigured);
   vi.mocked(tauri.getHotkeySettings).mockResolvedValue(hotkeyRegistered);
+  vi.mocked(tauri.getRecordingStatus).mockResolvedValue(idleStatus);
+  vi.mocked(tauri.pasteClipboard).mockResolvedValue(undefined);
+  vi.mocked(tauri.startRecording).mockResolvedValue(recordingStatus);
   vi.mocked(tauri.stopRecording).mockResolvedValue(latestRecording);
+  vi.mocked(tauri.transcribeLatestRecording).mockResolvedValue({
+    text: "raw transcript",
+    model: "whisper-large-v3-turbo",
+    retryCount: 0,
+  });
 });
 
 afterEach(() => {
@@ -184,6 +205,9 @@ afterEach(() => {
 describe("App setup and recording lifecycle", () => {
   it("keeps configured Groq status when hotkey status loading fails", async () => {
     const tauri = await import("./lib/tauri");
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
     vi.mocked(tauri.getHotkeySettings).mockRejectedValue(
       new Error("hotkey status failed"),
     );
@@ -192,7 +216,10 @@ describe("App setup and recording lifecycle", () => {
     await flushPromises();
 
     expect(container.textContent).toContain("Hotkey");
+    expect(container.textContent).toContain("Hotkey unavailable");
+    expect(container.textContent).not.toContain("Loading");
     expect(container.textContent).not.toContain("Groq API key");
+    expect(warnSpy).toHaveBeenCalledWith("Floe could not load hotkey status.");
   });
 
   it("hides the bubble immediately on release before slow stop resolves", async () => {
@@ -223,9 +250,120 @@ describe("App setup and recording lifecycle", () => {
 
     expect(tauri.transcribeLatestRecording).toHaveBeenCalledTimes(1);
   });
+
+  it("handles press and release while hotkey onboarding is visible", async () => {
+    const tauri = await import("./lib/tauri");
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    vi.mocked(tauri.getHotkeySettings).mockRejectedValue(
+      new Error("hotkey status failed"),
+    );
+    const { container } = renderApp();
+    await flushPromises();
+
+    expect(container.textContent).toContain("Hotkey unavailable");
+
+    await emitHotkeyState("Pressed");
+    await flushPromises();
+    await emitHotkeyState("Released");
+    await flushPromises();
+
+    expect(tauri.startRecording).toHaveBeenCalledTimes(1);
+    expect(tauri.stopRecording).toHaveBeenCalledTimes(1);
+    expect(tauri.bubbleHide).toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith("Floe could not load hotkey status.");
+  });
+
+  it("hides the bubble after stopRecording fails", async () => {
+    const tauri = await import("./lib/tauri");
+    vi.mocked(tauri.stopRecording).mockRejectedValue({
+      code: "stopFailed",
+      message: "Recording failed",
+    });
+    renderApp();
+    await flushPromises();
+
+    await emitHotkeyState("Pressed");
+    await flushPromises();
+    const hideCallsBeforeRelease = vi.mocked(tauri.bubbleHide).mock.calls
+      .length;
+
+    await emitHotkeyState("Released");
+    await flushPromises();
+
+    expect(tauri.stopRecording).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(tauri.bubbleHide).mock.calls.length).toBeGreaterThan(
+      hideCallsBeforeRelease,
+    );
+    expect(tauri.transcribeLatestRecording).not.toHaveBeenCalled();
+  });
+
+  it("hides the bubble after transcription fails", async () => {
+    const tauri = await import("./lib/tauri");
+    vi.mocked(tauri.transcribeLatestRecording).mockRejectedValue({
+      code: "timeout",
+      message: "Transcription failed",
+    });
+    renderApp();
+    await flushPromises();
+
+    await emitHotkeyState("Pressed");
+    await flushPromises();
+    const hideCallsBeforeRelease = vi.mocked(tauri.bubbleHide).mock.calls
+      .length;
+
+    await emitHotkeyState("Released");
+    await flushPromises();
+
+    expect(tauri.stopRecording).toHaveBeenCalledTimes(1);
+    expect(tauri.transcribeLatestRecording).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(tauri.bubbleHide).mock.calls.length).toBeGreaterThan(
+      hideCallsBeforeRelease,
+    );
+  });
+
+  it("hides the bubble after cleanup fails and falls back", async () => {
+    const tauri = await import("./lib/tauri");
+    vi.mocked(tauri.cleanupTranscript).mockRejectedValue(
+      new Error("cleanup failed"),
+    );
+    renderApp();
+    await flushPromises();
+
+    await emitHotkeyState("Pressed");
+    await flushPromises();
+    const hideCallsBeforeRelease = vi.mocked(tauri.bubbleHide).mock.calls
+      .length;
+
+    await emitHotkeyState("Released");
+    await flushPromises();
+
+    expect(tauri.stopRecording).toHaveBeenCalledTimes(1);
+    expect(tauri.cleanupTranscript).toHaveBeenCalledTimes(1);
+    expect(tauri.copyTextToClipboard).toHaveBeenCalledWith("raw transcript");
+    expect(vi.mocked(tauri.bubbleHide).mock.calls.length).toBeGreaterThan(
+      hideCallsBeforeRelease,
+    );
+  });
+
+  it("does not duplicate global hotkey listeners across unmount", async () => {
+    const { root } = renderApp();
+    await flushPromises();
+
+    expect(eventListeners.get("floe-global-hotkey-state")).toHaveLength(1);
+
+    act(() => {
+      root.unmount();
+    });
+    roots = roots.filter((registeredRoot) => registeredRoot !== root);
+    await flushPromises();
+
+    expect(eventListeners.get("floe-global-hotkey-state")).toHaveLength(0);
+  });
 });
 
-function renderApp(): { container: HTMLElement } {
+function renderApp(): { container: HTMLElement; root: Root } {
   const container = document.createElement("div");
   document.body.appendChild(container);
   containers.push(container);
@@ -236,7 +374,7 @@ function renderApp(): { container: HTMLElement } {
     root.render(<App />);
   });
 
-  return { container };
+  return { container, root };
 }
 
 async function emitHotkeyState(state: GlobalHotkeyEvent["state"]) {
@@ -252,7 +390,8 @@ async function emitHotkeyState(state: GlobalHotkeyEvent["state"]) {
 
 async function flushPromises() {
   await act(async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let index = 0; index < 10; index += 1) {
+      await Promise.resolve();
+    }
   });
 }

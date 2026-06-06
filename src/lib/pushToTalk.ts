@@ -115,14 +115,17 @@ export class PushToTalkController {
       this.scheduleWatchdog();
     } catch (caught) {
       this.recording = false;
+      this.releaseAfterStart = false;
       this.callbacks.onErrorChange(this.callbacks.errorMessage(caught));
       this.callbacks.onStateChange("error");
     } finally {
       this.startInFlight = false;
     }
 
-    if (this.releaseAfterStart && this.recording && !this.finishing) {
-      this.releaseAfterStart = false;
+    const shouldFinishAfterStart = this.releaseAfterStart;
+    this.releaseAfterStart = false;
+
+    if (shouldFinishAfterStart && this.recording && !this.finishing) {
       await this.finishRecording();
     }
   }
