@@ -18,12 +18,11 @@ export function HotkeySetupStep({
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const label =
-    hotkeyStatus === null
-      ? "Loading"
-      : hotkeyStatus.isRegistered
-        ? hotkeyStatus.label
-        : "Hotkey unavailable";
+  const label = hotkeyStatus === null ? "Loading" : hotkeyStatus.label;
+  const showUnavailable =
+    hotkeyStatus !== null &&
+    !hotkeyStatus.isRegistered &&
+    hotkeyStatus.error !== null;
   const canContinue =
     !busy && !capturing && hotkeyStatus?.isRegistered === true;
 
@@ -126,6 +125,9 @@ export function HotkeySetupStep({
         </button>
       </div>
       {error ? <p className="setup-step__error">{error}</p> : null}
+      {showUnavailable ? (
+        <p className="setup-step__error">{hotkeyStatus.error}</p>
+      ) : null}
     </div>
   );
 }

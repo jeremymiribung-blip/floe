@@ -216,6 +216,7 @@ describe("App setup and recording lifecycle", () => {
     await flushPromises();
 
     expect(container.textContent).toContain("Hotkey");
+    expect(container.textContent).toContain("Ctrl + Space");
     expect(container.textContent).toContain("Hotkey unavailable");
     expect(container.textContent).not.toContain("Loading");
     expect(container.textContent).not.toContain("Groq API key");
@@ -262,6 +263,7 @@ describe("App setup and recording lifecycle", () => {
     const { container } = renderApp();
     await flushPromises();
 
+    expect(container.textContent).toContain("Ctrl + Space");
     expect(container.textContent).toContain("Hotkey unavailable");
 
     await emitHotkeyState("Pressed");
@@ -273,6 +275,109 @@ describe("App setup and recording lifecycle", () => {
     expect(tauri.stopRecording).toHaveBeenCalledTimes(1);
     expect(tauri.bubbleHide).toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith("Floe could not load hotkey status.");
+  });
+
+  it("allows Change to be used while the default hotkey is unavailable", async () => {
+    const tauri = await import("./lib/tauri");
+    vi.mocked(tauri.getHotkeySettings).mockResolvedValue({
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isDefault: true,
+      isRegistered: false,
+      error: "Hotkey unavailable",
+    });
+    vi.mocked(tauri.setHotkey).mockResolvedValue({
+      accelerator: "Control+Alt+Space",
+      label: "Ctrl + Alt + Space",
+      isDefault: false,
+      isRegistered: true,
+      error: null,
+    });
+    const { container } = renderApp();
+    await flushPromises();
+
+    expect(container.textContent).toContain("Ctrl + Space");
+    expect(container.textContent).toContain("Hotkey unavailable");
+
+    const change = container.querySelector(
+      ".setup-step__button--primary",
+    ) as HTMLButtonElement;
+    expect(change.textContent).toBe("Change");
+    expect(change.hasAttribute("disabled")).toBe(false);
+
+    await act(async () => {
+      change.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushPromises();
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: " ",
+          code: "Space",
+          ctrlKey: true,
+          altKey: true,
+          shiftKey: false,
+          metaKey: false,
+        }),
+      );
+    });
+    await flushPromises();
+
+    expect(tauri.setHotkey).toHaveBeenCalledWith("Control+Alt+Space");
+    expect(container.textContent).toContain("Ctrl + Alt + Space");
+  });
+
+  it("successful Change leaves the OnboardingView once the new hotkey is registered", async () => {
+    const tauri = await import("./lib/tauri");
+    vi.mocked(tauri.getHotkeySettings).mockResolvedValue({
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isDefault: true,
+      isRegistered: false,
+      error: "Hotkey unavailable",
+    });
+    vi.mocked(tauri.setHotkey).mockResolvedValue({
+      accelerator: "Control+Alt+Space",
+      label: "Ctrl + Alt + Space",
+      isDefault: false,
+      isRegistered: true,
+      error: null,
+    });
+    const { container } = renderApp();
+    await flushPromises();
+
+    expect(container.textContent).toContain("Hotkey unavailable");
+    const continueButton = container.querySelectorAll(
+      ".setup-step__button",
+    )[1] as HTMLButtonElement;
+    expect(continueButton.textContent).toBe("Continue");
+    expect(continueButton.hasAttribute("disabled")).toBe(true);
+
+    const change = container.querySelector(
+      ".setup-step__button--primary",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      change.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushPromises();
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: " ",
+          code: "Space",
+          ctrlKey: true,
+          altKey: true,
+          shiftKey: false,
+          metaKey: false,
+        }),
+      );
+    });
+    await flushPromises();
+
+    expect(tauri.setHotkey).toHaveBeenCalledWith("Control+Alt+Space");
+    expect(container.querySelector(".setup-step__button")).toBeNull();
+    expect(container.textContent).not.toContain("Hotkey unavailable");
   });
 
   it("hides the bubble after stopRecording fails", async () => {

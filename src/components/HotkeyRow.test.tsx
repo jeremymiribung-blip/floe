@@ -45,7 +45,7 @@ describe("HotkeyRow", () => {
     ).toBe("Reset");
   });
 
-  it("shows unavailable status when the configured hotkey is not registered", () => {
+  it("shows the configured label and 'Hotkey unavailable' when the default is not registered", () => {
     const { container } = renderHotkeyRow({
       hotkeyStatus: {
         accelerator: "Control+Space",
@@ -56,8 +56,121 @@ describe("HotkeyRow", () => {
       },
     });
 
+    expect(container.textContent).toContain("Ctrl + Space");
     expect(container.textContent).toContain("Hotkey unavailable");
     expect(container.textContent).not.toContain("Loading");
+    expect(
+      container.querySelector(".hotkey-row__button--primary")?.textContent,
+    ).toBe("Change");
+  });
+
+  it("Change still works while the default hotkey is unavailable", async () => {
+    const onChange = vi.fn().mockResolvedValue({
+      accelerator: "Control+Alt+Space",
+      label: "Ctrl + Alt + Space",
+      isDefault: false,
+      isRegistered: true,
+      error: null,
+    });
+    let latestStatus: {
+      accelerator: string;
+      label: string;
+      isDefault: boolean;
+      isRegistered: boolean;
+      error: string | null;
+    } | null = {
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isDefault: true,
+      isRegistered: false,
+      error: "Hotkey unavailable",
+    };
+    const { container } = renderHotkeyRow({
+      onChange,
+      hotkeyStatus: {
+        accelerator: "Control+Space",
+        label: "Ctrl + Space",
+        isDefault: true,
+        isRegistered: false,
+        error: "Hotkey unavailable",
+      },
+      onStatusChange: (next) => {
+        latestStatus = next;
+      },
+    });
+
+    expect(container.textContent).toContain("Hotkey unavailable");
+    expect(
+      container.querySelector(".hotkey-row__button--primary")?.textContent,
+    ).toBe("Change");
+
+    act(() => {
+      changeButton(container).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: " ",
+          code: "Space",
+          ctrlKey: true,
+          altKey: true,
+          shiftKey: false,
+          metaKey: false,
+        }),
+      );
+    });
+
+    expect(onChange).toHaveBeenCalledWith("Control+Alt+Space");
+    expect(latestStatus?.isRegistered).toBe(true);
+    expect(container.textContent).toContain("Ctrl + Alt + Space");
+  });
+
+  it("shows the configured label and 'Hotkey unavailable' when Reset returns to the unavailable default", async () => {
+    let latestStatus: HotkeyStatus = {
+      accelerator: "Control+Alt+Space",
+      label: "Ctrl + Alt + Space",
+      isDefault: false,
+      isRegistered: true,
+      error: null,
+    };
+    const resetResult: HotkeyStatus = {
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isDefault: true,
+      isRegistered: false,
+      error: "Hotkey unavailable",
+    };
+    const { container } = renderHotkeyRow({
+      hotkeyStatus: {
+        accelerator: "Control+Alt+Space",
+        label: "Ctrl + Alt + Space",
+        isDefault: false,
+        isRegistered: true,
+        error: null,
+      },
+      onReset: async () => resetResult,
+      onStatusChange: (next) => {
+        latestStatus = next;
+      },
+    });
+
+    act(() => {
+      resetButton(container).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(latestStatus.isRegistered).toBe(false);
+    expect(container.textContent).toContain("Ctrl + Space");
+    expect(container.textContent).toContain("Hotkey unavailable");
   });
 
   it("enters capture mode and saves a valid shortcut", async () => {
@@ -201,17 +314,19 @@ function makeStatus(label: string, accelerator: string): HotkeyStatus {
 
 interface RenderOptions {
   hotkeyStatus?: HotkeyStatus | null;
-  onChange?: (accelerator: string) => Promise<void> | void;
-  onReset?: () => Promise<void> | void;
+  onChange?: (accelerator: string) => Promise<unknown> | unknown;
+  onReset?: () => Promise<unknown> | unknown;
+  onStatusChange?: (status: HotkeyStatus) => void;
 }
 
 function renderHotkeyRow(options: RenderOptions = {}) {
-  const hotkeyStatus: HotkeyStatus | null =
+  const initialStatus: HotkeyStatus | null =
     "hotkeyStatus" in options
       ? (options.hotkeyStatus ?? null)
       : makeStatus("Ctrl + Space", "Control+Space");
   const onChange = options.onChange ?? vi.fn();
   const onReset = options.onReset ?? vi.fn();
+  const onStatusChange = options.onStatusChange;
 
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -220,15 +335,29 @@ function renderHotkeyRow(options: RenderOptions = {}) {
   roots.push(root);
 
   function Harness() {
-    const [status] = useState<HotkeyStatus | null>(hotkeyStatus);
+    const [status, setStatus] = useState<HotkeyStatus | null>(initialStatus);
     return (
       <HotkeyRow
         hotkeyStatus={status}
         onChange={async (accelerator) => {
-          await onChange(accelerator);
+          const next = await onChange(accelerator);
+          if (next && typeof next === "object" && "isRegistered" in next) {
+            setStatus(next as HotkeyStatus);
+            onStatusChange?.(next as HotkeyStatus);
+          }
         }}
         onReset={async () => {
-          await onReset();
+          const next = await onReset();
+          if (next && typeof next === "object" && "isRegistered" in next) {
+            setStatus(next as HotkeyStatus);
+            onStatusChange?.(next as HotkeyStatus);
+          } else {
+            const resolved = next as HotkeyStatus | undefined;
+            if (resolved) {
+              setStatus(resolved);
+              onStatusChange?.(resolved);
+            }
+          }
         }}
       />
     );

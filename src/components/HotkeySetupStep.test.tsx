@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HotkeySetupStep } from "./HotkeySetupStep";
@@ -80,9 +80,92 @@ describe("HotkeySetupStep", () => {
   it("disables Continue while a hotkey is not registered", () => {
     const { container } = renderStep({ hotkeyStatus: unregisteredStatus });
 
+    expect(container.textContent).toContain("Ctrl + Space");
     expect(container.textContent).toContain("Hotkey unavailable");
     expect(container.textContent).not.toContain("Loading");
     expect(continueButton(container).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("keeps the Change button enabled while the default hotkey is unavailable", () => {
+    const { container } = renderStep({ hotkeyStatus: unregisteredStatus });
+
+    expect(changeButton(container).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("enables Continue after a successful Change replaces an unavailable default", async () => {
+    const onChange = vi.fn().mockResolvedValue({
+      accelerator: "Control+Alt+Space",
+      label: "Ctrl + Alt + Space",
+      isDefault: false,
+      isRegistered: true,
+      error: null,
+    });
+    let latestStatus: HotkeyStatus = unregisteredStatus;
+    const { container } = renderStep({
+      onChange,
+      hotkeyStatus: unregisteredStatus,
+      onStatusChange: (next) => {
+        latestStatus = next;
+      },
+    });
+
+    expect(continueButton(container).hasAttribute("disabled")).toBe(true);
+
+    act(() => {
+      changeButton(container).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: " ",
+          code: "Space",
+          ctrlKey: true,
+          altKey: true,
+          shiftKey: false,
+          metaKey: false,
+        }),
+      );
+    });
+
+    expect(onChange).toHaveBeenCalledWith("Control+Alt+Space");
+    expect(latestStatus.isRegistered).toBe(true);
+    expect(continueButton(container).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("keeps the configured label and shows 'Hotkey unavailable' when Change fails", async () => {
+    const onChange = vi.fn().mockRejectedValue(new Error("busy"));
+    const { container } = renderStep({
+      onChange,
+      hotkeyStatus: unregisteredStatus,
+    });
+
+    act(() => {
+      changeButton(container).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: " ",
+          code: "Space",
+          ctrlKey: true,
+          altKey: false,
+          shiftKey: false,
+          metaKey: false,
+        }),
+      );
+    });
+
+    expect(container.textContent).toContain("Ctrl + Space");
+    expect(container.textContent).toContain("Hotkey unavailable");
+    expect(container.textContent).not.toContain("Press shortcut");
+    expect(continueButton(container).hasAttribute("disabled")).toBe(true);
+    expect(changeButton(container).hasAttribute("disabled")).toBe(false);
   });
 
   it("calls onContinue when Continue is pressed with a valid hotkey", () => {
@@ -183,16 +266,18 @@ interface RenderOptions {
   onChange?: (accelerator: string) => Promise<void> | void;
   onContinue?: () => void;
   busy?: boolean;
+  onStatusChange?: (status: HotkeyStatus) => void;
 }
 
 function renderStep(options: RenderOptions = {}) {
-  const hotkeyStatus: HotkeyStatus | null =
+  const initialStatus: HotkeyStatus | null =
     "hotkeyStatus" in options
       ? (options.hotkeyStatus ?? null)
       : registeredStatus;
   const onChange = options.onChange ?? vi.fn();
   const onContinue = options.onContinue ?? vi.fn();
   const busy = options.busy ?? false;
+  const onStatusChange = options.onStatusChange;
 
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -200,17 +285,26 @@ function renderStep(options: RenderOptions = {}) {
   const root = createRoot(container);
   roots.push(root);
 
-  act(() => {
-    root.render(
+  function Harness() {
+    const [status, setStatus] = useState<HotkeyStatus | null>(initialStatus);
+    return (
       <HotkeySetupStep
-        hotkeyStatus={hotkeyStatus}
+        hotkeyStatus={status}
         busy={busy}
         onChange={async (accelerator) => {
-          await onChange(accelerator);
+          const next = await onChange(accelerator);
+          if (next && typeof next === "object" && "isRegistered" in next) {
+            setStatus(next as HotkeyStatus);
+            onStatusChange?.(next as HotkeyStatus);
+          }
         }}
         onContinue={onContinue}
-      />,
+      />
     );
+  }
+
+  act(() => {
+    root.render(<Harness />);
   });
 
   return { container };

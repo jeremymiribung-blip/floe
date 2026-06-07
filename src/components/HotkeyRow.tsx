@@ -18,12 +18,11 @@ export function HotkeyRow({
   const [capturing, setCapturing] = useState(false);
   const [captureMessage, setCaptureMessage] = useState<string | null>(null);
 
-  const label =
-    hotkeyStatus === null
-      ? "Loading"
-      : hotkeyStatus.isRegistered
-        ? hotkeyStatus.label
-        : "Hotkey unavailable";
+  const label = hotkeyStatus === null ? "Loading" : hotkeyStatus.label;
+  const showUnavailable =
+    hotkeyStatus !== null &&
+    !hotkeyStatus.isRegistered &&
+    hotkeyStatus.error !== null;
 
   const cancelCapture = useCallback(() => {
     setCapturing(false);
@@ -131,6 +130,9 @@ export function HotkeyRow({
       </div>
       {captureMessage ? (
         <p className="hotkey-row__message">{captureMessage}</p>
+      ) : null}
+      {showUnavailable ? (
+        <p className="hotkey-row__message">{hotkeyStatus.error}</p>
       ) : null}
     </div>
   );

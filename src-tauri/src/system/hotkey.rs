@@ -189,14 +189,24 @@ impl HotkeyManager {
         registrar: &mut impl HotkeyRegistrar,
         configured: HotkeySettings,
     ) -> HotkeyStatus {
+        let default_hotkey = default_hotkey_settings();
         let configured = normalize_hotkey_settings(configured).unwrap_or_else(|error| {
             self.set_registered(None, Some(error.message));
-            default_hotkey_settings()
+            default_hotkey.clone()
         });
 
         match self.register_hotkey(registrar, configured.clone()) {
             Ok(()) => self.status(configured),
-            Err(_) => self.status(configured),
+            Err(_) => {
+                if configured.accelerator == default_hotkey.accelerator {
+                    self.status(configured)
+                } else {
+                    match self.register_hotkey(registrar, default_hotkey.clone()) {
+                        Ok(()) => self.status(default_hotkey),
+                        Err(_) => self.status(default_hotkey),
+                    }
+                }
+            }
         }
     }
 
@@ -752,14 +762,91 @@ mod tests {
         let configured = normalize_for_test("Control+Alt+KeyA").unwrap();
         let mut registrar = FakeRegistrar::default();
         registrar.failed.insert(configured.accelerator.clone());
+        registrar
+            .failed
+            .insert(current_default().accelerator.clone());
 
         let status = manager.register_or_fallback(&mut registrar, configured.clone());
 
-        assert_eq!(status.accelerator, configured.accelerator);
-        assert_eq!(status.label, configured.label);
-        assert!(!status.is_default);
+        assert_eq!(status.accelerator, current_default().accelerator);
+        assert_eq!(status.label, current_default().label);
+        assert!(status.is_default);
         assert!(!status.is_registered);
         assert_eq!(status.error.as_deref(), Some("Hotkey unavailable"));
+    }
+
+    #[test]
+    fn register_or_fallback_tries_platform_default_when_configured_fails() {
+        let manager = HotkeyManager::default();
+        let configured = normalize_for_test("Control+Alt+KeyA").unwrap();
+        let mut registrar = FakeRegistrar::default();
+        registrar.failed.insert(configured.accelerator.clone());
+
+        let status = manager.register_or_fallback(&mut registrar, configured.clone());
+
+        assert_eq!(status.accelerator, current_default().accelerator);
+        assert_eq!(status.label, current_default().label);
+        assert!(status.is_default);
+        assert!(status.is_registered);
+        assert_eq!(status.error, None);
+    }
+
+    #[test]
+    fn default_hotkey_unavailable_status_is_complete() {
+        let manager = HotkeyManager::default();
+        let configured = current_default();
+        let mut registrar = FakeRegistrar::default();
+        registrar.failed.insert(configured.accelerator.clone());
+
+        let status = manager.register_or_fallback(&mut registrar, configured.clone());
+
+        assert!(!status.accelerator.is_empty());
+        assert!(!status.label.is_empty());
+        assert!(status.is_default);
+        assert!(!status.is_registered);
+        assert_eq!(status.error.as_deref(), Some("Hotkey unavailable"));
+    }
+
+    #[test]
+    fn duplicate_registration_returns_ok_without_registering_twice() {
+        let manager = HotkeyManager::default();
+        let configured = current_default();
+        let mut registrar = FakeRegistrar::default();
+
+        manager
+            .register_hotkey(&mut registrar, configured.clone())
+            .expect("first registration should succeed");
+        manager
+            .register_hotkey(&mut registrar, configured.clone())
+            .expect("second registration with same accelerator should be a no-op");
+
+        let occurrences = registrar
+            .registered
+            .iter()
+            .filter(|registered| *registered == &configured.accelerator)
+            .count();
+        assert_eq!(occurrences, 1);
+    }
+
+    #[test]
+    fn failed_registration_does_not_save_broken_hotkey_when_no_previous() {
+        let manager = HotkeyManager::default();
+        let settings = test_settings_manager();
+        let failing_hotkey = normalize_for_test("Control+Alt+KeyA").unwrap();
+        let mut registrar = FakeRegistrar::default();
+        registrar.failed.insert(failing_hotkey.accelerator.clone());
+
+        let error = manager
+            .set_hotkey(
+                &settings,
+                &mut registrar,
+                failing_hotkey.accelerator.clone(),
+            )
+            .expect_err("registration should fail");
+
+        assert_eq!(error.code, HotkeyErrorCode::AlreadyInUse);
+        let saved = settings.get_app_settings().unwrap();
+        assert_eq!(saved.hotkey, HotkeySettings::default());
     }
 
     #[test]

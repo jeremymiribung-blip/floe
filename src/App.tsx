@@ -5,6 +5,7 @@ import { OnboardingView } from "./components/OnboardingView";
 import { OverviewView } from "./components/OverviewView";
 import { SettingsView } from "./components/SettingsView";
 import { clipboardErrorMessage } from "./lib/clipboardErrors";
+import { isMacLikePlatform } from "./lib/hotkeyCapture";
 import { PushToTalkController } from "./lib/pushToTalk";
 import { recordingErrorMessage } from "./lib/recordingErrors";
 import { computeVisibleSetupState } from "./lib/setupState";
@@ -43,13 +44,21 @@ import type {
 
 type View = "overview" | "settings";
 
-const HOTKEY_UNAVAILABLE_STATUS: HotkeyStatus = {
-  accelerator: "",
-  label: "Hotkey unavailable",
-  isDefault: false,
-  isRegistered: false,
-  error: "Hotkey unavailable",
-};
+const HOTKEY_UNAVAILABLE_STATUS: HotkeyStatus = isMacLikePlatform()
+  ? {
+      accelerator: "Alt+Space",
+      label: "Option + Space",
+      isDefault: true,
+      isRegistered: false,
+      error: "Hotkey unavailable",
+    }
+  : {
+      accelerator: "Control+Space",
+      label: "Ctrl + Space",
+      isDefault: true,
+      isRegistered: false,
+      error: "Hotkey unavailable",
+    };
 
 export default function App() {
   const [view, setView] = useState<View>("overview");
