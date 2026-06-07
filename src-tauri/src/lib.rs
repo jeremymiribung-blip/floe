@@ -1,6 +1,8 @@
+mod asr;
 mod audio;
 mod cleanup;
 mod commands;
+mod experiments;
 mod lifecycle;
 mod prompts;
 mod providers;
