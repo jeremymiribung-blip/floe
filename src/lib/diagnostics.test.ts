@@ -260,6 +260,18 @@ describe("diagnostics", () => {
 
     expect(diagnostics.models.cleanup).toBe("llama-3.3-70b-versatile");
     expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
+    expect(diagnostics.local_asr).toEqual({
+      pipeline_mode: "groq_cloud",
+      local_asr_enabled: false,
+      local_asr_available: false,
+      sidecar_connected: false,
+      sidecar_start_ms: 0,
+      local_asr_session_ms: 0,
+      local_asr_final_wait_ms: 0,
+      local_asr_error_code: null,
+      fallback_to_groq_used: false,
+      fallback_reason: null,
+    });
     expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
     expect(diagnostics.models.cleanup).not.toContain("qwen");
   });
@@ -274,6 +286,7 @@ describe("diagnostics", () => {
         "audio",
         "bottleneck",
         "created_at",
+        "local_asr",
         "models",
         "pipeline",
         "platform",

@@ -917,10 +917,73 @@ describe("PushToTalkController", () => {
       bytes: 96_044,
     });
     expect(diagnostics.result.stt_success).toBe(true);
+    expect(diagnostics.local_asr.pipeline_mode).toBe("groq_cloud");
+    expect(diagnostics.local_asr.local_asr_enabled).toBe(false);
     expect(diagnostics.result.cleanup_success).toBe(true);
     expect(diagnostics.result.clipboard_success).toBe(true);
     expect(diagnostics.result.paste_success).toBe(true);
     expect(diagnostics.bottleneck.stage).toBeTruthy();
+  });
+
+  it("uses mock local ASR final text when the backend returns it", async () => {
+    const harness = createHarness({
+      transcribeLatestRecording: async () =>
+        transcription("mock local final", "mock-local-asr", {
+          pipelineMode: "experimental_nemotron_streaming",
+          localAsrEnabled: true,
+          localAsrAvailable: true,
+          sidecarConnected: true,
+          sidecarStartMs: 20,
+          localAsrSessionMs: 300,
+          localAsrFinalWaitMs: 40,
+          localAsrErrorCode: null,
+          fallbackToGroqUsed: false,
+          fallbackReason: null,
+        }),
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.calls).toContain("copy:mock local final.");
+    expect(lastState(harness.states)).toBe("pasted");
+    const diagnostics = latestDiagnostics(harness.diagnostics);
+    expect(diagnostics.models.stt).toBe("mock-local-asr");
+    expect(diagnostics.local_asr.pipeline_mode).toBe(
+      "experimental_nemotron_streaming",
+    );
+    expect(diagnostics.local_asr.fallback_to_groq_used).toBe(false);
+  });
+
+  it("records local ASR fallback metadata while continuing Groq STT cleanup and paste", async () => {
+    const harness = createHarness({
+      transcribeLatestRecording: async () =>
+        transcription("raw transcript", "whisper-large-v3-turbo", {
+          pipelineMode: "experimental_nemotron_streaming",
+          localAsrEnabled: true,
+          localAsrAvailable: true,
+          sidecarConnected: true,
+          sidecarStartMs: 22,
+          localAsrSessionMs: 1200,
+          localAsrFinalWaitMs: 1200,
+          localAsrErrorCode: "final_timeout",
+          fallbackToGroqUsed: true,
+          fallbackReason: "final_timeout",
+        }),
+    });
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.calls).toContain("copy:raw transcript.");
+    expect(harness.states.filter(shouldShowBubble)).toEqual(["recording"]);
+    expect(lastState(harness.states)).toBe("pasted");
+    const json = harness.controller.getLatestDiagnosticsJson() ?? "";
+    const diagnostics = JSON.parse(json);
+    expect(diagnostics.local_asr.fallback_to_groq_used).toBe(true);
+    expect(diagnostics.local_asr.fallback_reason).toBe("final_timeout");
+    expect(json).not.toContain("mock local final");
+    expect(json).not.toContain("raw transcript");
   });
 
   it("does not put transcript, cleaned text, keys, auth headers, audio, or clipboard content in diagnostics", async () => {
@@ -1109,6 +1172,39 @@ describe("PushToTalkController", () => {
       expect(lastState(harness.states)).toBe("error");
     });
   });
+
+  it("duplicate release is safe", async () => {
+    const harness = createHarness();
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.stopRecording).toHaveBeenCalledTimes(1);
+    expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
+    expect(lastState(harness.states)).toBe("pasted");
+  });
+
+  it("bubble hides after release", async () => {
+    const harness = createHarness();
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    const statesShown = harness.states.filter(shouldShowBubble);
+    expect(statesShown).toEqual(["recording"]);
+    expect(shouldShowBubble(lastState(harness.states) ?? "ready")).toBe(false);
+  });
+
+  it("app state leaves recording after release", async () => {
+    const harness = createHarness();
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.states).toContain("recording");
+    expect(lastState(harness.states)).not.toBe("recording");
+  });
 });
 
 function lastState(states: AppState[]): AppState | undefined {
@@ -1147,11 +1243,16 @@ function recordingFailure(
   return { code, message };
 }
 
-function transcription(text: string): GroqTranscription {
+function transcription(
+  text: string,
+  model = "whisper-large-v3-turbo",
+  localAsr?: GroqTranscription["localAsr"],
+): GroqTranscription {
   return {
     text,
-    model: "whisper-large-v3-turbo",
+    model,
     retryCount: 0,
+    localAsr,
   };
 }
 

@@ -10,7 +10,10 @@ use std::{
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use serde::Serialize;
 
-use crate::audio::{fold_level, normalize_rms, LevelMeter, EMIT_INTERVAL_MS};
+use crate::{
+    asr::PcmAudioChunk,
+    audio::{fold_level, normalize_rms, LevelMeter, EMIT_INTERVAL_MS},
+};
 
 pub const MAX_RECORDING_DURATION_SECONDS: u64 = 120;
 const DEFAULT_WATCHDOG_GRACE_SECONDS: u64 = 5;
@@ -21,6 +24,8 @@ const WAV_FORMAT: &str = "wav";
 type SharedBuffer = Arc<Mutex<RecordingBuffer>>;
 type LevelEmitterFn = Box<dyn Fn(f32) + Send + Sync>;
 type SharedLevelEmitter = Arc<Mutex<LevelEmitterFn>>;
+pub type AudioChunkEmitterFn = Box<dyn Fn(PcmAudioChunk) + Send + Sync>;
+type SharedAudioChunkEmitter = Arc<Mutex<AudioChunkEmitterFn>>;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +106,7 @@ pub struct RecordingManager {
     emitter: Mutex<Option<LevelEmitterHandle>>,
     watchdog: Mutex<Option<WatchdogHandle>>,
     emit_level: SharedLevelEmitter,
+    emit_audio_chunk: SharedAudioChunkEmitter,
 }
 
 struct LevelEmitterHandle {
@@ -220,6 +226,7 @@ impl RecordingManager {
             emitter: Mutex::new(None),
             watchdog: Mutex::new(None),
             emit_level: Arc::new(Mutex::new(emit_level)),
+            emit_audio_chunk: Arc::new(Mutex::new(Box::new(no_op_audio_chunk))),
         }
     }
 
@@ -227,6 +234,16 @@ impl RecordingManager {
         if let Ok(mut slot) = self.emit_level.lock() {
             *slot = emit_level;
         }
+    }
+
+    pub fn set_audio_chunk_emitter(&self, emit_audio_chunk: AudioChunkEmitterFn) {
+        if let Ok(mut slot) = self.emit_audio_chunk.lock() {
+            *slot = emit_audio_chunk;
+        }
+    }
+
+    pub fn clear_audio_chunk_emitter(&self) {
+        self.set_audio_chunk_emitter(Box::new(no_op_audio_chunk));
     }
 
     pub fn start_recording(&self) -> Result<RecordingStatus, RecordingError> {
@@ -250,6 +267,9 @@ impl RecordingManager {
         {
             let mut state = self.lock_state()?;
             state.last_error = None;
+            if let Ok(mut buffer) = started.buffer.lock() {
+                buffer.set_audio_chunk_emitter(Arc::clone(&self.emit_audio_chunk));
+            }
             state.active = Some(ActiveRecording {
                 _stream: started.stream,
                 buffer: started.buffer,
@@ -750,6 +770,7 @@ struct RecordingBuffer {
     started_at_ms: u64,
     ended_at_ms: Option<u64>,
     end_reason: Option<RecordingEndReason>,
+    audio_chunk_emitter: Option<SharedAudioChunkEmitter>,
 }
 
 impl RecordingBuffer {
@@ -773,7 +794,12 @@ impl RecordingBuffer {
             started_at_ms,
             ended_at_ms: None,
             end_reason: None,
+            audio_chunk_emitter: None,
         }
+    }
+
+    fn set_audio_chunk_emitter(&mut self, emitter: SharedAudioChunkEmitter) {
+        self.audio_chunk_emitter = Some(emitter);
     }
 
     fn append_interleaved<T: AudioSample>(&mut self, input: &[T], level_meter: &LevelMeter) {
@@ -788,6 +814,7 @@ impl RecordingBuffer {
 
         let mut sum_squares: f64 = 0.0;
         let mut frame_count: usize = 0;
+        let mut emitted_samples = Vec::with_capacity(frames_to_take);
         for frame in input.chunks_exact(channels).take(frames_to_take) {
             let sum: f32 = frame.iter().map(|sample| sample.to_mono_value()).sum();
             let mono = sum / self.input_channels as f32;
@@ -795,15 +822,51 @@ impl RecordingBuffer {
             sum_squares += mono_f64 * mono_f64;
             frame_count += 1;
             self.samples.push(mono);
+            emitted_samples.push(mono);
         }
 
         if frame_count > 0 {
             let rms = ((sum_squares / frame_count as f64).sqrt() as f32).clamp(0.0, 1.0);
             level_meter.store(rms);
+            self.emit_pcm_chunk(&emitted_samples);
         }
 
         if self.samples.len() >= self.max_samples {
             self.finish(RecordingEndReason::MaxDuration);
+        }
+    }
+
+    fn emit_pcm_chunk(&self, samples: &[f32]) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let Some(emitter) = &self.audio_chunk_emitter else {
+            return;
+        };
+
+        let Ok(output_samples) =
+            resample_mono_linear(samples, self.sample_rate, TARGET_WAV_SAMPLE_RATE)
+        else {
+            return;
+        };
+
+        let mut bytes = Vec::with_capacity(output_samples.len().saturating_mul(2));
+        for sample in output_samples {
+            bytes.extend_from_slice(&float_to_pcm16(sample).to_le_bytes());
+        }
+
+        if bytes.is_empty() {
+            return;
+        }
+
+        let chunk = PcmAudioChunk {
+            timestamp_ms: self.started_at_ms.saturating_add(self.duration_ms()),
+            bytes,
+        };
+
+        if let Ok(emit) = emitter.lock() {
+            emit(chunk);
         }
     }
 
@@ -1254,6 +1317,8 @@ fn log_watchdog_spawn_failed() {
 }
 
 fn no_op_emit(_level: f32) {}
+
+fn no_op_audio_chunk(_chunk: PcmAudioChunk) {}
 
 fn now_ms() -> u64 {
     SystemTime::now()

@@ -152,6 +152,7 @@ export interface GroqTranscription {
   model: string;
   retryCount: number;
   rateLimit?: GroqRateLimitMetadata;
+  localAsr?: LocalAsrDiagnostics;
 }
 
 export interface GroqTranscriptionError {
@@ -160,6 +161,22 @@ export interface GroqTranscriptionError {
   model?: string;
   retryCount?: number;
   rateLimit?: GroqRateLimitMetadata;
+  localAsr?: LocalAsrDiagnostics;
+}
+
+export type PipelineMode = "groq_cloud" | "experimental_nemotron_streaming";
+
+export interface LocalAsrDiagnostics {
+  pipelineMode: PipelineMode;
+  localAsrEnabled: boolean;
+  localAsrAvailable: boolean;
+  sidecarConnected: boolean;
+  sidecarStartMs: number;
+  localAsrSessionMs: number;
+  localAsrFinalWaitMs: number;
+  localAsrErrorCode: string | null;
+  fallbackToGroqUsed: boolean;
+  fallbackReason: string | null;
 }
 
 export interface TranscriptCleanupResult {

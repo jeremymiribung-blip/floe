@@ -1,6 +1,7 @@
 import type {
   GroqTranscription,
   GroqTranscriptionError,
+  LocalAsrDiagnostics,
   RecordingInfo,
   TranscriptCleanupResult,
 } from "../types/app";
@@ -42,6 +43,18 @@ export interface PipelineDiagnostics {
   models: {
     stt: string;
     cleanup: string;
+  };
+  local_asr: {
+    pipeline_mode: "groq_cloud" | "experimental_nemotron_streaming";
+    local_asr_enabled: boolean;
+    local_asr_available: boolean;
+    sidecar_connected: boolean;
+    sidecar_start_ms: number;
+    local_asr_session_ms: number;
+    local_asr_final_wait_ms: number;
+    local_asr_error_code: string | null;
+    fallback_to_groq_used: boolean;
+    fallback_reason: string | null;
   };
   audio: {
     format: "wav";
@@ -140,6 +153,9 @@ export function createPipelineDiagnostics(
       stt: input.stt?.model ?? input.sttError?.model ?? STT_MODEL,
       cleanup: input.cleanup?.model ?? CLEANUP_MODEL,
     },
+    local_asr: localAsrDiagnostics(
+      input.stt?.localAsr ?? input.sttError?.localAsr,
+    ),
     audio: {
       format: recordingInfo?.wavFormat ?? "wav",
       sample_rate:
@@ -177,6 +193,25 @@ export function createPipelineDiagnostics(
   };
   assertDiagnosticsSafe(diagnostics);
   return diagnostics;
+}
+
+function localAsrDiagnostics(
+  localAsr: LocalAsrDiagnostics | undefined,
+): PipelineDiagnostics["local_asr"] {
+  return {
+    pipeline_mode: localAsr?.pipelineMode ?? "groq_cloud",
+    local_asr_enabled: localAsr?.localAsrEnabled ?? false,
+    local_asr_available: localAsr?.localAsrAvailable ?? false,
+    sidecar_connected: localAsr?.sidecarConnected ?? false,
+    sidecar_start_ms: normalizeDuration(localAsr?.sidecarStartMs ?? 0),
+    local_asr_session_ms: normalizeDuration(localAsr?.localAsrSessionMs ?? 0),
+    local_asr_final_wait_ms: normalizeDuration(
+      localAsr?.localAsrFinalWaitMs ?? 0,
+    ),
+    local_asr_error_code: localAsr?.localAsrErrorCode ?? null,
+    fallback_to_groq_used: localAsr?.fallbackToGroqUsed ?? false,
+    fallback_reason: localAsr?.fallbackReason ?? null,
+  };
 }
 
 function rateLimitDiagnostics(

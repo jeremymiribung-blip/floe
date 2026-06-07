@@ -1,19 +1,49 @@
 use tauri::State;
 
-use crate::recording::{RecordingError, RecordingInfo, RecordingManager, RecordingStatus};
+use crate::{
+    asr::{LocalAsrSidecarManager, PcmAudioChunk},
+    recording::{RecordingError, RecordingInfo, RecordingManager, RecordingStatus},
+};
 
 #[tauri::command]
-pub fn start_recording(
+pub async fn start_recording(
     manager: State<'_, RecordingManager>,
+    local_asr: State<'_, LocalAsrSidecarManager>,
 ) -> Result<RecordingStatus, RecordingError> {
-    manager.start_recording()
+    let sender = local_asr.start_recording_session().await;
+    if let Some(sender) = sender {
+        manager.set_audio_chunk_emitter(Box::new(move |chunk: PcmAudioChunk| {
+            let _ = sender.send(crate::asr::SessionCommand::Chunk(chunk));
+        }));
+    } else {
+        manager.clear_audio_chunk_emitter();
+    }
+
+    match manager.start_recording() {
+        Ok(status) => Ok(status),
+        Err(error) => {
+            local_asr.cancel_recording_session();
+            manager.clear_audio_chunk_emitter();
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
-pub fn stop_recording(
+pub async fn stop_recording(
     manager: State<'_, RecordingManager>,
+    local_asr: State<'_, LocalAsrSidecarManager>,
 ) -> Result<RecordingInfo, RecordingError> {
-    manager.stop_recording()
+    let result = manager.stop_recording();
+    manager.clear_audio_chunk_emitter();
+
+    if result.is_ok() {
+        local_asr.finish_recording_session().await;
+    } else {
+        local_asr.cancel_recording_session();
+    }
+
+    result
 }
 
 #[tauri::command]

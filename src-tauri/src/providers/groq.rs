@@ -39,6 +39,8 @@ pub struct GroqTranscription {
     pub retry_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit: Option<Box<GroqRateLimitMetadata>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_asr: Option<Box<crate::asr::LocalAsrDiagnostics>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -50,6 +52,8 @@ pub struct GroqTranscriptionError {
     pub retry_count: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit: Option<Box<GroqRateLimitMetadata>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_asr: Option<Box<crate::asr::LocalAsrDiagnostics>>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -247,6 +251,7 @@ fn parse_transcription_response(
         model: GROQ_STT_MODEL.to_string(),
         retry_count: 0,
         rate_limit: rate_limit.map(Box::new),
+        local_asr: None,
     })
 }
 
@@ -402,6 +407,7 @@ fn groq_error_with_rate_limit(
         model: GROQ_STT_MODEL.to_string(),
         retry_count: 0,
         rate_limit: rate_limit.map(Box::new),
+        local_asr: None,
     }
 }
 

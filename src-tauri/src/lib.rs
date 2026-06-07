@@ -10,6 +10,10 @@ mod recording;
 mod settings;
 mod system;
 
+pub fn maybe_run_mock_asr_sidecar_from_args() -> bool {
+    asr::maybe_run_mock_asr_sidecar_from_args()
+}
+
 pub fn run() {
     let builder = tauri::Builder::default();
 
@@ -25,6 +29,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![system::startup::BACKGROUND_ARG]),
         ))
+        .manage(asr::LocalAsrSidecarManager::default())
         .manage(recording::RecordingManager::with_cpal())
         .manage(system::hotkey::HotkeyManager::default())
         .setup(|app| {

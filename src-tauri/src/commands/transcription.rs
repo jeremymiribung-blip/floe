@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::{
+    asr::{local_asr_model, LocalAsrOutcome, LocalAsrSidecarManager},
     providers::groq::{
         GroqTranscription, GroqTranscriptionClient, GroqTranscriptionError,
         GroqTranscriptionErrorCode,
@@ -14,14 +15,37 @@ pub async fn transcribe_latest_recording(
     recording_manager: State<'_, RecordingManager>,
     settings_manager: State<'_, SettingsManager>,
     groq_client: State<'_, GroqTranscriptionClient>,
+    local_asr: State<'_, LocalAsrSidecarManager>,
 ) -> Result<GroqTranscription, GroqTranscriptionError> {
     let wav_bytes = latest_wav_bytes(recording_manager.get_latest_recording_wav_bytes()?)?;
+    let local_outcome = local_asr.take_completed_outcome();
+
+    if let Some(LocalAsrOutcome::Final(final_result)) = local_outcome.clone() {
+        return Ok(GroqTranscription {
+            text: final_result.text,
+            model: local_asr_model().to_string(),
+            retry_count: 0,
+            rate_limit: None,
+            local_asr: Some(Box::new(final_result.diagnostics)),
+        });
+    }
+
     let api_key = settings_manager
         .get_groq_api_key_secret()
         .map_err(map_settings_error)?
         .ok_or_else(missing_api_key_error)?;
 
-    groq_client.transcribe_wav(&api_key, wav_bytes).await
+    let local_diagnostics = local_outcome.map(|outcome| outcome.diagnostics());
+    match groq_client.transcribe_wav(&api_key, wav_bytes).await {
+        Ok(mut transcription) => {
+            transcription.local_asr = local_diagnostics.map(Box::new);
+            Ok(transcription)
+        }
+        Err(mut error) => {
+            error.local_asr = local_diagnostics.map(Box::new);
+            Err(error)
+        }
+    }
 }
 
 fn latest_wav_bytes(wav_bytes: Option<Vec<u8>>) -> Result<Vec<u8>, GroqTranscriptionError> {
