@@ -1,7 +1,7 @@
 import type {
   AppState,
-  GroqTranscription,
-  GroqTranscriptionError,
+  SttResult,
+  SttError,
   RecordingInfo,
   RecordingStatus,
   TranscriptCleanupResult,
@@ -11,7 +11,7 @@ import {
   diagnosticsToJson,
   type PipelineStage,
 } from "./diagnostics";
-import { CLEANUP_MODEL } from "./models";
+import { diagLog } from "./tauri";
 
 export type ShortcutState = "Pressed" | "Released";
 
@@ -23,7 +23,7 @@ export interface PushToTalkDependencies {
   startRecording: () => Promise<RecordingStatus>;
   stopRecording: () => Promise<RecordingInfo>;
   getRecordingStatus: () => Promise<RecordingStatus>;
-  transcribeLatestRecording: () => Promise<GroqTranscription>;
+  transcribeLatestRecording: () => Promise<SttResult>;
   cleanupTranscript: (transcript: string) => Promise<TranscriptCleanupResult>;
   copyTextToClipboard: (text: string) => Promise<void>;
   pasteClipboard: () => Promise<void>;
@@ -63,6 +63,7 @@ export class PushToTalkController {
   }
 
   async handleShortcutState(state: ShortcutState): Promise<void> {
+    diagLog(`[FE] handleShortcutState: ${state} hotkeyDown=${this.hotkeyDown} recording=${this.recording} startInFlight=${this.startInFlight} finishing=${this.finishing} releaseAfterStart=${this.releaseAfterStart}`);
     if (state === "Pressed") {
       await this.handlePressed();
       return;
@@ -86,17 +87,21 @@ export class PushToTalkController {
   }
 
   private async handleReleased(): Promise<void> {
+    diagLog(`[FE] handleReleased: hotkeyDown=${this.hotkeyDown} startInFlight=${this.startInFlight} recording=${this.recording} finishing=${this.finishing}`);
     this.hotkeyDown = false;
 
     if (this.startInFlight) {
+      diagLog(`[FE] handleReleased: setting releaseAfterStart=true`);
       this.releaseAfterStart = true;
       return;
     }
 
     if (!this.recording || this.finishing) {
+      diagLog(`[FE] handleReleased: early return - recording=${this.recording} finishing=${this.finishing}`);
       return;
     }
 
+    diagLog(`[FE] handleReleased: calling finishRecording`);
     await this.finishRecording();
   }
 
@@ -124,6 +129,7 @@ export class PushToTalkController {
 
     const shouldFinishAfterStart = this.releaseAfterStart;
     this.releaseAfterStart = false;
+    diagLog(`[FE] startRecording done: shouldFinishAfterStart=${shouldFinishAfterStart} recording=${this.recording} finishing=${this.finishing}`);
 
     if (shouldFinishAfterStart && this.recording && !this.finishing) {
       await this.finishRecording();
@@ -175,8 +181,8 @@ export class PushToTalkController {
     }
     const totalStartedAt = this.activeTraceStartedAt || this.nowMs();
     let latestRecording: RecordingInfo | null = null;
-    let transcription: GroqTranscription | null = null;
-    let transcriptionError: Partial<GroqTranscriptionError> | null = null;
+    let transcription: SttResult | null = null;
+    let transcriptionError: Partial<SttError> | null = null;
     let cleanup: TranscriptCleanupResult | null = null;
     let cleanupFallbackUsed = false;
     let cleanupValidationMs = 0;
@@ -201,7 +207,7 @@ export class PushToTalkController {
         transcription = await this.dependencies.transcribeLatestRecording();
       } catch (caught) {
         sttDurationMs = this.nowMs() - sttStartedAt;
-        transcriptionError = caught as Partial<GroqTranscriptionError>;
+        transcriptionError = caught as Partial<SttError>;
         errorStage = "stt";
         sanitizedErrorCode = sanitizedCode(caught);
         throw caught;
@@ -302,13 +308,11 @@ export class PushToTalkController {
       return {
         text: transcript,
         warning: "Cleanup failed",
-        model: CLEANUP_MODEL,
+        model: "",
         retryCount: 0,
         validationMs: 0,
         fallbackUsed: true,
-        errorCode: sanitizedCode(
-          caught,
-        ) as TranscriptCleanupResult["errorCode"],
+        errorCode: sanitizedCode(caught) ?? undefined,
       };
     }
   }

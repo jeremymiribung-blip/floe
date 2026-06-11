@@ -1,50 +1,59 @@
 use tauri::State;
 
 use crate::{
-    asr::{local_asr_model, LocalAsrOutcome, LocalAsrSidecarManager},
+    asr::backend::AsrBackend,
     providers::groq::{
-        GroqTranscription, GroqTranscriptionClient, GroqTranscriptionError,
-        GroqTranscriptionErrorCode,
+        GroqTranscription, GroqTranscriptionError, GroqTranscriptionErrorCode,
     },
     recording::{RecordingError, RecordingErrorCode, RecordingManager},
-    settings::{SettingsError, SettingsErrorCode, SettingsManager},
+    settings::{SettingsError, SettingsErrorCode},
 };
 
 #[tauri::command]
 pub async fn transcribe_latest_recording(
     recording_manager: State<'_, RecordingManager>,
-    settings_manager: State<'_, SettingsManager>,
-    groq_client: State<'_, GroqTranscriptionClient>,
-    local_asr: State<'_, LocalAsrSidecarManager>,
+    asr_backend: State<'_, AsrBackend>,
 ) -> Result<GroqTranscription, GroqTranscriptionError> {
     let wav_bytes = latest_wav_bytes(recording_manager.get_latest_recording_wav_bytes()?)?;
-    let local_outcome = local_asr.take_completed_outcome();
+    let audio_duration_ms = recording_manager
+        .get_latest_recording_info()?
+        .map(|info| info.duration_ms)
+        .unwrap_or(0);
 
-    if let Some(LocalAsrOutcome::Final(final_result)) = local_outcome.clone() {
-        return Ok(GroqTranscription {
-            text: final_result.text,
-            model: local_asr_model().to_string(),
-            retry_count: 0,
+    match asr_backend.transcribe(wav_bytes, audio_duration_ms, None).await {
+        Ok(result) => Ok(GroqTranscription {
+            text: result.text,
+            model: result.model,
+            retry_count: result.diagnostics.retry_count,
             rate_limit: None,
-            local_asr: Some(Box::new(final_result.diagnostics)),
-        });
+            stt_provider: None,
+        }),
+        Err(asr_error) => Err(GroqTranscriptionError {
+            code: map_asr_error_code(asr_error.code),
+            message: asr_error.message,
+            model: String::new(),
+            retry_count: asr_error.retry_count,
+            rate_limit: None,
+            stt_provider: None,
+        }),
     }
+}
 
-    let api_key = settings_manager
-        .get_groq_api_key_secret()
-        .map_err(map_settings_error)?
-        .ok_or_else(missing_api_key_error)?;
-
-    let local_diagnostics = local_outcome.map(|outcome| outcome.diagnostics());
-    match groq_client.transcribe_wav(&api_key, wav_bytes).await {
-        Ok(mut transcription) => {
-            transcription.local_asr = local_diagnostics.map(Box::new);
-            Ok(transcription)
+fn map_asr_error_code(code: crate::asr::error::AsrErrorCode) -> GroqTranscriptionErrorCode {
+    use crate::asr::error::AsrErrorCode;
+    match code {
+        AsrErrorCode::AudioEmpty => GroqTranscriptionErrorCode::EmptyAudio,
+        AsrErrorCode::AudioTooLong | AsrErrorCode::AudioTooLarge => {
+            GroqTranscriptionErrorCode::InvalidRequest
         }
-        Err(mut error) => {
-            error.local_asr = local_diagnostics.map(Box::new);
-            Err(error)
-        }
+        AsrErrorCode::NoProvider
+        | AsrErrorCode::ProviderUnhealthy
+        | AsrErrorCode::ProviderRejected
+        | AsrErrorCode::TranscriptionFailed
+        | AsrErrorCode::FallbackFailed
+        | AsrErrorCode::SessionTimeout
+        | AsrErrorCode::Internal => GroqTranscriptionErrorCode::ServerError,
+        AsrErrorCode::ModelNotFound => GroqTranscriptionErrorCode::InvalidRequest,
     }
 }
 
@@ -60,6 +69,7 @@ fn latest_wav_bytes(wav_bytes: Option<Vec<u8>>) -> Result<Vec<u8>, GroqTranscrip
     Ok(wav_bytes)
 }
 
+#[allow(dead_code)]
 fn map_settings_error(error: SettingsError) -> GroqTranscriptionError {
     match error.code {
         SettingsErrorCode::SecretStoreUnavailable => GroqTranscriptionError::new(
@@ -85,6 +95,7 @@ impl From<RecordingError> for GroqTranscriptionError {
     }
 }
 
+#[allow(dead_code)]
 fn missing_api_key_error() -> GroqTranscriptionError {
     GroqTranscriptionError::new(
         GroqTranscriptionErrorCode::MissingApiKey,

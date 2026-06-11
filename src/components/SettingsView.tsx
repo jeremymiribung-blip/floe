@@ -3,18 +3,18 @@ import { HotkeyRow } from "./HotkeyRow";
 import { PrivacyNote } from "./PrivacyNote";
 import { StartAtLoginRow } from "./StartAtLoginRow";
 import type {
-  GroqApiKeyStatus,
+  ApiKeyStatus,
   HotkeyStatus,
   StartAtLoginStatus,
 } from "../types/app";
 
 interface SettingsViewProps {
-  groqStatus: GroqApiKeyStatus | null;
+  apiKeyStatus: ApiKeyStatus | null;
   hotkeyStatus: HotkeyStatus | null;
   startAtLoginStatus: StartAtLoginStatus | null;
   onClose: () => void;
-  onSaveGroq: (value: string) => Promise<void> | void;
-  onClearGroq: () => Promise<void> | void;
+  onSaveApiKey: (value: string) => Promise<void> | void;
+  onClearApiKey: () => Promise<void> | void;
   onChangeHotkey: (accelerator: string) => Promise<void> | void;
   onResetHotkey: () => Promise<void> | void;
   onSetStartAtLogin: (enabled: boolean) => Promise<void> | void;
@@ -22,17 +22,24 @@ interface SettingsViewProps {
 }
 
 export function SettingsView({
-  groqStatus,
+  apiKeyStatus,
   hotkeyStatus,
   startAtLoginStatus,
   onClose,
-  onSaveGroq,
-  onClearGroq,
+  onSaveApiKey,
+  onClearApiKey,
   onChangeHotkey,
   onResetHotkey,
   onSetStartAtLogin,
   busy = false,
 }: SettingsViewProps) {
+  const privacyItems = [
+    "Audio → API",
+    "Text → API",
+    "Keys stored locally",
+    "No audio saved",
+  ];
+
   return (
     <section className="settings-view">
       <header className="settings-view__header">
@@ -49,10 +56,10 @@ export function SettingsView({
       <div className="settings-view__group">
         <h2 className="settings-view__heading">API Key</h2>
         <ApiKeyRow
-          label="Groq"
-          status={groqStatus}
-          onSave={onSaveGroq}
-          onClear={onClearGroq}
+          label="API"
+          status={apiKeyStatus}
+          onSave={onSaveApiKey}
+          onClear={onClearApiKey}
           disabled={busy}
         />
       </div>
@@ -78,14 +85,7 @@ export function SettingsView({
 
       <div className="settings-view__group">
         <h2 className="settings-view__heading">Privacy</h2>
-        <PrivacyNote
-          items={[
-            "Audio → Groq",
-            "Text → Groq",
-            "Keys stored locally",
-            "No audio saved",
-          ]}
-        />
+        <PrivacyNote items={privacyItems} />
       </div>
     </section>
   );

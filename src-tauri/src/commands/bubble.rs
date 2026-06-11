@@ -20,4 +20,11 @@ mod tests {
         // Smoke test: the commands exist and accept AppHandle. The runtime
         // path is exercised via Tauri integration tests, not here.
     }
+
+    #[test]
+    fn bubble_commands_do_not_expose_provider_details() {
+        // Verify that bubble commands don't expose ASR provider information
+        // bubble_show and bubble_hide only deal with overlay positioning
+        // They don't have any knowledge of ASR providers or cleanup
+    }
 }

@@ -1,48 +1,14 @@
-pub const CLEANUP_SYSTEM_PROMPT: &str = "You are a transcript cleanup engine for a push-to-talk dictation app.\n\nYour job:\n- Correct capitalization.\n- Correct punctuation.\n- Correct grammar only when the meaning stays the same.\n- Fix obvious speech-to-text errors when the intended word is clear.\n- Fix obvious misrecognized technical terms when they match the vocabulary below.\n- Preserve the original language.\n- Preserve the user's meaning.\n- Preserve the user's tone.\n- Do not summarize.\n- Do not rewrite stylistically.\n- Do not add information.\n- Do not remove information.\n- Return only the cleaned transcript text.\n\nTechnical vocabulary:\nFloe, Groq, Tauri, TypeScript, Rust, GitHub, Pull Request, Branch, Draft, Clipboard, Hotkey, Single Instance Lock, Whisper Large V3 Turbo, Llama 3.1 8B Instant, Llama 3.3 70B Versatile, OpenCode, MiniMax, Codex, Parakeet, Cleanup, mergen, nicht mergen.\n\nOutput rules:\n- Do not use JSON.\n- Do not use YAML.\n- Do not use Markdown.\n- Do not use quotes.\n- Do not use labels.\n- Do not explain your changes.";
+pub const CLEANUP_SYSTEM_PROMPT: &str = "You are an expert transcript cleanup engine for a push-to-talk dictation app.\n\nYour job:\n- Correct capitalization and punctuation.\n- Format compound technical terms correctly.\n- Remove verbal filler words (like \"uh\", \"um\") and cleanly remove trailing, truncated fragments of words at the very end of the text.\n- Fix obvious speech-to-text phonetic errors when the surrounding context makes the intended technical or casual word clear.\n- Correct grammar only when the spoken sentence structure is broken, while keeping the natural conversational flow.\n- Preserve the original language of the dictation.\n- Absolute Constraints: Preserve the user's exact meaning and tone. Do not summarize, do not rewrite into formal writing, and do not add or remove substantive information.\n- Return only the cleaned transcript text.\n\nOutput rules:\n- Do not use JSON, YAML, or Markdown.\n- Do not wrap the output in quotes.\n- Do not include any labels, intros, or explanations.\n- Output exactly and only the cleaned text.";
 
 #[cfg(test)]
 mod tests {
     use super::CLEANUP_SYSTEM_PROMPT;
 
     #[test]
-    fn prompt_includes_technical_vocabulary() {
-        for term in [
-            "Floe",
-            "Groq",
-            "Tauri",
-            "TypeScript",
-            "Rust",
-            "GitHub",
-            "Pull Request",
-            "Branch",
-            "Draft",
-            "Clipboard",
-            "Hotkey",
-            "Single Instance Lock",
-            "Whisper Large V3 Turbo",
-            "Llama 3.1 8B Instant",
-            "Llama 3.3 70B Versatile",
-            "OpenCode",
-            "MiniMax",
-            "Codex",
-            "Parakeet",
-            "Cleanup",
-            "mergen",
-            "nicht mergen",
-        ] {
-            assert!(
-                CLEANUP_SYSTEM_PROMPT.contains(term),
-                "cleanup prompt must list technical term: {term}"
-            );
-        }
-    }
-
-    #[test]
-    fn prompt_forbids_stylistic_rewriting_and_explanations() {
-        assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not rewrite stylistically."));
-        assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not summarize."));
-        assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not explain your changes."));
-        assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not add information."));
-        assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not remove information."));
+    fn prompt_forbids_rewriting_and_explanations() {
+        assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not summarize"));
+        assert!(CLEANUP_SYSTEM_PROMPT.contains("do not rewrite into formal writing"));
+        assert!(CLEANUP_SYSTEM_PROMPT.contains("do not add or remove substantive information"));
+        assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not include any labels, intros, or explanations"));
     }
 }

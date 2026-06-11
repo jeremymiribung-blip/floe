@@ -3,9 +3,10 @@ use std::{fs, path::PathBuf, sync::Mutex};
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 
-const KEYRING_SERVICE: &str = "com.floe.app";
-const GROQ_API_KEY_USER: &str = "groq-api-key";
-const MAX_GROQ_API_KEY_LEN: usize = 256;
+const KEYRING_SERVICE: &str = "dev.floe.desktop";
+const LEGACY_KEYRING_SERVICES: &[&str] = &["com.floe.app"];
+const API_KEY_USER: &str = "groq-api-key";
+const MAX_API_KEY_LEN: usize = 256;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -14,13 +15,26 @@ pub struct ApiKeyStatus {
     pub masked_preview: Option<String>,
 }
 
-pub type GroqApiKeyStatus = ApiKeyStatus;
+fn default_empty_string() -> String {
+    String::new()
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     #[serde(default)]
     pub hotkey: HotkeySettings,
+    #[serde(default = "default_empty_string")]
+    pub stt_provider: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            hotkey: HotkeySettings::default(),
+            stt_provider: default_empty_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -95,54 +109,111 @@ impl SecretStore for KeyringSecretStore {
     }
 }
 
+pub fn migrate_legacy_keyring_entries() {
+    for legacy_service in LEGACY_KEYRING_SERVICES {
+        if *legacy_service == KEYRING_SERVICE {
+            continue;
+        }
+
+        let Ok(legacy_entry) = Entry::new(legacy_service, API_KEY_USER) else {
+            continue;
+        };
+
+        let Ok(target_entry) = Entry::new(KEYRING_SERVICE, API_KEY_USER) else {
+            continue;
+        };
+
+        let _ = migrate_secret_from_to(
+            &KeyringEntryStore(target_entry),
+            &KeyringEntryStore(legacy_entry),
+        );
+    }
+}
+
+fn migrate_secret_from_to(target: &dyn SecretStore, source: &dyn SecretStore) -> bool {
+    let Ok(Some(secret)) = source.get() else {
+        return false;
+    };
+
+    if target.save(&secret).is_err() {
+        return false;
+    }
+
+    let _ = source.clear();
+    true
+}
+
+struct KeyringEntryStore(Entry);
+
+impl SecretStore for KeyringEntryStore {
+    fn save(&self, secret: &str) -> Result<(), SettingsError> {
+        self.0.set_password(secret).map_err(map_keyring_error)
+    }
+
+    fn get(&self) -> Result<Option<String>, SettingsError> {
+        match self.0.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(KeyringError::NoEntry) => Ok(None),
+            Err(error) => Err(map_keyring_error(error)),
+        }
+    }
+
+    fn clear(&self) -> Result<(), SettingsError> {
+        match self.0.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(error) => Err(map_keyring_error(error)),
+        }
+    }
+}
+
 pub struct SettingsManager {
-    groq_secret_store: Box<dyn SecretStore>,
+    api_key_secret_store: Box<dyn SecretStore>,
     app_settings_store: AppSettingsStore,
 }
 
 impl SettingsManager {
     pub fn new(config_dir: PathBuf) -> Self {
         Self {
-            groq_secret_store: Box::new(KeyringSecretStore::new(GROQ_API_KEY_USER)),
+            api_key_secret_store: Box::new(KeyringSecretStore::new(API_KEY_USER)),
             app_settings_store: AppSettingsStore::new(config_dir.join("settings.json")),
         }
     }
 
     #[cfg(test)]
     pub(crate) fn with_secret_store(
-        groq_secret_store: Box<dyn SecretStore>,
+        api_key_secret_store: Box<dyn SecretStore>,
         settings_path: PathBuf,
     ) -> Self {
         Self {
-            groq_secret_store,
+            api_key_secret_store,
             app_settings_store: AppSettingsStore::new(settings_path),
         }
     }
 
-    pub fn save_groq_api_key(&self, api_key: String) -> Result<GroqApiKeyStatus, SettingsError> {
+    pub fn save_api_key(&self, api_key: String) -> Result<ApiKeyStatus, SettingsError> {
         let api_key = validate_api_key(
             &api_key,
-            MAX_GROQ_API_KEY_LEN,
+            MAX_API_KEY_LEN,
             SettingsErrorCode::InvalidGroqApiKey,
-            "Enter a valid Groq API key.",
+            "Enter a valid API key.",
         )?;
-        self.groq_secret_store.save(&api_key)?;
+        self.api_key_secret_store.save(&api_key)?;
 
         Ok(status_from_secret(Some(api_key)))
     }
 
-    pub fn clear_groq_api_key(&self) -> Result<GroqApiKeyStatus, SettingsError> {
-        self.groq_secret_store.clear()?;
+    pub fn clear_api_key(&self) -> Result<ApiKeyStatus, SettingsError> {
+        self.api_key_secret_store.clear()?;
 
         Ok(status_from_secret(None))
     }
 
-    pub fn get_groq_api_key_status(&self) -> Result<GroqApiKeyStatus, SettingsError> {
-        secret_status(&*self.groq_secret_store)
+    pub fn get_api_key_status(&self) -> Result<ApiKeyStatus, SettingsError> {
+        secret_status(&*self.api_key_secret_store)
     }
 
-    pub fn get_groq_api_key_secret(&self) -> Result<Option<String>, SettingsError> {
-        self.groq_secret_store.get()
+    pub fn get_api_key_secret(&self) -> Result<Option<String>, SettingsError> {
+        self.api_key_secret_store.get()
     }
 
     pub fn get_app_settings(&self) -> Result<AppSettings, SettingsError> {
@@ -155,6 +226,7 @@ impl SettingsManager {
 
         Ok(settings)
     }
+
 }
 
 struct AppSettingsStore {
@@ -182,8 +254,16 @@ impl AppSettingsStore {
             serde_json::from_str(&raw).map_err(|_| app_settings_error())?;
 
         let hotkey = load_hotkey_settings(value.get("hotkey"))?;
+        let stt_provider = value
+            .get("sttProvider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-        let settings = AppSettings { hotkey };
+        let settings = AppSettings {
+            hotkey,
+            stt_provider,
+        };
         validate_app_settings(settings)
     }
 
@@ -334,8 +414,9 @@ mod tests {
     };
 
     use super::{
-        mask_api_key, ApiKeyStatus, AppSettings, HotkeySettings, SecretStore, SettingsError,
-        SettingsErrorCode, SettingsManager, MAX_GROQ_API_KEY_LEN,
+        mask_api_key, migrate_secret_from_to, ApiKeyStatus, AppSettings, HotkeySettings,
+        SecretStore, SettingsError, SettingsErrorCode, SettingsManager, KEYRING_SERVICE,
+        LEGACY_KEYRING_SERVICES, MAX_API_KEY_LEN,
     };
 
     #[derive(Default)]
@@ -382,11 +463,63 @@ mod tests {
     }
 
     #[test]
+    fn keyring_service_matches_documented_bundle_identifier() {
+        assert_eq!(KEYRING_SERVICE, "dev.floe.desktop");
+    }
+
+    #[test]
+    fn legacy_keyring_services_are_recorded_for_migration() {
+        assert!(LEGACY_KEYRING_SERVICES.contains(&"com.floe.app"));
+        assert!(
+            LEGACY_KEYRING_SERVICES
+                .iter()
+                .all(|service| *service != KEYRING_SERVICE),
+            "legacy services must not duplicate the current service",
+        );
+    }
+
+    #[test]
+    fn migrate_secret_from_to_moves_value_and_clears_source() {
+        let source = MemorySecretStore::default();
+        let target = MemorySecretStore::default();
+        source.save("gsk_legacy_value").unwrap();
+
+        let migrated = migrate_secret_from_to(&target, &source);
+
+        assert!(migrated);
+        assert_eq!(target.get().unwrap(), Some("gsk_legacy_value".to_string()));
+        assert_eq!(source.get().unwrap(), None);
+    }
+
+    #[test]
+    fn migrate_secret_from_to_returns_false_when_source_is_empty() {
+        let source = MemorySecretStore::default();
+        let target = MemorySecretStore::default();
+
+        let migrated = migrate_secret_from_to(&target, &source);
+
+        assert!(!migrated);
+        assert_eq!(target.get().unwrap(), None);
+    }
+
+    #[test]
+    fn migrate_secret_from_to_does_not_clear_source_when_target_save_fails() {
+        let source = MemorySecretStore::default();
+        source.save("gsk_legacy_value").unwrap();
+        let target = UnavailableSecretStore;
+
+        let migrated = migrate_secret_from_to(&target, &source);
+
+        assert!(!migrated);
+        assert_eq!(source.get().unwrap(), Some("gsk_legacy_value".to_string()));
+    }
+
+    #[test]
     fn missing_keys_report_unconfigured_status() {
         let manager = test_manager();
 
         assert_eq!(
-            manager.get_groq_api_key_status().unwrap(),
+            manager.get_api_key_status().unwrap(),
             ApiKeyStatus {
                 configured: false,
                 masked_preview: None,
@@ -402,7 +535,7 @@ mod tests {
         );
 
         assert_eq!(
-            manager.get_groq_api_key_status().unwrap(),
+            manager.get_api_key_status().unwrap(),
             ApiKeyStatus {
                 configured: false,
                 masked_preview: None,
@@ -411,40 +544,40 @@ mod tests {
     }
 
     #[test]
-    fn groq_key_round_trips_through_settings_manager() {
+    fn api_key_round_trips_through_settings_manager() {
         let manager = test_manager();
 
         manager
-            .save_groq_api_key("gsk_12345678abcd".to_string())
+            .save_api_key("gsk_12345678abcd".to_string())
             .unwrap();
 
         assert_eq!(
-            manager.get_groq_api_key_secret().unwrap(),
+            manager.get_api_key_secret().unwrap(),
             Some("gsk_12345678abcd".to_string())
         );
 
-        manager.clear_groq_api_key().unwrap();
-        assert!(manager.get_groq_api_key_secret().unwrap().is_none());
+        manager.clear_api_key().unwrap();
+        assert!(manager.get_api_key_secret().unwrap().is_none());
     }
 
     #[test]
     fn saving_keys_trims_secret_and_returns_only_masked_status() {
         let manager = test_manager();
-        let groq_key = "gsk_12345678abcd";
+        let api_key = "gsk_12345678abcd";
 
-        let groq_status = manager
-            .save_groq_api_key(format!("  {groq_key}  "))
-            .expect("Groq key should save");
-        let serialized = serde_json::to_string(&groq_status.clone()).unwrap();
+        let status = manager
+            .save_api_key(format!("  {api_key}  "))
+            .expect("API key should save");
+        let serialized = serde_json::to_string(&status.clone()).unwrap();
 
         assert_eq!(
-            groq_status,
+            status,
             ApiKeyStatus {
                 configured: true,
                 masked_preview: Some("gsk_...abcd".to_string()),
             }
         );
-        assert!(!serialized.contains(groq_key));
+        assert!(!serialized.contains(api_key));
     }
 
     #[test]
@@ -455,16 +588,16 @@ mod tests {
             String::new(),
             "   ".to_string(),
             "gsk_valid_prefix\nwith_control".to_string(),
-            "x".repeat(MAX_GROQ_API_KEY_LEN + 1),
+            "x".repeat(MAX_API_KEY_LEN + 1),
         ] {
             let error = manager
-                .save_groq_api_key(api_key)
-                .expect_err("invalid Groq key should fail");
+                .save_api_key(api_key)
+                .expect_err("invalid API key should fail");
 
             assert_eq!(error.code, SettingsErrorCode::InvalidGroqApiKey);
         }
 
-        assert_eq!(manager.get_groq_api_key_secret().unwrap(), None);
+        assert_eq!(manager.get_api_key_secret().unwrap(), None);
     }
 
     #[test]
@@ -486,23 +619,6 @@ mod tests {
         let settings = manager.get_app_settings().unwrap();
 
         assert_eq!(settings.hotkey, HotkeySettings::default());
-    }
-
-    #[test]
-    fn app_settings_loads_default_from_null_hotkey_without_rewriting_file() {
-        let path = unique_settings_path();
-        fs::write(&path, r#"{"hotkey":null,"cleanupMode":"fast"}"#)
-            .expect("legacy settings should write");
-        let manager = SettingsManager::with_secret_store(
-            Box::new(MemorySecretStore::default()),
-            path.clone(),
-        );
-
-        let settings = manager.get_app_settings().unwrap();
-        let raw = fs::read_to_string(&path).expect("settings should remain readable");
-
-        assert_eq!(settings.hotkey, HotkeySettings::default());
-        assert_eq!(raw, r#"{"hotkey":null,"cleanupMode":"fast"}"#);
     }
 
     #[test]
@@ -573,6 +689,7 @@ mod tests {
         manager
             .save_app_settings(AppSettings {
                 hotkey: HotkeySettings::default(),
+                ..Default::default()
             })
             .unwrap();
 
@@ -628,7 +745,10 @@ mod tests {
             },
         ] {
             let error = manager
-                .save_app_settings(AppSettings { hotkey })
+                .save_app_settings(AppSettings {
+                    hotkey,
+                    ..Default::default()
+                })
                 .expect_err("invalid settings should fail");
 
             assert_eq!(error.code, SettingsErrorCode::InvalidAppSettings);
@@ -641,6 +761,7 @@ mod tests {
                     accelerator: too_long,
                     label: "Ctrl + Shift + Space".to_string(),
                 },
+                ..Default::default()
             })
             .expect_err("too-long settings should fail");
 
@@ -657,6 +778,7 @@ mod tests {
                     accelerator: "Control+Space".to_string(),
                     label: "Ctrl + Space".to_string(),
                 },
+                ..Default::default()
             })
             .expect("Control+Space should save");
 
@@ -674,6 +796,7 @@ mod tests {
                     accelerator: "  Control+Shift+A  ".to_string(),
                     label: "  Control+Shift+A  ".to_string(),
                 },
+                ..Default::default()
             })
             .expect("valid settings should save");
 

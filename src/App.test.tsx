@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type {
   GlobalHotkeyEvent,
-  GroqApiKeyStatus,
+  ApiKeyStatus,
   HotkeyStatus,
   RecordingInfo,
   RecordingStatus,
@@ -53,11 +53,11 @@ const hoisted = vi.hoisted(() => {
       string,
       Array<(event: { payload: unknown }) => void>
     >(),
-    groqConfigured: {
+    apiKeyConfigured: {
       configured: true,
       maskedPreview: "gsk_...abcd",
     },
-    groqMissing: {
+    apiKeyMissing: {
       configured: false,
       maskedPreview: null,
     },
@@ -87,7 +87,7 @@ const eventListeners = hoisted.eventListeners as Map<
   string,
   Array<Listener<unknown>>
 >;
-const groqConfigured = hoisted.groqConfigured as GroqApiKeyStatus;
+const apiKeyConfigured = hoisted.apiKeyConfigured as ApiKeyStatus;
 const hotkeyRegistered = hoisted.hotkeyRegistered as HotkeyStatus;
 const idleStatus = hoisted.idleStatus as RecordingStatus;
 const latestRecording = hoisted.latestRecording as RecordingInfo;
@@ -125,9 +125,18 @@ vi.mock("./lib/tauri", () => {
         fallbackUsed: false,
       }),
     ),
-    clearGroqApiKey: vi.fn(() => Promise.resolve(hoisted.groqMissing)),
+    clearApiKey: vi.fn(() => Promise.resolve(hoisted.apiKeyMissing)),
     copyTextToClipboard: vi.fn(() => Promise.resolve()),
-    getGroqApiKeyStatus: vi.fn(() => Promise.resolve(hoisted.groqConfigured)),
+    diagLog: vi.fn(),
+    getAppSettings: vi.fn(() =>
+      Promise.resolve({
+        hotkey: {
+          accelerator: "Control+Space",
+          label: "Ctrl + Space",
+        },
+      }),
+    ),
+    getApiKeyStatus: vi.fn(() => Promise.resolve(hoisted.apiKeyConfigured)),
     getHotkeySettings: vi.fn(() => Promise.resolve(hoisted.hotkeyRegistered)),
     getRecordingStatus: vi.fn(() => Promise.resolve(hoisted.idleStatus)),
     getStartAtLoginStatus: vi.fn(() =>
@@ -141,7 +150,8 @@ vi.mock("./lib/tauri", () => {
     resetHotkeyToDefault: vi.fn(() =>
       Promise.resolve(hoisted.hotkeyRegistered),
     ),
-    saveGroqApiKey: vi.fn(() => Promise.resolve(hoisted.groqConfigured)),
+    saveAppSettings: vi.fn((settings) => Promise.resolve(settings)),
+    saveApiKey: vi.fn(() => Promise.resolve(hoisted.apiKeyConfigured)),
     setHotkey: vi.fn(() => Promise.resolve(hoisted.hotkeyRegistered)),
     setStartAtLoginEnabled: vi.fn((enabled: boolean) =>
       Promise.resolve({
@@ -178,7 +188,7 @@ beforeEach(async () => {
     }),
   );
   vi.mocked(tauri.copyTextToClipboard).mockResolvedValue(undefined);
-  vi.mocked(tauri.getGroqApiKeyStatus).mockResolvedValue(groqConfigured);
+  vi.mocked(tauri.getApiKeyStatus).mockResolvedValue(apiKeyConfigured);
   vi.mocked(tauri.getHotkeySettings).mockResolvedValue(hotkeyRegistered);
   vi.mocked(tauri.getRecordingStatus).mockResolvedValue(idleStatus);
   vi.mocked(tauri.pasteClipboard).mockResolvedValue(undefined);
@@ -203,7 +213,7 @@ afterEach(() => {
 });
 
 describe("App setup and recording lifecycle", () => {
-  it("keeps configured Groq status when hotkey status loading fails", async () => {
+  it("keeps configured API key status when hotkey status loading fails", async () => {
     const tauri = await import("./lib/tauri");
     const warnSpy = vi
       .spyOn(console, "warn")
@@ -219,7 +229,7 @@ describe("App setup and recording lifecycle", () => {
     expect(container.textContent).toContain("Ctrl + Space");
     expect(container.textContent).toContain("Hotkey unavailable");
     expect(container.textContent).not.toContain("Loading");
-    expect(container.textContent).not.toContain("Groq API key");
+    expect(container.textContent).not.toContain("API key");
     expect(warnSpy).toHaveBeenCalledWith("Floe could not load hotkey status.");
   });
 

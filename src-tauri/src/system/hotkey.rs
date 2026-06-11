@@ -44,19 +44,26 @@ pub enum HotkeyErrorCode {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct HotkeyEventPayload {
-    state: HotkeyEventState,
+pub(crate) struct HotkeyEventPayload {
+    pub(crate) state: HotkeyEventState,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
-enum HotkeyEventState {
+pub(crate) enum HotkeyEventState {
     Pressed,
     Released,
 }
 
-#[derive(Default)]
 pub struct HotkeyManager {
     state: Mutex<HotkeyRuntimeState>,
+}
+
+impl Default for HotkeyManager {
+    fn default() -> Self {
+        Self {
+            state: Mutex::default(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -358,7 +365,19 @@ fn emit_hotkey_event<R: Runtime>(app: &AppHandle<R>, event: ShortcutEvent) {
         ShortcutState::Released => HotkeyEventState::Released,
     };
 
-    let _ = app.emit(HOTKEY_EVENT, HotkeyEventPayload { state });
+    eprintln!(
+        "[DIAG] emit_hotkey_event: state={:?} thread={:?}",
+        state,
+        std::thread::current().id(),
+    );
+
+    let app2 = app.clone();
+    let result = app.run_on_main_thread(move || {
+        eprintln!("[DIAG] run_on_main_thread closure executing on thread={:?}", std::thread::current().id());
+        let emit_result = app2.emit(HOTKEY_EVENT, HotkeyEventPayload { state });
+        eprintln!("[DIAG] emit result={:?}", emit_result);
+    });
+    eprintln!("[DIAG] run_on_main_thread returned: {:?}", result);
 }
 
 fn parse_shortcut(accelerator: &str) -> Result<Shortcut, HotkeyError> {
@@ -516,7 +535,10 @@ impl From<HotkeyError> for SettingsError {
 pub fn validate_app_hotkey_settings(settings: AppSettings) -> Result<AppSettings, SettingsError> {
     let hotkey = normalize_hotkey_settings(settings.hotkey).map_err(SettingsError::from)?;
 
-    Ok(AppSettings { hotkey })
+    Ok(AppSettings {
+        hotkey,
+        stt_provider: settings.stt_provider,
+    })
 }
 
 #[cfg(test)]
@@ -907,6 +929,7 @@ mod tests {
                     accelerator: "Control+Shift+B".to_string(),
                     label: String::new(),
                 },
+                ..Default::default()
             })
             .unwrap();
 

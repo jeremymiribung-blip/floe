@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsView } from "./SettingsView";
 import type {
-  GroqApiKeyStatus,
+  ApiKeyStatus,
   HotkeyStatus,
   StartAtLoginStatus,
 } from "../types/app";
@@ -12,7 +12,7 @@ import type {
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const groqStatus: GroqApiKeyStatus = {
+const apiKeyStatus: ApiKeyStatus = {
   configured: false,
   maskedPreview: null,
 };
@@ -36,6 +36,7 @@ afterEach(() => {
   }
   roots = [];
   containers = [];
+  vi.restoreAllMocks();
 });
 
 describe("SettingsView", () => {
@@ -62,11 +63,13 @@ describe("SettingsView", () => {
     expect(container.querySelector('input[name="cleanupMode"]')).toBeNull();
   });
 
-  it("keeps the privacy note about sending text to Groq", () => {
+  it("does not show provider-specific privacy items", () => {
     const { container } = renderSettingsView();
 
-    expect(container.textContent).toContain("Audio → Groq");
-    expect(container.textContent).toContain("Text → Groq");
+    expect(container.textContent).not.toContain("Audio → Groq");
+    expect(container.textContent).not.toContain("Text → Groq");
+    expect(container.textContent).toContain("Audio → API");
+    expect(container.textContent).toContain("Text → API");
   });
 
   it("shows the configured hotkey label in the new Ctrl + Space format", () => {
@@ -90,6 +93,13 @@ describe("SettingsView", () => {
     expect(startAtLoginToggle(container).textContent).toBe("On");
   });
 
+  it("does not render a Speech-to-Text section", () => {
+    const { container } = renderSettingsView();
+
+    expect(container.textContent).not.toContain("Speech-to-Text");
+    expect(container.textContent).not.toContain("Groq Whisper");
+  });
+
   it("shows a short friendly error when start at login fails", async () => {
     const { container } = renderSettingsView({
       onChange: async () => {
@@ -111,7 +121,9 @@ describe("SettingsView", () => {
 });
 
 function renderSettingsView(
-  options: { onChange?: (enabled: boolean) => Promise<void> } = {},
+  options: {
+    onChange?: (enabled: boolean) => Promise<void>;
+  } = {},
 ) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -128,12 +140,12 @@ function renderSettingsView(
 
     return (
       <SettingsView
-        groqStatus={groqStatus}
+        apiKeyStatus={apiKeyStatus}
         hotkeyStatus={hotkeyStatus}
         startAtLoginStatus={startAtLoginStatus}
         onClose={() => undefined}
-        onSaveGroq={() => undefined}
-        onClearGroq={() => undefined}
+        onSaveApiKey={() => undefined}
+        onClearApiKey={() => undefined}
         onChangeHotkey={() => undefined}
         onResetHotkey={() => undefined}
         onSetStartAtLogin={async (enabled) => {

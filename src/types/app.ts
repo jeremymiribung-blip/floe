@@ -15,13 +15,14 @@ export interface AppStatus {
   message: string;
 }
 
-export interface GroqApiKeyStatus {
+export interface ApiKeyStatus {
   configured: boolean;
   maskedPreview: string | null;
 }
 
 export interface AppSettings {
   hotkey: HotkeySettings;
+  sttProvider: string;
 }
 
 export interface HotkeySettings {
@@ -135,7 +136,7 @@ export interface RecordingStatus {
   lastError: RecordingError | null;
 }
 
-export type GroqTranscriptionErrorCode =
+export type SttErrorCode =
   | "missingApiKey"
   | "invalidApiKey"
   | "rateLimit"
@@ -147,36 +148,30 @@ export type GroqTranscriptionErrorCode =
   | "emptyAudio"
   | "serverError";
 
-export interface GroqTranscription {
+export interface SttResult {
   text: string;
   model: string;
   retryCount: number;
-  rateLimit?: GroqRateLimitMetadata;
-  localAsr?: LocalAsrDiagnostics;
+  rateLimit?: RateLimitMetadata;
+  sttProvider?: SttProviderDiagnostics;
 }
 
-export interface GroqTranscriptionError {
-  code: GroqTranscriptionErrorCode;
+export interface SttError {
+  code: SttErrorCode;
   message: string;
   model?: string;
   retryCount?: number;
-  rateLimit?: GroqRateLimitMetadata;
-  localAsr?: LocalAsrDiagnostics;
+  rateLimit?: RateLimitMetadata;
+  sttProvider?: SttProviderDiagnostics;
 }
 
-export type PipelineMode = "groq_cloud" | "experimental_nemotron_streaming";
-
-export interface LocalAsrDiagnostics {
-  pipelineMode: PipelineMode;
-  localAsrEnabled: boolean;
-  localAsrAvailable: boolean;
-  sidecarConnected: boolean;
-  sidecarStartMs: number;
-  localAsrSessionMs: number;
-  localAsrFinalWaitMs: number;
-  localAsrErrorCode: string | null;
-  fallbackToGroqUsed: boolean;
-  fallbackReason: string | null;
+export interface SttProviderDiagnostics {
+  providerName: string;
+  audioDurationMs: number;
+  transcriptionMs: number;
+  realtimeFactor: number;
+  fallbackUsed: boolean;
+  errorCode?: string;
 }
 
 export interface TranscriptCleanupResult {
@@ -186,21 +181,11 @@ export interface TranscriptCleanupResult {
   retryCount?: number;
   validationMs?: number;
   fallbackUsed?: boolean;
-  rateLimit?: GroqRateLimitMetadata;
-  errorCode?:
-    | "missingApiKey"
-    | "invalidApiKey"
-    | "rateLimit"
-    | "timeout"
-    | "apiUnreachable"
-    | "malformedResponse"
-    | "invalidRequest"
-    | "emptyTranscript"
-    | "validationFailed"
-    | "serverError";
+  rateLimit?: RateLimitMetadata;
+  errorCode?: string;
 }
 
-export interface GroqRateLimitMetadata {
+export interface RateLimitMetadata {
   remainingRequests?: string;
   remainingTokens?: string;
   resetRequests?: string;

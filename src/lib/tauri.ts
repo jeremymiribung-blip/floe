@@ -5,9 +5,9 @@ import type {
   ClipboardError,
   HotkeyError,
   HotkeyStatus,
-  GroqTranscription,
-  GroqTranscriptionError,
-  GroqApiKeyStatus,
+  SttResult,
+  SttError,
+  ApiKeyStatus,
   ManualTestResult,
   RecordingError,
   RecordingInfo,
@@ -15,7 +15,6 @@ import type {
   StartAtLoginStatus,
   TranscriptCleanupResult,
 } from "../types/app";
-import { CLEANUP_MODEL, STT_MODEL } from "./models";
 import { isMacLikePlatform } from "./hotkeyCapture";
 
 const browserStatus: AppStatus = {
@@ -31,12 +30,13 @@ function browserDefaultHotkey() {
     : { accelerator: "Control+Space", label: "Ctrl + Space" };
 }
 
-let browserGroqApiKeyStatus: GroqApiKeyStatus = {
+let browserApiKeyStatus: ApiKeyStatus = {
   configured: false,
   maskedPreview: null,
 };
 let browserAppSettings: AppSettings = {
   hotkey: browserDefaultHotkey(),
+  sttProvider: "",
 };
 let browserHotkeyRegistered = true;
 let browserHotkeyRegistrationError: string | null = null;
@@ -61,9 +61,9 @@ function recordingError(
 }
 
 function transcriptionError(
-  code: GroqTranscriptionError["code"],
+  code: SttError["code"],
   message: string,
-): GroqTranscriptionError {
+): SttError {
   return { code, message };
 }
 
@@ -222,37 +222,37 @@ export function getAppStatus(): Promise<AppStatus> {
   return invoke("get_app_status");
 }
 
-export function saveGroqApiKey(apiKey: string): Promise<GroqApiKeyStatus> {
+export function saveApiKey(apiKey: string): Promise<ApiKeyStatus> {
   if (!isTauriRuntime()) {
     const trimmed = apiKey.trim();
-    browserGroqApiKeyStatus = {
+    browserApiKeyStatus = {
       configured: true,
       maskedPreview: maskBrowserApiKey(trimmed),
     };
-    return Promise.resolve(browserGroqApiKeyStatus);
+    return Promise.resolve(browserApiKeyStatus);
   }
 
-  return invoke("save_groq_api_key", { apiKey });
+  return invoke("save_api_key", { apiKey });
 }
 
-export function clearGroqApiKey(): Promise<GroqApiKeyStatus> {
+export function clearApiKey(): Promise<ApiKeyStatus> {
   if (!isTauriRuntime()) {
-    browserGroqApiKeyStatus = {
+    browserApiKeyStatus = {
       configured: false,
       maskedPreview: null,
     };
-    return Promise.resolve(browserGroqApiKeyStatus);
+    return Promise.resolve(browserApiKeyStatus);
   }
 
-  return invoke("clear_groq_api_key");
+  return invoke("clear_api_key");
 }
 
-export function getGroqApiKeyStatus(): Promise<GroqApiKeyStatus> {
+export function getApiKeyStatus(): Promise<ApiKeyStatus> {
   if (!isTauriRuntime()) {
-    return Promise.resolve(browserGroqApiKeyStatus);
+    return Promise.resolve(browserApiKeyStatus);
   }
 
-  return invoke("get_groq_api_key_status");
+  return invoke("get_api_key_status");
 }
 
 export function getAppSettings(): Promise<AppSettings> {
@@ -267,6 +267,7 @@ export function saveAppSettings(settings: AppSettings): Promise<AppSettings> {
   if (!isTauriRuntime()) {
     browserAppSettings = {
       hotkey: normalizeBrowserHotkey(settings.hotkey.accelerator),
+      sttProvider: settings.sttProvider,
     };
     return Promise.resolve(browserAppSettings);
   }
@@ -468,7 +469,7 @@ export function getLatestRecordingWavBytes(): Promise<number[] | null> {
   return invoke("get_latest_recording_wav_bytes");
 }
 
-export function transcribeLatestRecording(): Promise<GroqTranscription> {
+export function transcribeLatestRecording(): Promise<SttResult> {
   if (!isTauriRuntime()) {
     if (browserLatestRecording === null) {
       return Promise.reject(
@@ -481,7 +482,7 @@ export function transcribeLatestRecording(): Promise<GroqTranscription> {
 
     return Promise.resolve({
       text: "Mock transcript from the latest manual recording.",
-      model: STT_MODEL,
+      model: "",
       retryCount: 0,
     });
   }
@@ -495,7 +496,7 @@ export function cleanupTranscript(
   if (!isTauriRuntime()) {
     return Promise.resolve({
       text: transcript,
-      model: CLEANUP_MODEL,
+      model: "",
       retryCount: 0,
       validationMs: 0,
       fallbackUsed: false,
@@ -560,4 +561,12 @@ export function getBrowserClipboardTextForTest(): string {
   }
 
   return browserClipboardText;
+}
+
+export function diagLog(line: string): void {
+  if (!isTauriRuntime()) {
+    return;
+  }
+
+  void invoke("diag_log", { line });
 }

@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GroqSetupStep } from "./GroqSetupStep";
+import { ApiKeySetupStep } from "./ApiKeySetupStep";
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
@@ -22,7 +22,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("GroqSetupStep", () => {
+describe("ApiKeySetupStep", () => {
   it("disables Continue until a non-empty value is entered", () => {
     const { container } = renderStep();
 
@@ -102,7 +102,7 @@ function renderStep(options: RenderOptions = {}) {
 
   act(() => {
     root.render(
-      <GroqSetupStep
+      <ApiKeySetupStep
         busy={busy}
         onContinue={async (next) => {
           await onContinue(next);

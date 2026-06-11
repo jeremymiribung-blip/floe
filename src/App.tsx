@@ -14,27 +14,30 @@ import {
   bubbleHide,
   bubbleShow,
   cleanupTranscript,
-  clearGroqApiKey,
+  clearApiKey,
   copyTextToClipboard,
-  getGroqApiKeyStatus,
+  diagLog,
+  getApiKeyStatus,
+  getAppSettings,
   getHotkeySettings,
   getRecordingStatus,
-  getStartAtLoginStatus,
   isTauriRuntime,
   pasteClipboard,
   resetHotkeyToDefault,
-  saveGroqApiKey,
+  saveApiKey,
+  saveAppSettings,
   setHotkey,
   setStartAtLoginEnabled,
   startRecording,
   stopRecording,
   transcribeLatestRecording,
 } from "./lib/tauri";
+import { getStartAtLoginStatus as loadStartAtLoginStatus } from "./lib/tauri";
 import type {
   AppState,
   ClipboardError,
-  GroqApiKeyStatus,
-  GroqTranscriptionError,
+  ApiKeyStatus,
+  SttError,
   HotkeyError,
   HotkeyStatus,
   SettingsError,
@@ -67,11 +70,11 @@ export default function App() {
   const [hotkeyStatus, setHotkeyStatus] = useState<HotkeyStatus | null>(null);
   const [startAtLoginStatus, setStartAtLoginStatus] =
     useState<StartAtLoginStatus | null>(null);
-  const [groqStatus, setGroqStatus] = useState<GroqApiKeyStatus | null>(null);
+  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus | null>(null);
   const [latestDiagnosticsJson, setLatestDiagnosticsJson] = useState<
     string | null
   >(null);
-  const [showHotkeyStepAfterGroqSave, setShowHotkeyStepAfterGroqSave] =
+  const [showHotkeyStepAfterSave, setShowHotkeyStepAfterSave] =
     useState(false);
   const controllerRef = useRef<PushToTalkController | null>(null);
 
@@ -99,16 +102,16 @@ export default function App() {
   }
 
   useEffect(() => {
-    getGroqApiKeyStatus()
-      .then((groq) => {
-        setGroqStatus(groq);
+    getApiKeyStatus()
+      .then((status) => {
+        setApiKeyStatus(status);
       })
       .catch(() => {
-        setGroqStatus({
+        setApiKeyStatus({
           configured: false,
           maskedPreview: null,
         });
-        setError("Floe could not load Groq key status.");
+        setError("Floe could not load API key status.");
       });
 
     getHotkeySettings()
@@ -121,7 +124,7 @@ export default function App() {
         setError("Floe could not load hotkey status.");
       });
 
-    getStartAtLoginStatus()
+    loadStartAtLoginStatus()
       .then(setStartAtLoginStatus)
       .catch(() => {
         setStartAtLoginStatus({
@@ -133,6 +136,7 @@ export default function App() {
 
   const handleHotkeyEvent = useCallback(
     async (state: "Pressed" | "Released") => {
+      diagLog(`[FE] handleHotkeyEvent: state=${state}`);
       if (state === "Released") {
         void bubbleHide();
       }
@@ -159,6 +163,7 @@ export default function App() {
     listen<{ state: "Pressed" | "Released" }>(
       "floe-global-hotkey-state",
       (event) => {
+        diagLog(`[FE] listen callback: state=${event.payload.state}`);
         void handleHotkeyEvent(event.payload.state);
       },
     )
@@ -210,27 +215,27 @@ export default function App() {
     };
   }, []);
 
-  const handleSaveGroq = useCallback(
+  const handleSaveApiKey = useCallback(
     async (value: string) => {
-      const wasConfigured = groqStatus?.configured === true;
+      const wasConfigured = apiKeyStatus?.configured === true;
 
       try {
-        const next = await saveGroqApiKey(value);
-        setGroqStatus(next);
-        setShowHotkeyStepAfterGroqSave(!wasConfigured);
+        const next = await saveApiKey(value);
+        setApiKeyStatus(next);
+        setShowHotkeyStepAfterSave(!wasConfigured);
         setError(null);
       } catch (caught) {
         throw settingsErrorForOnboarding(caught);
       }
     },
-    [groqStatus],
+    [apiKeyStatus],
   );
 
-  const handleClearGroq = useCallback(async () => {
+  const handleClearApiKey = useCallback(async () => {
     try {
-      const next = await clearGroqApiKey();
-      setGroqStatus(next);
-      setShowHotkeyStepAfterGroqSave(false);
+      const next = await clearApiKey();
+      setApiKeyStatus(next);
+      setShowHotkeyStepAfterSave(false);
       setError(null);
     } catch (caught) {
       setError(settingsErrorMessage(caught));
@@ -270,14 +275,14 @@ export default function App() {
   }, []);
 
   const handleCompleteOnboarding = useCallback(() => {
-    setShowHotkeyStepAfterGroqSave(false);
+    setShowHotkeyStepAfterSave(false);
     setView("overview");
   }, []);
 
   const setupState = computeVisibleSetupState(
-    groqStatus,
+    apiKeyStatus,
     hotkeyStatus,
-    showHotkeyStepAfterGroqSave,
+    showHotkeyStepAfterSave,
   );
 
   useEffect(() => {
@@ -312,7 +317,7 @@ export default function App() {
         <OnboardingView
           step={setupState}
           hotkeyStatus={hotkeyStatus}
-          onSaveGroq={handleSaveGroq}
+          onSaveApiKey={handleSaveApiKey}
           onChangeHotkey={handleChangeHotkey}
           onComplete={handleCompleteOnboarding}
           busy={flowBusy}
@@ -325,12 +330,12 @@ export default function App() {
     return (
       <AppShell>
         <SettingsView
-          groqStatus={groqStatus}
+          apiKeyStatus={apiKeyStatus}
           hotkeyStatus={hotkeyStatus}
           startAtLoginStatus={startAtLoginStatus}
           onClose={() => setView("overview")}
-          onSaveGroq={handleSaveGroq}
-          onClearGroq={handleClearGroq}
+          onSaveApiKey={handleSaveApiKey}
+          onClearApiKey={handleClearApiKey}
           onChangeHotkey={handleChangeHotkey}
           onResetHotkey={handleResetHotkey}
           onSetStartAtLogin={handleSetStartAtLogin}
@@ -431,7 +436,7 @@ function pushToTalkErrorMessage(caught: unknown): string {
     return clipboardErrorMessage(caught);
   }
 
-  const maybeTranscriptionError = caught as Partial<GroqTranscriptionError>;
+  const maybeTranscriptionError = caught as Partial<SttError>;
   if (typeof maybeTranscriptionError.code === "string") {
     return transcriptionErrorMessage(caught);
   }
@@ -440,7 +445,7 @@ function pushToTalkErrorMessage(caught: unknown): string {
 }
 
 function transcriptionErrorMessage(caught: unknown): string {
-  const transcriptionError = caught as Partial<GroqTranscriptionError>;
+  const transcriptionError = caught as Partial<SttError>;
   if (typeof transcriptionError.message === "string") {
     return transcriptionError.message;
   }

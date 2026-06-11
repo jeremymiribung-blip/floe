@@ -2,10 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   assertDiagnosticsSafe,
   bottleneckFor,
-  CLEANUP_MODEL,
   createPipelineDiagnostics,
   diagnosticsToJson,
-  STT_MODEL,
 } from "./diagnostics";
 import type { RecordingInfo } from "../types/app";
 
@@ -230,15 +228,7 @@ describe("diagnostics", () => {
     expect(parsed.result.error_stage).toBe("paste");
   });
 
-  it("uses llama-3.3-70b-versatile for cleanup and whisper-large-v3-turbo for stt", () => {
-    expect(CLEANUP_MODEL).toBe("llama-3.3-70b-versatile");
-    expect(STT_MODEL).toBe("whisper-large-v3-turbo");
-    expect(CLEANUP_MODEL).not.toContain("gpt-oss");
-    expect(CLEANUP_MODEL).not.toContain("openai/");
-    expect(CLEANUP_MODEL).not.toContain("qwen");
-  });
-
-  it("falls back to llama-3.3-70b-versatile when cleanup data is missing", () => {
+  it("defaults to empty model strings when stt and cleanup data is missing", () => {
     const diagnostics = createPipelineDiagnostics({
       createdAt: new Date("2026-01-01T12:00:00.000Z"),
       platform: "windows",
@@ -258,22 +248,8 @@ describe("diagnostics", () => {
       sanitizedErrorCode: null,
     });
 
-    expect(diagnostics.models.cleanup).toBe("llama-3.3-70b-versatile");
-    expect(diagnostics.models.stt).toBe("whisper-large-v3-turbo");
-    expect(diagnostics.local_asr).toEqual({
-      pipeline_mode: "groq_cloud",
-      local_asr_enabled: false,
-      local_asr_available: false,
-      sidecar_connected: false,
-      sidecar_start_ms: 0,
-      local_asr_session_ms: 0,
-      local_asr_final_wait_ms: 0,
-      local_asr_error_code: null,
-      fallback_to_groq_used: false,
-      fallback_reason: null,
-    });
-    expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
-    expect(diagnostics.models.cleanup).not.toContain("qwen");
+    expect(diagnostics.models.cleanup).toBe("");
+    expect(diagnostics.models.stt).toBe("");
   });
 
   it("uses only an allowlist of safe top-level keys", () => {
@@ -286,16 +262,71 @@ describe("diagnostics", () => {
         "audio",
         "bottleneck",
         "created_at",
-        "local_asr",
         "models",
         "pipeline",
         "platform",
         "rate_limit",
         "result",
         "retries",
+        "stt_provider",
         "trace_version",
       ].sort(),
     );
+  });
+
+  it("includes safe STT provider benchmark metadata", () => {
+    const diagnostics = createPipelineDiagnostics({
+      ...fullInput(),
+      sttDurationMs: 480,
+      stt: {
+        text: "private local transcript",
+        model: "whisper-large-v3-turbo",
+        retryCount: 0,
+        sttProvider: {
+          providerName: "groq_whisper",
+          audioDurationMs: 2000,
+          transcriptionMs: 480,
+          realtimeFactor: 0.24,
+          fallbackUsed: false,
+        },
+      },
+    });
+
+    expect(diagnostics.stt_provider).toEqual({
+      provider_name: "groq_whisper",
+      audio_duration_ms: 2000,
+      transcription_ms: 480,
+      realtime_factor: 0.24,
+      fallback_used: false,
+      error_code: null,
+    });
+  });
+
+  it("sanitizes STT provider fallback metadata without leaking details", () => {
+    const json = diagnosticsToJson(
+      createPipelineDiagnostics({
+        ...fullInput(),
+        stt: {
+          text: "private fallback transcript",
+          model: "whisper-large-v3-turbo",
+          retryCount: 0,
+          sttProvider: {
+            providerName: "groq_whisper",
+            audioDurationMs: 1000,
+            transcriptionMs: 900,
+            realtimeFactor: 0.9,
+            fallbackUsed: true,
+            errorCode: "Authorization: Bearer abcdefghijklmnop",
+          },
+        },
+      }),
+    );
+    const diagnostics = JSON.parse(json);
+
+    expect(diagnostics.stt_provider.fallback_used).toBe(true);
+    expect(diagnostics.stt_provider.error_code).toBe("internal");
+    expect(json).not.toContain("private fallback transcript");
+    expect(json).not.toMatch(/\bBearer\s+[A-Za-z0-9._\-+/=]{8,}/i);
   });
 
   it("never includes a forbidden key at any level of the diagnostics tree", () => {

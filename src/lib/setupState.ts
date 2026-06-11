@@ -1,13 +1,13 @@
-import type { GroqApiKeyStatus, HotkeyStatus } from "../types/app";
+import type { ApiKeyStatus, HotkeyStatus } from "../types/app";
 
-export type SetupState = "setup_groq" | "setup_hotkey" | "ready";
+export type SetupState = "setup_api_key" | "setup_hotkey" | "ready";
 
 export function computeSetupState(
-  groqStatus: GroqApiKeyStatus | null,
+  apiKeyStatus: ApiKeyStatus | null,
   hotkeyStatus: HotkeyStatus | null,
 ): SetupState {
-  if (groqStatus === null || !groqStatus.configured) {
-    return "setup_groq";
+  if (apiKeyStatus === null || !apiKeyStatus.configured) {
+    return "setup_api_key";
   }
 
   if (hotkeyStatus === null || !hotkeyStatus.isRegistered) {
@@ -18,13 +18,13 @@ export function computeSetupState(
 }
 
 export function computeVisibleSetupState(
-  groqStatus: GroqApiKeyStatus | null,
+  apiKeyStatus: ApiKeyStatus | null,
   hotkeyStatus: HotkeyStatus | null,
-  showHotkeyStepAfterGroqSave: boolean,
+  showHotkeyStepAfterApiKeySave: boolean,
 ): SetupState {
-  const base = computeSetupState(groqStatus, hotkeyStatus);
+  const base = computeSetupState(apiKeyStatus, hotkeyStatus);
 
-  if (base === "ready" && showHotkeyStepAfterGroqSave) {
+  if (base === "ready" && showHotkeyStepAfterApiKeySave) {
     return "setup_hotkey";
   }
 

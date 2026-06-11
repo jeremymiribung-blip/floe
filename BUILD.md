@@ -42,7 +42,7 @@ Verified project configuration:
 | Cargo package name       | `floe`                                                                                                                                                |
 | Product name             | `Floe`                                                                                                                                                |
 | Version                  | `0.1.0`                                                                                                                                               |
-| Identifier               | `com.floe.app`                                                                                                                                        |
+| Identifier               | `dev.floe.desktop`                                                                                                                                    |
 | Tauri config             | `src-tauri/tauri.conf.json`                                                                                                                           |
 | Bundle active            | `true`                                                                                                                                                |
 | Bundle targets           | `all`                                                                                                                                                 |
@@ -224,6 +224,66 @@ When cross-compiling with an explicit Rust target, Tauri may place bundle output
 
 Installer artifacts are ignored by Git because `src-tauri/target/` is ignored.
 
+## Release Builds via CI
+
+The release pipeline lives in `.github/workflows/release.yml` and produces the Windows NSIS installer that is attached to each GitHub release. The pipeline is intentionally narrow in the first cut and only builds the platform the maintainer can smoke-test on a Windows host. macOS `.app`/`.dmg`, Linux `.deb` and Fedora/RHEL `.rpm` can be added later as additional matrix jobs; the `tauri.conf.json` bundle metadata is already prepared for them.
+
+**Triggers**
+
+- `push` of a tag matching `v*` (for example `v0.1.0`).
+- `workflow_dispatch` for a manual pre-flight run with a short reason string. The manual run is intended for sanity checks before cutting a release tag; it still creates a draft release with the head `ref_name`, so prefer to push a dedicated test tag like `v0.0.0-preflight` and delete it after the run.
+
+**What the job does**
+
+1. Checks out the repository with full history.
+2. Sets up pnpm 10.12.1, Node 24, Rust stable (rustfmt, clippy) and the Cargo cache.
+3. Runs `pnpm install --frozen-lockfile`.
+4. Runs the same pre-build quality checks as `ci.yml` (format, lint, tsc, vitest, `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`). A failing check fails the release job; this is intentional so broken releases never reach a draft.
+5. Emits a warning if any of the optional signing secrets are missing. The job continues and produces an unsigned installer.
+6. Calls `tauri-apps/tauri-action@v0` with `--bundles nsis`, which builds the Windows NSIS installer, signs it when the signing secrets are present, and attaches it to a **draft** GitHub release.
+
+**Draft release workflow**
+
+1. After the workflow finishes, open the draft release in the GitHub web UI.
+2. Edit the release notes (CHANGELOG highlights, breaking changes, known issues).
+3. Click _Publish release_ once the artifact has been smoke-tested on a real Windows machine.
+4. If the build is broken, _Close_ the draft and fix the failure before re-tagging.
+
+## Code Signing (Windows)
+
+Code signing is optional in the first cut. Without signing secrets the pipeline still produces a working installer; with them, the NSIS executable is signed so Windows SmartScreen and corporate AppLocker policies treat the install as trusted.
+
+**Required repository secrets**
+
+| Secret                               | Description                                                                                                                                                                                                                    |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `WINDOWS_CERTIFICATE`                | Base64-encoded `.pfx` (or `.p12`) file issued by a trusted CA such as DigiCert, Sectigo, or your enterprise CA. Encode it with `base64 -w0 floe.pfx \| Set-Clipboard` or `certutil -encode floe.pfx floe.pfx.b64` on the host. |
+| `WINDOWS_CERTIFICATE_PASSWORD`       | Password for the `.pfx`. Store in GitHub Actions secrets only; never commit.                                                                                                                                                   |
+| `TAURI_SIGNING_PRIVATE_KEY`          | Base64-encoded Tauri update signing key generated via `pnpm exec tauri signer generate -w ~/.tauri/floe.key`. The Tauri updater uses this to sign the update manifest.                                                         |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password for the Tauri signing key.                                                                                                                                                                                            |
+
+`tauri-action` reads these automatically, so no workflow changes are required once the secrets are set. The `Warn if signing secrets are missing` step surfaces a job-summary warning for any secret that is empty, which is the only visible signal during a build with no secrets.
+
+**Local smoke test of an unsigned build**
+
+```powershell
+corepack pnpm install --frozen-lockfile
+corepack pnpm run build
+corepack pnpm exec tauri build --bundles nsis
+```
+
+The unsigned installer lands in `src-tauri/target/release/bundle/nsis/` and can be installed with a one-off _More info → Run anyway_ on SmartScreen.
+
+## Bundle Identifier and Keyring
+
+Floe's bundle identifier is `dev.floe.desktop`, which is also the service name used by the platform keyring to store the Groq API key (`groq-api-key` user). Earlier builds used `com.floe.app`; the suffix `.app` triggered a Tauri macOS bundle-identifier warning, so the identifier was migrated to the cleaner `dev.floe.desktop`.
+
+**Migrating from older builds**
+
+`settings::migrate_legacy_keyring_entries()` runs at the very start of the Tauri `setup` closure on every launch, before the `SettingsManager` is constructed. It reads from the `com.floe.app` service and, if a key is found there, copies it to `dev.floe.desktop` and clears the legacy entry. The migration is idempotent and best-effort: any keyring error is swallowed so a broken legacy store never blocks startup.
+
+A test in `settings.rs` (`keyring_service_matches_documented_bundle_identifier`) keeps `KEYRING_SERVICE` in lockstep with the documented identifier, and `legacy_keyring_services_are_recorded_for_migration` documents the legacy list so future identifier changes can extend it.
+
 ## Troubleshooting
 
 - If `pnpm` is unavailable, run commands through Corepack: `corepack pnpm ...`.
@@ -231,7 +291,6 @@ Installer artifacts are ignored by Git because `src-tauri/target/` is ignored.
 - If Windows compilation fails before bundling, confirm Visual Studio Build Tools includes `Desktop development with C++` and the Windows SDK.
 - If NSIS `.exe` bundling fails, rerun `corepack pnpm exec tauri build --bundles nsis -v` and check for missing NSIS or signing tools.
 - If MSI bundling fails with `light.exe`, enable the Windows VBSCRIPT optional feature and verify WiX is available.
-- Current builds warn that `com.floe.app` ends with `.app`, which Tauri does not recommend for macOS bundle identifiers. This is not an installer blocker; change it only as a deliberate app-identity migration.
 - If Linux builds fail with missing WebKitGTK, install the platform packages above and rerun `corepack pnpm exec tauri info`.
 - If Linux builds fail with audio or D-Bus headers, install `libasound2-dev` and `libdbus-1-dev` on Debian/Ubuntu or `alsa-lib-devel` and `dbus-devel` on Fedora/RHEL.
 - If macOS builds fail during signing or notarization, verify the Apple Developer certificate, provisioning settings, keychain access, and notarization credentials.
@@ -241,24 +300,15 @@ Installer artifacts are ignored by Git because `src-tauri/target/` is ignored.
 - If Floe appears to vanish after clicking the window close button, the process is still running in the system tray so the global hotkey remains active. Use the tray `Quit` menu item to fully exit. On Linux desktops without an AppIndicator extension, the tray icon may not be visible; the process can still be ended through the OS task manager.
 - Do not log raw transcripts, raw audio, full API keys, auth headers, private keys, or signing secrets while debugging builds.
 
-## Future GitHub Actions Release Automation
+## Future Release Automation
 
-Release automation should use a matrix with native runners:
+The Windows-NSIS job in `.github/workflows/release.yml` is the first matrix entry. To expand to other platforms, add additional jobs to the same workflow and run them on native runners:
 
-- `windows-latest` for NSIS `.exe` and optional MSI.
 - `macos-latest` for `.app` and `.dmg`, with signing and notarization secrets configured as GitHub Actions secrets.
-- `ubuntu-latest` or an older supported Ubuntu image/container for `.deb`.
-- Fedora or RHEL-compatible container/runner for `.rpm`.
+- `ubuntu-latest` (or an older supported Ubuntu image) for `.deb`.
+- A Fedora or RHEL-compatible container/runner for `.rpm`.
 
-Recommended workflow shape:
-
-1. Trigger on version tags such as `v0.1.0`.
-2. Install pnpm, Node 24, Rust stable, and platform system dependencies.
-3. Run the same checks listed in this guide before bundling.
-4. Build one artifact type per matrix entry with an explicit `--bundles` value.
-5. Upload artifacts with names that include product, version, platform, architecture, and bundle type.
-6. Keep signing keys, Apple credentials, GPG keys, and Windows certificates in GitHub Actions secrets only.
-7. Publish artifacts to a draft GitHub Release for manual verification before making the release public.
+Each additional job should follow the same pattern: install pnpm/Node/Rust, run the pre-build quality checks, warn on missing signing secrets, and invoke `tauri-apps/tauri-action@v0` with the platform-specific `--bundles` value. Keep signing keys, Apple credentials, GPG keys, and Windows certificates in GitHub Actions secrets only, and publish artifacts to a draft GitHub Release for manual verification before making the release public.
 
 References:
 

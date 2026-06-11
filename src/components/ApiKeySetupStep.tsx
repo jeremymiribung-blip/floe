@@ -1,14 +1,14 @@
 import { useState, type FormEvent } from "react";
 
-interface GroqSetupStepProps {
+interface ApiKeySetupStepProps {
   onContinue: (value: string) => Promise<void> | void;
   busy?: boolean;
 }
 
-export function GroqSetupStep({
+export function ApiKeySetupStep({
   onContinue,
   busy = false,
-}: GroqSetupStepProps) {
+}: ApiKeySetupStepProps) {
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -33,7 +33,7 @@ export function GroqSetupStep({
 
   return (
     <form className="setup-step" onSubmit={handleSubmit}>
-      <h2 className="setup-step__label">Groq API key</h2>
+      <h2 className="setup-step__label">API key</h2>
       <div className="setup-step__field">
         <input
           className="setup-step__input"

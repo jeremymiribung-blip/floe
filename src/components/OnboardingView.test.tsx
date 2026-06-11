@@ -32,11 +32,11 @@ const registeredStatus: HotkeyStatus = {
 };
 
 describe("OnboardingView", () => {
-  it("renders the Groq step when step is setup_groq", () => {
-    const { container } = renderOnboarding({ step: "setup_groq" });
+  it("renders the API key step when step is setup_api_key", () => {
+    const { container } = renderOnboarding({ step: "setup_api_key" });
 
     expect(container.textContent).toContain("Floe");
-    expect(container.textContent).toContain("Groq API key");
+    expect(container.textContent).toContain("API key");
     expect(container.querySelector(".setup-step__input")).not.toBeNull();
   });
 
@@ -48,10 +48,10 @@ describe("OnboardingView", () => {
   });
 
   it("does not render explanatory or marketing copy", () => {
-    const groq = renderOnboarding({ step: "setup_groq" });
+    const apiKey = renderOnboarding({ step: "setup_api_key" });
     const hotkey = renderOnboarding({ step: "setup_hotkey" });
 
-    for (const view of [groq, hotkey]) {
+    for (const view of [apiKey, hotkey]) {
       const text = view.container.textContent ?? "";
       expect(text).not.toContain("hold to dictate");
       expect(text).not.toContain("Cerebras");
@@ -61,8 +61,8 @@ describe("OnboardingView", () => {
 });
 
 interface RenderOptions {
-  step: "setup_groq" | "setup_hotkey";
-  onSaveGroq?: (value: string) => Promise<void> | void;
+  step: "setup_api_key" | "setup_hotkey";
+  onSaveApiKey?: (value: string) => Promise<void> | void;
   onChangeHotkey?: (accelerator: string) => Promise<void> | void;
   onComplete?: () => void;
 }
@@ -79,7 +79,7 @@ function renderOnboarding(options: RenderOptions) {
       <OnboardingView
         step={options.step}
         hotkeyStatus={registeredStatus}
-        onSaveGroq={options.onSaveGroq ?? vi.fn()}
+        onSaveApiKey={options.onSaveApiKey ?? vi.fn()}
         onChangeHotkey={options.onChangeHotkey ?? vi.fn()}
         onComplete={options.onComplete ?? vi.fn()}
       />,

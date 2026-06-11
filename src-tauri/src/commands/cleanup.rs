@@ -12,5 +12,5 @@ pub async fn cleanup_transcript(
     groq_client: State<'_, GroqCleanupClient>,
     transcript: String,
 ) -> Result<TranscriptCleanupResult, String> {
-    Ok(cleanup_transcript_impl(&manager, &groq_client, transcript).await)
+    Ok(cleanup_transcript_impl(&manager, &*groq_client, transcript).await)
 }

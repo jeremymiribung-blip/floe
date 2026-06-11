@@ -2,17 +2,12 @@ mod asr;
 mod audio;
 mod cleanup;
 mod commands;
-mod experiments;
 mod lifecycle;
 mod prompts;
 mod providers;
 mod recording;
 mod settings;
 mod system;
-
-pub fn maybe_run_mock_asr_sidecar_from_args() -> bool {
-    asr::maybe_run_mock_asr_sidecar_from_args()
-}
 
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -29,20 +24,40 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![system::startup::BACKGROUND_ARG]),
         ))
-        .manage(asr::LocalAsrSidecarManager::default())
         .manage(recording::RecordingManager::with_cpal())
         .manage(system::hotkey::HotkeyManager::default())
+        .manage(commands::diag::DiagLog::new())
         .setup(|app| {
             use tauri::{Emitter, Manager};
 
             let is_background_launch = system::startup::is_background_launch_from_env();
             let config_dir = app.path().app_config_dir()?;
             let groq_http_client = providers::http::build_shared_http_client()?;
+            settings::migrate_legacy_keyring_entries();
             app.manage(settings::SettingsManager::new(config_dir));
-            app.manage(providers::groq::GroqTranscriptionClient::new(
-                groq_http_client.clone(),
-            ));
-            app.manage(providers::groq::GroqCleanupClient::new(groq_http_client));
+            app.manage(providers::groq::GroqCleanupClient::new(groq_http_client.clone()));
+
+            let api_key = {
+                if let Some(settings) = app.try_state::<settings::SettingsManager>() {
+                    settings
+                        .get_api_key_secret()
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                }
+            };
+            let mut registry = asr::registry::ProviderRegistry::new();
+            let _ = registry.register(Box::new(asr::adapters::groq::GroqAdapter::new(
+                groq_http_client,
+                api_key,
+            )));
+            
+            let registry = std::sync::Arc::new(registry);
+            let policy = asr::policy::ResourcePolicy::default();
+            let runtime = asr::state::RuntimeState::new("groq".to_string());
+            app.manage(asr::backend::AsrBackend::new(registry, policy, runtime));
             system::tray::setup_tray(app)?;
             system::hotkey::register_startup_hotkey(app.handle());
 
@@ -85,9 +100,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app::get_app_status,
             commands::app::run_manual_test_stub,
-            commands::settings::save_groq_api_key,
-            commands::settings::clear_groq_api_key,
-            commands::settings::get_groq_api_key_status,
+            commands::settings::save_api_key,
+            commands::settings::clear_api_key,
+            commands::settings::get_api_key_status,
             commands::settings::get_app_settings,
             commands::settings::save_app_settings,
             commands::settings::get_start_at_login_status,
@@ -109,6 +124,7 @@ pub fn run() {
             commands::clipboard::paste_clipboard,
             commands::bubble::bubble_show,
             commands::bubble::bubble_hide,
+            commands::diag::diag_log,
         ]);
 
     match builder.build(tauri::generate_context!()) {

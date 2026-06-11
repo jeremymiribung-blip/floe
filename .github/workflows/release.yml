@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Manual build reason"
+        required: false
+        default: "manual"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows-nsis:
+    name: Build Windows NSIS installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.1
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Pre-build quality checks
+        run: |
+          pnpm format
+          pnpm lint
+          pnpm exec tsc --noEmit
+          pnpm test
+          cargo fmt --manifest-path src-tauri/Cargo.toml --check
+          cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Warn if signing secrets are missing
+        if: ${{ ! secrets.WINDOWS_CERTIFICATE || ! secrets.WINDOWS_CERTIFICATE_PASSWORD || ! secrets.TAURI_SIGNING_PRIVATE_KEY || ! secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          Write-Host "::warning::One or more signing secrets are missing. Building an UNSIGNED installer. Set WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD, TAURI_SIGNING_PRIVATE_KEY, and TAURI_SIGNING_PRIVATE_KEY_PASSWORD as repository secrets to enable code signing."
+
+      - name: Build and publish Windows NSIS installer
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Floe ${{ github.ref_name }}"
+          releaseBody: "Automated Windows NSIS build for ${{ github.ref_name }}. See CHANGELOG.md for changes."
+          releaseDraft: true
+          prerelease: false
+          args: --bundles nsis

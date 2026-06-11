@@ -1,13 +1,9 @@
 import type {
-  GroqTranscription,
-  GroqTranscriptionError,
-  LocalAsrDiagnostics,
+  SttResult,
+  SttError,
   RecordingInfo,
   TranscriptCleanupResult,
 } from "../types/app";
-import { CLEANUP_MODEL, STT_MODEL } from "./models";
-
-export { CLEANUP_MODEL, STT_MODEL } from "./models";
 
 const APP_VERSION = "0.1.0";
 const TRACE_VERSION = 1;
@@ -44,17 +40,13 @@ export interface PipelineDiagnostics {
     stt: string;
     cleanup: string;
   };
-  local_asr: {
-    pipeline_mode: "groq_cloud" | "experimental_nemotron_streaming";
-    local_asr_enabled: boolean;
-    local_asr_available: boolean;
-    sidecar_connected: boolean;
-    sidecar_start_ms: number;
-    local_asr_session_ms: number;
-    local_asr_final_wait_ms: number;
-    local_asr_error_code: string | null;
-    fallback_to_groq_used: boolean;
-    fallback_reason: string | null;
+  stt_provider: {
+    provider_name: string;
+    audio_duration_ms: number;
+    transcription_ms: number;
+    realtime_factor: number;
+    fallback_used: boolean;
+    error_code: string | null;
   };
   audio: {
     format: "wav";
@@ -105,8 +97,8 @@ export interface PipelineDiagnosticsInput {
   hotkeyToRecordingStartMs: number;
   recordingInfo?: RecordingInfo | null;
   sttDurationMs: number;
-  stt?: GroqTranscription | null;
-  sttError?: Partial<GroqTranscriptionError> | null;
+  stt?: SttResult | null;
+  sttError?: Partial<SttError> | null;
   cleanupDurationMs: number;
   cleanup?: TranscriptCleanupResult | null;
   cleanupFallbackUsed: boolean;
@@ -150,12 +142,10 @@ export function createPipelineDiagnostics(
     app_version: APP_VERSION,
     pipeline,
     models: {
-      stt: input.stt?.model ?? input.sttError?.model ?? STT_MODEL,
-      cleanup: input.cleanup?.model ?? CLEANUP_MODEL,
+      stt: input.stt?.model ?? input.sttError?.model ?? "",
+      cleanup: input.cleanup?.model ?? "",
     },
-    local_asr: localAsrDiagnostics(
-      input.stt?.localAsr ?? input.sttError?.localAsr,
-    ),
+    stt_provider: sttProviderDiagnostics(input),
     audio: {
       format: recordingInfo?.wavFormat ?? "wav",
       sample_rate:
@@ -195,22 +185,24 @@ export function createPipelineDiagnostics(
   return diagnostics;
 }
 
-function localAsrDiagnostics(
-  localAsr: LocalAsrDiagnostics | undefined,
-): PipelineDiagnostics["local_asr"] {
+function sttProviderDiagnostics(
+  input: PipelineDiagnosticsInput,
+): PipelineDiagnostics["stt_provider"] {
+  const provider = input.stt?.sttProvider ?? input.sttError?.sttProvider;
+  const audioDurationMs =
+    provider?.audioDurationMs ?? input.recordingInfo?.durationMs ?? 0;
+  const transcriptionMs = provider?.transcriptionMs ?? input.sttDurationMs;
+
   return {
-    pipeline_mode: localAsr?.pipelineMode ?? "groq_cloud",
-    local_asr_enabled: localAsr?.localAsrEnabled ?? false,
-    local_asr_available: localAsr?.localAsrAvailable ?? false,
-    sidecar_connected: localAsr?.sidecarConnected ?? false,
-    sidecar_start_ms: normalizeDuration(localAsr?.sidecarStartMs ?? 0),
-    local_asr_session_ms: normalizeDuration(localAsr?.localAsrSessionMs ?? 0),
-    local_asr_final_wait_ms: normalizeDuration(
-      localAsr?.localAsrFinalWaitMs ?? 0,
+    provider_name: provider?.providerName ?? "",
+    audio_duration_ms: normalizeDuration(audioDurationMs),
+    transcription_ms: normalizeDuration(transcriptionMs),
+    realtime_factor: sanitizeRealtimeFactor(
+      provider?.realtimeFactor ??
+        realtimeFactor(transcriptionMs, audioDurationMs),
     ),
-    local_asr_error_code: localAsr?.localAsrErrorCode ?? null,
-    fallback_to_groq_used: localAsr?.fallbackToGroqUsed ?? false,
-    fallback_reason: localAsr?.fallbackReason ?? null,
+    fallback_used: provider?.fallbackUsed === true,
+    error_code: sanitizeDiagnosticCode(provider?.errorCode ?? null),
   };
 }
 
@@ -234,7 +226,7 @@ function rateLimitDiagnostics(
 
 function sanitizeRateLimit(
   metadata:
-    | NonNullable<GroqTranscription["rateLimit"]>
+    | NonNullable<SttResult["rateLimit"]>
     | NonNullable<TranscriptCleanupResult["rateLimit"]>
     | undefined,
 ):
@@ -378,4 +370,55 @@ function normalizeDuration(value: number): number {
   }
 
   return Math.round(value);
+}
+
+function realtimeFactor(
+  transcriptionMs: number,
+  audioDurationMs: number,
+): number {
+  if (
+    !Number.isFinite(transcriptionMs) ||
+    !Number.isFinite(audioDurationMs) ||
+    audioDurationMs <= 0
+  ) {
+    return 0;
+  }
+
+  return sanitizeRealtimeFactor(transcriptionMs / audioDurationMs);
+}
+
+function sanitizeRealtimeFactor(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.round(value * 1000) / 1000;
+}
+
+function sanitizeDiagnosticCode(
+  value: string | null | undefined,
+): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const sanitized = value
+    .trim()
+    .split("")
+    .map((ch) => (/[a-zA-Z0-9_-]/.test(ch) ? ch.toLowerCase() : "_"))
+    .join("");
+
+  if (
+    sanitized.length === 0 ||
+    sanitized.length > 64 ||
+    sanitized.includes("bearer") ||
+    sanitized.includes("authorization") ||
+    sanitized.includes("api_key") ||
+    sanitized.includes("api-key") ||
+    sanitized.includes("gsk_")
+  ) {
+    return "internal";
+  }
+
+  return sanitized;
 }

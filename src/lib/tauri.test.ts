@@ -73,6 +73,7 @@ describe("browser settings fallback", () => {
         accelerator: "Control+Space",
         label: "Ctrl + Space",
       },
+      sttProvider: "",
     });
     await expect(getHotkeySettings()).resolves.toMatchObject({
       accelerator: "Control+Space",
@@ -95,6 +96,7 @@ describe("browser settings fallback", () => {
         accelerator: "Alt+Space",
         label: "Option + Space",
       },
+      sttProvider: "",
     });
     await expect(getHotkeySettings()).resolves.toMatchObject({
       accelerator: "Alt+Space",
@@ -117,6 +119,7 @@ describe("browser settings fallback", () => {
         accelerator: "  Control+Shift+KeyA  ",
         label: "  Control+Shift+A  ",
       },
+      sttProvider: "",
     });
 
     await expect(getAppSettings()).resolves.toEqual({
@@ -124,6 +127,7 @@ describe("browser settings fallback", () => {
         accelerator: "Control+Shift+KeyA",
         label: "Ctrl + Shift + A",
       },
+      sttProvider: "",
     });
     vi.restoreAllMocks();
   });
@@ -208,27 +212,27 @@ describe("browser settings fallback", () => {
   });
 
   it("masks and clears browser Groq API key status without exposing the full key", async () => {
-    const { clearGroqApiKey, getGroqApiKeyStatus, saveGroqApiKey } =
+    const { clearApiKey, getApiKeyStatus, saveApiKey } =
       await import("./tauri");
 
-    await expect(saveGroqApiKey("  gsk_12345678abcd  ")).resolves.toEqual({
+    await expect(saveApiKey("  gsk_12345678abcd  ")).resolves.toEqual({
       configured: true,
       maskedPreview: "gsk_...abcd",
     });
-    await expect(getGroqApiKeyStatus()).resolves.toEqual({
+    await expect(getApiKeyStatus()).resolves.toEqual({
       configured: true,
       maskedPreview: "gsk_...abcd",
     });
-    await expect(clearGroqApiKey()).resolves.toEqual({
+    await expect(clearApiKey()).resolves.toEqual({
       configured: false,
       maskedPreview: null,
     });
   });
 
   it("uses a generic browser mask for short Groq API keys", async () => {
-    const { saveGroqApiKey } = await import("./tauri");
+    const { saveApiKey } = await import("./tauri");
 
-    await expect(saveGroqApiKey("short")).resolves.toEqual({
+    await expect(saveApiKey("short")).resolves.toEqual({
       configured: true,
       maskedPreview: "Configured key",
     });

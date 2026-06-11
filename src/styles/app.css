@@ -429,6 +429,94 @@ ul {
   color: #6b6b6b;
 }
 
+.stt-provider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stt-provider-row__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.stt-provider-row__option--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stt-provider-row__radio {
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  accent-color: #111111;
+  cursor: pointer;
+}
+
+.stt-provider-row__option--disabled .stt-provider-row__radio {
+  cursor: not-allowed;
+}
+
+.stt-provider-row__label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #111111;
+}
+
+.stt-provider-row__rec {
+  font-weight: 400;
+  color: #6b6b6b;
+}
+
+.stt-provider-row__experimental {
+  font-weight: 400;
+  color: #6b6b6b;
+  font-style: italic;
+}
+
+.stt-provider-row__note {
+  font-size: 13px;
+  color: #6b6b6b;
+  padding-left: 22px;
+}
+
+.stt-provider-row__paths {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-left: 22px;
+  margin-top: 8px;
+}
+
+.stt-provider-row__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stt-provider-row__field-label {
+  font-size: 12px;
+  color: #6b6b6b;
+}
+
+.stt-provider-row__input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 13px;
+  padding: 4px 6px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  color: #333;
+}
+
+.stt-provider-row__input:focus {
+  outline: none;
+  border-color: #666;
+}
+
 .privacy-note {
   display: flex;
   flex-direction: column;

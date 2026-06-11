@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clipboardErrorMessage } from "./clipboardErrors";
-import { CLEANUP_MODEL } from "./models";
 import { PushToTalkController } from "./pushToTalk";
 import { shouldShowBubble } from "./recordingBubble";
 import {
@@ -12,8 +11,8 @@ import {
 import type {
   AppState,
   ClipboardError,
-  GroqTranscription,
-  GroqTranscriptionError,
+  SttResult,
+  SttError,
   RecordingError,
   RecordingInfo,
   RecordingStatus,
@@ -67,7 +66,7 @@ interface HarnessOptions {
   startRecording?: () => Promise<RecordingStatus>;
   stopRecording?: () => Promise<RecordingInfo>;
   getRecordingStatus?: () => Promise<RecordingStatus>;
-  transcribeLatestRecording?: () => Promise<GroqTranscription>;
+  transcribeLatestRecording?: () => Promise<SttResult>;
   cleanupTranscript?: (transcript: string) => Promise<TranscriptCleanupResult>;
   copyTextToClipboard?: (text: string) => Promise<void>;
   pasteClipboard?: () => Promise<void>;
@@ -660,7 +659,7 @@ describe("PushToTalkController", () => {
     ).toBe(false);
   });
 
-  it("uses llama-3.3-70b-versatile as the cleanup fallback model when cleanup throws", async () => {
+  it("uses empty cleanup model string when cleanup throws", async () => {
     const harness = createHarness({
       cleanupTranscript: async () => {
         throw new Error("cleanup failed");
@@ -672,9 +671,7 @@ describe("PushToTalkController", () => {
 
     const json = harness.controller.getLatestDiagnosticsJson() ?? "";
     const diagnostics = JSON.parse(json);
-    expect(diagnostics.models.cleanup).toBe(CLEANUP_MODEL);
-    expect(diagnostics.models.cleanup).not.toContain("gpt-oss");
-    expect(diagnostics.models.cleanup).not.toContain("qwen");
+    expect(diagnostics.models.cleanup).toBe("");
     expect(diagnostics.result.cleanup_fallback_used).toBe(true);
   });
 
@@ -869,9 +866,9 @@ describe("PushToTalkController", () => {
   });
 
   it("prevents concurrent transcriptions", async () => {
-    let resolveTranscription: (transcription: GroqTranscription) => void = () =>
+    let resolveTranscription: (transcription: SttResult) => void = () =>
       undefined;
-    const transcriptionPromise = new Promise<GroqTranscription>((resolve) => {
+    const transcriptionPromise = new Promise<SttResult>((resolve) => {
       resolveTranscription = resolve;
     });
     const harness = createHarness({
@@ -917,73 +914,12 @@ describe("PushToTalkController", () => {
       bytes: 96_044,
     });
     expect(diagnostics.result.stt_success).toBe(true);
-    expect(diagnostics.local_asr.pipeline_mode).toBe("groq_cloud");
-    expect(diagnostics.local_asr.local_asr_enabled).toBe(false);
+    expect(diagnostics.stt_provider.provider_name).toBe("groq_whisper");
+    expect(diagnostics.stt_provider.fallback_used).toBe(false);
     expect(diagnostics.result.cleanup_success).toBe(true);
     expect(diagnostics.result.clipboard_success).toBe(true);
     expect(diagnostics.result.paste_success).toBe(true);
     expect(diagnostics.bottleneck.stage).toBeTruthy();
-  });
-
-  it("uses mock local ASR final text when the backend returns it", async () => {
-    const harness = createHarness({
-      transcribeLatestRecording: async () =>
-        transcription("mock local final", "mock-local-asr", {
-          pipelineMode: "experimental_nemotron_streaming",
-          localAsrEnabled: true,
-          localAsrAvailable: true,
-          sidecarConnected: true,
-          sidecarStartMs: 20,
-          localAsrSessionMs: 300,
-          localAsrFinalWaitMs: 40,
-          localAsrErrorCode: null,
-          fallbackToGroqUsed: false,
-          fallbackReason: null,
-        }),
-    });
-
-    await harness.controller.handleShortcutState("Pressed");
-    await harness.controller.handleShortcutState("Released");
-
-    expect(harness.calls).toContain("copy:mock local final.");
-    expect(lastState(harness.states)).toBe("pasted");
-    const diagnostics = latestDiagnostics(harness.diagnostics);
-    expect(diagnostics.models.stt).toBe("mock-local-asr");
-    expect(diagnostics.local_asr.pipeline_mode).toBe(
-      "experimental_nemotron_streaming",
-    );
-    expect(diagnostics.local_asr.fallback_to_groq_used).toBe(false);
-  });
-
-  it("records local ASR fallback metadata while continuing Groq STT cleanup and paste", async () => {
-    const harness = createHarness({
-      transcribeLatestRecording: async () =>
-        transcription("raw transcript", "whisper-large-v3-turbo", {
-          pipelineMode: "experimental_nemotron_streaming",
-          localAsrEnabled: true,
-          localAsrAvailable: true,
-          sidecarConnected: true,
-          sidecarStartMs: 22,
-          localAsrSessionMs: 1200,
-          localAsrFinalWaitMs: 1200,
-          localAsrErrorCode: "final_timeout",
-          fallbackToGroqUsed: true,
-          fallbackReason: "final_timeout",
-        }),
-    });
-
-    await harness.controller.handleShortcutState("Pressed");
-    await harness.controller.handleShortcutState("Released");
-
-    expect(harness.calls).toContain("copy:raw transcript.");
-    expect(harness.states.filter(shouldShowBubble)).toEqual(["recording"]);
-    expect(lastState(harness.states)).toBe("pasted");
-    const json = harness.controller.getLatestDiagnosticsJson() ?? "";
-    const diagnostics = JSON.parse(json);
-    expect(diagnostics.local_asr.fallback_to_groq_used).toBe(true);
-    expect(diagnostics.local_asr.fallback_reason).toBe("final_timeout");
-    expect(json).not.toContain("mock local final");
-    expect(json).not.toContain("raw transcript");
   });
 
   it("does not put transcript, cleaned text, keys, auth headers, audio, or clipboard content in diagnostics", async () => {
@@ -1185,6 +1121,42 @@ describe("PushToTalkController", () => {
     expect(lastState(harness.states)).toBe("pasted");
   });
 
+  it("released before pressed is a no-op and next press starts recording", async () => {
+    const harness = createHarness();
+
+    await harness.controller.handleShortcutState("Released");
+    await harness.controller.handleShortcutState("Pressed");
+
+    expect(harness.startRecording).toHaveBeenCalledTimes(1);
+    expect(harness.stopRecording).not.toHaveBeenCalled();
+    expect(lastState(harness.states)).toBe("recording");
+  });
+
+  it("full race-condition sequence: Released → Pressed → Released stops recording", async () => {
+    const harness = createHarness();
+
+    await harness.controller.handleShortcutState("Released");
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+
+    expect(harness.startRecording).toHaveBeenCalledTimes(1);
+    expect(harness.stopRecording).toHaveBeenCalledTimes(1);
+    expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
+    expect(lastState(harness.states)).toBe("pasted");
+  });
+
+  it("watchdog is cancelled when release stops recording normally", async () => {
+    const harness = createHarness();
+
+    await harness.controller.handleShortcutState("Pressed");
+    await harness.controller.handleShortcutState("Released");
+    await harness.watchdog.fire();
+
+    expect(harness.stopRecording).toHaveBeenCalledTimes(1);
+    expect(harness.transcribeLatestRecording).toHaveBeenCalledTimes(1);
+    expect(lastState(harness.states)).toBe("pasted");
+  });
+
   it("bubble hides after release", async () => {
     const harness = createHarness();
 
@@ -1220,7 +1192,7 @@ function pushToTalkErrorMessage(caught: unknown): string {
     return clipboardErrorMessage(caught);
   }
 
-  const maybeTranscriptionError = caught as Partial<GroqTranscriptionError>;
+  const maybeTranscriptionError = caught as Partial<SttError>;
   if (typeof maybeTranscriptionError.code === "string") {
     return transcriptionErrorMessage(caught);
   }
@@ -1229,7 +1201,7 @@ function pushToTalkErrorMessage(caught: unknown): string {
 }
 
 function transcriptionErrorMessage(caught: unknown): string {
-  const transcriptionError = caught as Partial<GroqTranscriptionError>;
+  const transcriptionError = caught as Partial<SttError>;
   if (typeof transcriptionError.message === "string") {
     return transcriptionError.message;
   }
@@ -1246,13 +1218,13 @@ function recordingFailure(
 function transcription(
   text: string,
   model = "whisper-large-v3-turbo",
-  localAsr?: GroqTranscription["localAsr"],
-): GroqTranscription {
+  sttProvider?: SttResult["sttProvider"],
+): SttResult {
   return {
     text,
     model,
     retryCount: 0,
-    localAsr,
+    sttProvider,
   };
 }
 

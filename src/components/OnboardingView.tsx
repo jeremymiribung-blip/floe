@@ -1,4 +1,4 @@
-import { GroqSetupStep } from "./GroqSetupStep";
+import { ApiKeySetupStep } from "./ApiKeySetupStep";
 import { HotkeySetupStep } from "./HotkeySetupStep";
 import type { SetupState } from "../lib/setupState";
 import type { HotkeyStatus } from "../types/app";
@@ -6,7 +6,7 @@ import type { HotkeyStatus } from "../types/app";
 interface OnboardingViewProps {
   step: Exclude<SetupState, "ready">;
   hotkeyStatus: HotkeyStatus | null;
-  onSaveGroq: (value: string) => Promise<void> | void;
+  onSaveApiKey: (value: string) => Promise<void> | void;
   onChangeHotkey: (accelerator: string) => Promise<void> | void;
   onComplete: () => void;
   busy?: boolean;
@@ -15,7 +15,7 @@ interface OnboardingViewProps {
 export function OnboardingView({
   step,
   hotkeyStatus,
-  onSaveGroq,
+  onSaveApiKey,
   onChangeHotkey,
   onComplete,
   busy = false,
@@ -23,8 +23,8 @@ export function OnboardingView({
   return (
     <section className="onboarding-view">
       <h1 className="wordmark">Floe</h1>
-      {step === "setup_groq" ? (
-        <GroqSetupStep busy={busy} onContinue={onSaveGroq} />
+      {step === "setup_api_key" ? (
+        <ApiKeySetupStep busy={busy} onContinue={onSaveApiKey} />
       ) : (
         <HotkeySetupStep
           hotkeyStatus={hotkeyStatus}

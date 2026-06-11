@@ -1,18 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { GroqApiKeyStatus, HotkeyStatus } from "../types/app";
+import type { ApiKeyStatus, HotkeyStatus } from "../types/app";
 import {
   computeSetupState,
   computeVisibleSetupState,
   isReady,
 } from "./setupState";
-import { CLEANUP_MODEL } from "./models";
 
-const groqConfigured: GroqApiKeyStatus = {
+const apiKeyConfigured: ApiKeyStatus = {
   configured: true,
   maskedPreview: "gsk_...abcd",
 };
 
-const groqMissing: GroqApiKeyStatus = {
+const apiKeyMissing: ApiKeyStatus = {
   configured: false,
   maskedPreview: null,
 };
@@ -34,40 +33,32 @@ const hotkeyUnregistered: HotkeyStatus = {
 };
 
 describe("computeSetupState", () => {
-  it("routes to the Groq step when status is unknown", () => {
-    expect(computeSetupState(null, null)).toBe("setup_groq");
+  it("routes to the API key step when status is unknown", () => {
+    expect(computeSetupState(null, null)).toBe("setup_api_key");
   });
 
-  it("routes to the Groq step when the key is missing", () => {
-    expect(computeSetupState(groqMissing, null)).toBe("setup_groq");
-    expect(computeSetupState(groqMissing, hotkeyRegistered)).toBe("setup_groq");
+  it("routes to the API key step when the key is missing", () => {
+    expect(computeSetupState(apiKeyMissing, null)).toBe("setup_api_key");
+    expect(computeSetupState(apiKeyMissing, hotkeyRegistered)).toBe("setup_api_key");
   });
 
   it("routes to the Hotkey step when the key is set but the hotkey is unknown or unregistered", () => {
-    expect(computeSetupState(groqConfigured, null)).toBe("setup_hotkey");
-    expect(computeSetupState(groqConfigured, hotkeyUnregistered)).toBe(
+    expect(computeSetupState(apiKeyConfigured, null)).toBe("setup_hotkey");
+    expect(computeSetupState(apiKeyConfigured, hotkeyUnregistered)).toBe(
       "setup_hotkey",
     );
   });
 
   it("is ready only when the key is configured and the hotkey is registered", () => {
-    expect(computeSetupState(groqConfigured, hotkeyRegistered)).toBe("ready");
+    expect(computeSetupState(apiKeyConfigured, hotkeyRegistered)).toBe("ready");
   });
 
-  it("returns to the Groq step after the key is cleared", () => {
-    expect(computeSetupState(groqMissing, hotkeyRegistered)).toBe("setup_groq");
+  it("returns to the API key step after the key is cleared", () => {
+    expect(computeSetupState(apiKeyMissing, hotkeyRegistered)).toBe("setup_api_key");
   });
 
   it("returns to the Hotkey step if the hotkey becomes invalid", () => {
-    expect(computeSetupState(groqConfigured, hotkeyUnregistered)).toBe(
-      "setup_hotkey",
-    );
-  });
-
-  it("does not derive setup state from the cleanup model", () => {
-    expect(CLEANUP_MODEL).toBe("llama-3.3-70b-versatile");
-    expect(computeSetupState(groqConfigured, hotkeyRegistered)).toBe("ready");
-    expect(computeSetupState(groqConfigured, hotkeyUnregistered)).toBe(
+    expect(computeSetupState(apiKeyConfigured, hotkeyUnregistered)).toBe(
       "setup_hotkey",
     );
   });
@@ -76,19 +67,19 @@ describe("computeSetupState", () => {
 describe("computeVisibleSetupState", () => {
   it("lets returning users skip the Hotkey step when setup is ready", () => {
     expect(
-      computeVisibleSetupState(groqConfigured, hotkeyRegistered, false),
+      computeVisibleSetupState(apiKeyConfigured, hotkeyRegistered, false),
     ).toBe("ready");
   });
 
-  it("shows the Hotkey step once after first-time Groq setup", () => {
+  it("shows the Hotkey step once after first-time API key setup", () => {
     expect(
-      computeVisibleSetupState(groqConfigured, hotkeyRegistered, true),
+      computeVisibleSetupState(apiKeyConfigured, hotkeyRegistered, true),
     ).toBe("setup_hotkey");
   });
 
   it("keeps unavailable hotkeys on the Hotkey step regardless of the session flag", () => {
     expect(
-      computeVisibleSetupState(groqConfigured, hotkeyUnregistered, false),
+      computeVisibleSetupState(apiKeyConfigured, hotkeyUnregistered, false),
     ).toBe("setup_hotkey");
   });
 });
@@ -99,7 +90,7 @@ describe("isReady", () => {
   });
 
   it("rejects setup states", () => {
-    expect(isReady("setup_groq")).toBe(false);
+    expect(isReady("setup_api_key")).toBe(false);
     expect(isReady("setup_hotkey")).toBe(false);
   });
 });
