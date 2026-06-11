@@ -34,6 +34,7 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let groq_http_client = providers::http::build_shared_http_client()?;
             settings::migrate_legacy_keyring_entries();
+            let models_dir = config_dir.join("models");
             app.manage(settings::SettingsManager::new(config_dir));
             app.manage(providers::groq::GroqCleanupClient::new(groq_http_client.clone()));
 
@@ -53,9 +54,17 @@ pub fn run() {
                 groq_http_client,
                 api_key,
             )));
+
+            let model_cache = std::sync::Arc::new(
+                asr::adapters::model_cache::ModelCache::new(models_dir),
+            );
+            let _ = registry.register(Box::new(
+                asr::adapters::onnx::WhisperOnnxProvider::new(model_cache),
+            ));
             
             let registry = std::sync::Arc::new(registry);
-            let policy = asr::policy::ResourcePolicy::default();
+            let policy = asr::policy::ResourcePolicy::default()
+                .with_local_models(true);
             let runtime = asr::state::RuntimeState::new("groq".to_string());
             app.manage(asr::backend::AsrBackend::new(registry, policy, runtime));
             system::tray::setup_tray(app)?;

@@ -12,3 +12,4 @@ pub mod fallback_tests;
 pub mod policy_tests;
 pub mod diagnostics_tests;
 pub mod privacy_tests;
+pub mod onnx_tests;
