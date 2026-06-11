@@ -73,10 +73,10 @@ impl FallbackStrategy {
 
         session
             .submit_audio(super::types::AudioChunk {
-                data: decode_wav_to_f32(audio).map_err(|_| {
+                data: decode_wav_to_f32(audio).map_err(|e| {
                     TranscriptionError::new(
                         TranscriptionErrorCode::Internal,
-                        "failed to decode audio",
+                        format!("failed to decode audio: {:?}", e),
                         false,
                     )
                 })?,
@@ -165,27 +165,34 @@ impl FallbackStrategy {
     }
 }
 
-fn decode_wav_to_f32(wav_bytes: &[u8]) -> Result<Vec<f32>, ()> {
-    // Minimal RIFF/WAV parser for 16-bit PCM.
-    // Returns mono f32 samples normalized to [-1.0, 1.0].
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WavError {
+    TooShort,
+    InvalidRiff,
+    InvalidWave,
+    MissingFmt,
+    MissingData,
+    UnsupportedFormat(u16),
+    UnsupportedBitsPerSample(u16),
+    UnsupportedChannels(u16),
+    Truncated,
+    EmptyData,
+}
 
-    if wav_bytes.len() < 44 {
-        return Err(());
+fn decode_wav_to_f32(wav_bytes: &[u8]) -> Result<Vec<f32>, WavError> {
+    if wav_bytes.len() < 12 {
+        return Err(WavError::TooShort);
     }
 
-    // RIFF header
-    if &wav_bytes[0..4] != b"RIFF" || &wav_bytes[8..12] != b"WAVE" {
-        return Err(());
+    if &wav_bytes[0..4] != b"RIFF" {
+        return Err(WavError::InvalidRiff);
+    }
+    if &wav_bytes[8..12] != b"WAVE" {
+        return Err(WavError::InvalidWave);
     }
 
-    let file_len = u32::from_le_bytes([wav_bytes[4], wav_bytes[5], wav_bytes[6], wav_bytes[7]]);
-    if (file_len as usize) + 8 > wav_bytes.len() {
-        return Err(());
-    }
-
-    let mut pos: usize = 12; // skip RIFF + WAVE
+    let mut pos: usize = 12;
     let mut channels: u16 = 0;
-    let mut _sample_rate: u32 = 0;
     let mut bits_per_sample: u16 = 0;
     let mut audio_format: u16 = 0;
     let mut data_start: usize = 0;
@@ -194,79 +201,78 @@ fn decode_wav_to_f32(wav_bytes: &[u8]) -> Result<Vec<f32>, ()> {
     let mut found_data = false;
 
     while pos + 8 <= wav_bytes.len() && !(found_fmt && found_data) {
-        let chunk_id = &wav_bytes[pos..pos + 4];
-        let chunk_size =
-            u32::from_le_bytes([wav_bytes[pos + 4], wav_bytes[pos + 5], wav_bytes[pos + 6], wav_bytes[pos + 7]])
-            as usize;
+        let chunk_size = u32::from_le_bytes([
+            wav_bytes[pos + 4], wav_bytes[pos + 5],
+            wav_bytes[pos + 6], wav_bytes[pos + 7],
+        ]) as usize;
 
-        if chunk_id == b"fmt " {
-            if chunk_size < 16 || pos + 8 + chunk_size > wav_bytes.len() {
-                return Err(());
+        if pos + 8 + chunk_size > wav_bytes.len() {
+            return Err(WavError::Truncated);
+        }
+
+        match &wav_bytes[pos..pos + 4] {
+            b"fmt " => {
+                if chunk_size < 16 {
+                    return Err(WavError::MissingFmt);
+                }
+                audio_format = u16::from_le_bytes([wav_bytes[pos + 8], wav_bytes[pos + 9]]);
+                channels = u16::from_le_bytes([wav_bytes[pos + 10], wav_bytes[pos + 11]]);
+                bits_per_sample = u16::from_le_bytes([wav_bytes[pos + 22], wav_bytes[pos + 23]]);
+                found_fmt = true;
             }
-            audio_format = u16::from_le_bytes([wav_bytes[pos + 8], wav_bytes[pos + 9]]);
-            channels = u16::from_le_bytes([wav_bytes[pos + 10], wav_bytes[pos + 11]]);
-            _sample_rate = u32::from_le_bytes([wav_bytes[pos + 12], wav_bytes[pos + 13], wav_bytes[pos + 14], wav_bytes[pos + 15]]);
-            bits_per_sample = u16::from_le_bytes([wav_bytes[pos + 22], wav_bytes[pos + 23]]);
-            found_fmt = true;
-        } else if chunk_id == b"data" {
-            data_start = pos + 8;
-            data_size = chunk_size;
-            found_data = true;
+            b"data" => {
+                data_start = pos + 8;
+                data_size = chunk_size;
+                found_data = true;
+            }
+            _ => {}
         }
 
-        // Advance to next chunk (padded to even byte boundary)
-        let advance = 8 + chunk_size;
-        pos += advance;
-        if advance % 2 != 0 {
-            pos += 1;
-        }
+        // Advance past 8-byte chunk header + padded payload
+        let padding = if chunk_size % 2 != 0 { 1 } else { 0 };
+        pos += 8 + chunk_size + padding;
     }
 
-    if !found_fmt || !found_data {
-        return Err(());
+    if !found_fmt {
+        return Err(WavError::MissingFmt);
+    }
+    if !found_data {
+        return Err(WavError::MissingData);
     }
     if audio_format != 1 {
-        // Only PCM supported
-        return Err(());
+        return Err(WavError::UnsupportedFormat(audio_format));
     }
     if bits_per_sample != 16 {
-        // Only 16-bit supported
-        return Err(());
+        return Err(WavError::UnsupportedBitsPerSample(bits_per_sample));
     }
     if channels != 1 && channels != 2 {
-        return Err(());
+        return Err(WavError::UnsupportedChannels(channels));
     }
     if data_size == 0 {
-        return Ok(Vec::new());
+        return Err(WavError::EmptyData);
     }
     if data_start + data_size > wav_bytes.len() {
-        return Err(());
+        return Err(WavError::Truncated);
     }
 
-    let bytes_per_sample = (bits_per_sample / 8) as usize; // 2 for 16-bit
-    let total_samples = data_size / (bytes_per_sample * channels as usize);
+    let frame_size = 2 * channels as usize; // 2 bytes per 16-bit sample
+    let total_samples = data_size / frame_size;
 
     let mut result = Vec::with_capacity(total_samples);
 
     for i in 0..total_samples {
-        let offset = data_start + i * bytes_per_sample * channels as usize;
+        let offset = data_start + i * frame_size;
         let mut sum: i32 = 0;
 
         for ch in 0..channels {
-            let ch_offset = offset + ch as usize * bytes_per_sample;
-            if ch_offset + 1 >= wav_bytes.len() {
-                return Err(());
-            }
-            let sample = i16::from_le_bytes([wav_bytes[ch_offset], wav_bytes[ch_offset + 1]]);
+            let ch_off = offset + ch as usize * 2;
+            let sample = i16::from_le_bytes([wav_bytes[ch_off], wav_bytes[ch_off + 1]]);
             sum += sample as i32;
         }
 
-        // Average channels for stereo → mono
+        // Average channels for stereo → mono, then normalize to [-1.0, 1.0]
         let averaged = (sum as f64 / channels as f64) as f32;
-        // Normalize to [-1.0, 1.0]
-        let normalized = averaged / (i16::MAX as f32);
-        let clamped = normalized.clamp(-1.0, 1.0);
-        result.push(clamped);
+        result.push((averaged / (i16::MAX as f32)).clamp(-1.0, 1.0));
     }
 
     Ok(result)
@@ -636,8 +642,7 @@ mod tests {
     #[test]
     fn decode_wav_empty_data() {
         let wav = build_mono_wav(&[]);
-        let decoded = decode_wav_to_f32(&wav).unwrap();
-        assert!(decoded.is_empty());
+        assert!(decode_wav_to_f32(&wav).is_err());
     }
 
     #[test]
@@ -742,4 +747,70 @@ mod tests {
 
         assert!(decode_wav_to_f32(&wav).is_err());
     }
+
+    #[test]
+    fn decode_wav_with_junk_chunk() {
+        // WAV with a JUNK chunk (odd payload size) before fmt
+        let channels: u16 = 1;
+        let bits_per_sample: u16 = 16;
+        let sample_rate: u32 = 16000;
+        let bytes_per_sample = (bits_per_sample / 8) as u32;
+        let block_align = channels as u32 * bytes_per_sample;
+        let byte_rate = sample_rate * block_align;
+        let data_size = 4u32 * bytes_per_sample;
+        let junk_size = 5u32; // odd — forces 1-byte padding
+        let file_size = 36 + data_size + 8 + junk_size + 1;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&file_size.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        // JUNK chunk
+        wav.extend_from_slice(b"JUNK");
+        wav.extend_from_slice(&junk_size.to_le_bytes());
+        wav.extend_from_slice(b"hello");
+        wav.push(0); // pad to even boundary
+        // fmt  chunk
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&channels.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&byte_rate.to_le_bytes());
+        wav.extend_from_slice(&(block_align as u16).to_le_bytes());
+        wav.extend_from_slice(&bits_per_sample.to_le_bytes());
+        // data chunk
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_size.to_le_bytes());
+        for _ in 0..4 {
+            wav.extend_from_slice(&0i16.to_le_bytes());
+        }
+        let decoded = decode_wav_to_f32(&wav).unwrap();
+        assert_eq!(decoded.len(), 4);
+    }
+
+    #[test]
+    fn decode_wav_with_extra_trailing_bytes() {
+        // Extra bytes after data chunk should be ignored
+        let mut wav = build_mono_wav(&[10i16, 20]);
+        wav.extend_from_slice(b"TRAIL");
+        let decoded = decode_wav_to_f32(&wav).unwrap();
+        assert_eq!(decoded.len(), 2);
+    }
+
+    #[test]
+    fn decode_wav_truncated_in_data() {
+        let mut wav = build_mono_wav(&[10i16, 20, 30]);
+        wav.truncate(wav.len() - 2);
+        assert!(decode_wav_to_f32(&wav).is_err());
+    }
+
+    #[test]
+    fn decode_wav_mono_silence() {
+        let samples = [0i16; 100];
+        let wav = build_mono_wav(&samples);
+        let decoded = decode_wav_to_f32(&wav).unwrap();
+        assert_eq!(decoded.len(), 100);
+        assert!(decoded.iter().all(|&s| s == 0.0));
+    }
+
 }
