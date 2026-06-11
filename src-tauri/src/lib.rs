@@ -55,11 +55,11 @@ pub fn run() {
                 api_key,
             )));
 
-            let model_cache = std::sync::Arc::new(
-                asr::adapters::model_cache::ModelCache::new(models_dir),
+            let session_cache = std::sync::Arc::new(
+                asr::adapters::onnx_runtime::SessionCache::new(models_dir),
             );
             let _ = registry.register(Box::new(
-                asr::adapters::onnx::WhisperOnnxProvider::new(model_cache),
+                asr::adapters::onnx::WhisperOnnxProvider::new(session_cache),
             ));
             
             let registry = std::sync::Arc::new(registry);

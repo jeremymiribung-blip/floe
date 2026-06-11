@@ -4,15 +4,27 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 pub const GROQ_WHISPER_PROVIDER_NAME: &str = "groq_whisper";
+pub const LOCAL_WHISPER_PROVIDER_NAME: &str = "local_whisper";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SttProvider {
     GroqWhisper,
+    LocalWhisper,
 }
 
 impl SttProvider {
-    pub fn from_name(_name: &str) -> Self {
-        Self::GroqWhisper
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "local_whisper" => Self::LocalWhisper,
+            _ => Self::GroqWhisper,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::GroqWhisper => GROQ_WHISPER_PROVIDER_NAME,
+            Self::LocalWhisper => LOCAL_WHISPER_PROVIDER_NAME,
+        }
     }
 }
 
@@ -135,7 +147,7 @@ impl SttProviderDiagnostics {
 mod tests {
     use super::{
         realtime_factor, sanitize_error_code, SttProvider, SttProviderDiagnostics,
-        GROQ_WHISPER_PROVIDER_NAME,
+        GROQ_WHISPER_PROVIDER_NAME, LOCAL_WHISPER_PROVIDER_NAME,
     };
 
     #[test]
@@ -148,6 +160,20 @@ mod tests {
             SttProvider::from_name("unknown_provider"),
             SttProvider::GroqWhisper
         );
+    }
+
+    #[test]
+    fn provider_selection_recognizes_local_whisper() {
+        assert_eq!(
+            SttProvider::from_name(LOCAL_WHISPER_PROVIDER_NAME),
+            SttProvider::LocalWhisper
+        );
+    }
+
+    #[test]
+    fn stt_provider_as_str_matches_name() {
+        assert_eq!(SttProvider::GroqWhisper.as_str(), GROQ_WHISPER_PROVIDER_NAME);
+        assert_eq!(SttProvider::LocalWhisper.as_str(), LOCAL_WHISPER_PROVIDER_NAME);
     }
 
     #[test]

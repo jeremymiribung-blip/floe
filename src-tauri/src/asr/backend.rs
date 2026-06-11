@@ -65,7 +65,20 @@ impl AsrBackend {
             )
         })?;
 
-        let fallback = self.registry.fallback_provider();
+        // Enforce local model policy
+        let primary_caps = primary.capabilities();
+        if matches!(
+            primary_caps.deployment,
+            super::types::Deployment::Local
+        ) && !self.policy.allow_local_models
+        {
+            return Err(AsrError::new(
+                super::error::AsrErrorCode::ProviderRejected,
+                "local models are not enabled in the resource policy",
+            ));
+        }
+
+        let fallback = self.registry.fallback_provider_excluding(Some(primary.id()));
 
         FallbackStrategy::execute(primary, fallback, audio, audio_duration_ms).await
     }

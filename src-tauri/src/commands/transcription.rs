@@ -6,13 +6,14 @@ use crate::{
         GroqTranscription, GroqTranscriptionError, GroqTranscriptionErrorCode,
     },
     recording::{RecordingError, RecordingErrorCode, RecordingManager},
-    settings::{SettingsError, SettingsErrorCode},
+    settings::{SettingsError, SettingsErrorCode, SettingsManager},
 };
 
 #[tauri::command]
 pub async fn transcribe_latest_recording(
     recording_manager: State<'_, RecordingManager>,
     asr_backend: State<'_, AsrBackend>,
+    settings_manager: State<'_, SettingsManager>,
 ) -> Result<GroqTranscription, GroqTranscriptionError> {
     let wav_bytes = latest_wav_bytes(recording_manager.get_latest_recording_wav_bytes()?)?;
     let audio_duration_ms = recording_manager
@@ -20,7 +21,15 @@ pub async fn transcribe_latest_recording(
         .map(|info| info.duration_ms)
         .unwrap_or(0);
 
-    match asr_backend.transcribe(wav_bytes, audio_duration_ms, None).await {
+    let preferred_provider = settings_manager
+        .get_app_settings()
+        .ok()
+        .map(|s| s.stt_provider)
+        .filter(|s| !s.is_empty());
+
+    let preferred = preferred_provider.as_deref();
+
+    match asr_backend.transcribe(wav_bytes, audio_duration_ms, preferred).await {
         Ok(result) => Ok(GroqTranscription {
             text: result.text,
             model: result.model,

@@ -2,9 +2,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use tract_onnx::prelude::*;
+use ort::session::Session;
+use ort::value::Value;
+use std::ops::Index;
 
-use super::model_cache::{ModelCache, ModelPaths};
+use super::onnx_runtime::SessionCache;
 use crate::asr::error::SessionError;
 use crate::asr::traits::{AsrProvider, AsrSession, TranscriptionError, TranscriptionErrorCode};
 use crate::asr::types::{
@@ -14,9 +16,11 @@ use crate::asr::types::{
 
 const SOT_TOKEN: i64 = 50258;
 const EOT_TOKEN: i64 = 50257;
+const ENGLISH_TOKEN: i64 = 50259;
+const TRANSCRIBE_TOKEN: i64 = 50359;
 const MAX_DECODE_STEPS: usize = 448;
 const N_MELS: usize = 80;
-const N_FFT: usize = 512;
+const N_FFT: usize = 400;
 const HOP_LENGTH: usize = 160;
 const CHUNK_LENGTH: usize = 3000;
 const SAMPLE_RATE: u32 = 16000;
@@ -27,12 +31,12 @@ const DEFAULT_MODEL: &str = "whisper-tiny";
 
 #[derive(Debug)]
 pub struct WhisperOnnxProvider {
-    cache: Arc<ModelCache>,
+    session_cache: Arc<SessionCache>,
 }
 
 impl WhisperOnnxProvider {
-    pub fn new(cache: Arc<ModelCache>) -> Self {
-        Self { cache }
+    pub fn new(session_cache: Arc<SessionCache>) -> Self {
+        Self { session_cache }
     }
 }
 
@@ -54,15 +58,6 @@ const ONNX_MODELS: &[ModelSpec] = &[
         parameters: Some("74M"),
     },
 ];
-
-type Plan = SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
-
-fn load_plan(path: &std::path::Path) -> TractResult<Plan> {
-    onnx()
-        .model_for_path(path)?
-        .into_optimized()?
-        .into_runnable()
-}
 
 #[async_trait]
 impl AsrProvider for WhisperOnnxProvider {
@@ -103,23 +98,26 @@ impl AsrProvider for WhisperOnnxProvider {
         config: SessionConfig,
     ) -> Result<Box<dyn AsrSession>, SessionError> {
         let model_name = config.model.as_deref().unwrap_or(DEFAULT_MODEL);
-        let paths = self.cache.get_or_load(model_name).map_err(|e| {
-            SessionError::new(
-                crate::asr::error::SessionErrorCode::Internal,
-                format!("ONNX model load failed: {}", e),
-            )
-        })?;
+        let cached = self.session_cache.get_or_load(model_name)?;
 
-        Ok(Box::new(WhisperOnnxSession::new(paths)))
+        let encoder =
+            SessionCache::load_encoder_session(&cached)?;
+        let decoder =
+            SessionCache::load_decoder_session(&cached)?;
+        let tokenizer =
+            SessionCache::load_tokenizer(&cached)?;
+
+        Ok(Box::new(WhisperOnnxSession::new(
+            encoder,
+            decoder,
+            tokenizer,
+            model_name.to_string(),
+        )))
     }
 
     async fn health_check(&self) -> Result<HealthStatus, ()> {
-        if self.cache.has_model(DEFAULT_MODEL) {
+        if self.session_cache.has_model(DEFAULT_MODEL) {
             Ok(HealthStatus::Healthy)
-        } else if self.cache.model_dir().join(DEFAULT_MODEL).exists() {
-            Ok(HealthStatus::Degraded(
-                "model files present but not loaded".into(),
-            ))
         } else {
             Ok(HealthStatus::Unhealthy(
                 "no ONNX Whisper models found; place models in the models/ directory".into(),
@@ -130,15 +128,26 @@ impl AsrProvider for WhisperOnnxProvider {
 
 #[derive(Debug)]
 pub struct WhisperOnnxSession {
-    paths: ModelPaths,
+    encoder: Mutex<Session>,
+    decoder: Mutex<Session>,
+    tokenizer: tokenizers::Tokenizer,
+    model_name: String,
     audio_data: Mutex<Vec<f32>>,
     sample_rate: AtomicU32,
 }
 
 impl WhisperOnnxSession {
-    pub fn new(paths: ModelPaths) -> Self {
+    pub fn new(
+        encoder: Session,
+        decoder: Session,
+        tokenizer: tokenizers::Tokenizer,
+        model_name: String,
+    ) -> Self {
         Self {
-            paths,
+            encoder: Mutex::new(encoder),
+            decoder: Mutex::new(decoder),
+            tokenizer,
+            model_name,
             audio_data: Mutex::new(Vec::new()),
             sample_rate: AtomicU32::new(SAMPLE_RATE),
         }
@@ -148,7 +157,7 @@ impl WhisperOnnxSession {
 #[async_trait]
 impl AsrSession for WhisperOnnxSession {
     fn model(&self) -> &str {
-        &self.paths.model_name
+        &self.model_name
     }
 
     fn provider_id(&self) -> &'static str {
@@ -169,11 +178,11 @@ impl AsrSession for WhisperOnnxSession {
     async fn finalize(self: Box<Self>) -> Result<TranscriptResult, TranscriptionError> {
         let samples = {
             let mut data = self.audio_data.lock().map_err(|_| {
-                return TranscriptionError::new(
+                TranscriptionError::new(
                     TranscriptionErrorCode::Internal,
                     "failed to lock audio buffer",
                     false,
-                );
+                )
             })?;
             std::mem::take(&mut *data)
         };
@@ -195,7 +204,7 @@ impl AsrSession for WhisperOnnxSession {
             samples
         };
 
-        let mel = compute_log_mel_spectrogram(&audio, SAMPLE_RATE).map_err(|e| {
+        let mel = compute_log_mel_spectrogram(&audio).map_err(|e| {
             TranscriptionError::new(
                 TranscriptionErrorCode::Internal,
                 format!("audio preprocessing failed: {}", e),
@@ -203,47 +212,52 @@ impl AsrSession for WhisperOnnxSession {
             )
         })?;
 
-        let encoder = load_plan(&self.paths.encoder_path).map_err(|e| {
-            TranscriptionError::new(
-                TranscriptionErrorCode::Internal,
-                format!("encoder load failed: {}", e),
-                true,
-            )
-        })?;
+        let token_ids = {
+            let mut encoder = self.encoder.lock().map_err(|_| {
+                TranscriptionError::new(
+                    TranscriptionErrorCode::Internal,
+                    "failed to lock encoder session",
+                    false,
+                )
+            })?;
+            let mut decoder = self.decoder.lock().map_err(|_| {
+                TranscriptionError::new(
+                    TranscriptionErrorCode::Internal,
+                    "failed to lock decoder session",
+                    false,
+                )
+            })?;
 
-        let decoder = load_plan(&self.paths.decoder_path).map_err(|e| {
-            TranscriptionError::new(
-                TranscriptionErrorCode::Internal,
-                format!("decoder load failed: {}", e),
-                true,
-            )
-        })?;
+            let encoder_output = run_encoder(&mut encoder, &mel).map_err(|e| {
+                TranscriptionError::new(
+                    TranscriptionErrorCode::Internal,
+                    format!("encoder inference failed: {}", e),
+                    true,
+                )
+            })?;
 
-        let encoder_output = run_encoder(&encoder, &mel).map_err(|e| {
-            TranscriptionError::new(
-                TranscriptionErrorCode::Internal,
-                format!("encoder inference failed: {}", e),
-                true,
+            run_decoder(
+                &mut decoder,
+                &encoder_output,
             )
-        })?;
+            .map_err(|e| {
+                TranscriptionError::new(
+                    TranscriptionErrorCode::Internal,
+                    format!("decoder inference failed: {}", e),
+                    true,
+                )
+            })?
+        };
 
-        let tokens = run_decoder_greedy(&decoder, &encoder_output).map_err(|e| {
-            TranscriptionError::new(
-                TranscriptionErrorCode::Internal,
-                format!("decoder inference failed: {}", e),
-                true,
-            )
-        })?;
-
-        let text = decode_token_ids(&tokens);
+        let text = decode_token_ids(&self.tokenizer, &token_ids);
         let transcription_ms = started.elapsed().as_millis() as u64;
 
         Ok(TranscriptResult {
             text,
-            model: self.paths.model_name.clone(),
+            model: self.model_name.clone(),
             diagnostics: AsrDiagnostics::new(
                 PROVIDER_ID,
-                &self.paths.model_name,
+                &self.model_name,
                 BackendType::Onnx,
                 0,
                 transcription_ms,
@@ -256,7 +270,7 @@ impl AsrSession for WhisperOnnxSession {
 }
 
 // ---------------------------------------------------------------------------
-// Audio preprocessing: log-Mel spectrogram
+// Audio preprocessing: Whisper-style log-Mel spectrogram
 // ---------------------------------------------------------------------------
 
 fn resample(audio: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
@@ -277,7 +291,7 @@ fn resample(audio: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     output
 }
 
-fn compute_log_mel_spectrogram(audio: &[f32], _sample_rate: u32) -> Result<Vec<f32>, String> {
+fn compute_log_mel_spectrogram(audio: &[f32]) -> Result<Vec<f32>, String> {
     let target_len = CHUNK_LENGTH * HOP_LENGTH;
     let pcm = if audio.len() < target_len {
         let mut padded = audio.to_vec();
@@ -296,7 +310,6 @@ fn compute_log_mel_spectrogram(audio: &[f32], _sample_rate: u32) -> Result<Vec<f
 
     let mut planner = rustfft::FftPlanner::new();
     let fft = planner.plan_fft_forward(N_FFT);
-
     let hann = hann_window(N_FFT);
 
     for frame in 0..n_frames {
@@ -321,19 +334,25 @@ fn compute_log_mel_spectrogram(audio: &[f32], _sample_rate: u32) -> Result<Vec<f
         }
     }
 
-    let mel_matrix =
-        mel_filterbank(SAMPLE_RATE as f64, N_FFT, N_MELS, 80.0, SAMPLE_RATE as f64 / 2.0);
+    let mel_matrix = mel_filterbank(
+        SAMPLE_RATE as f64,
+        N_FFT,
+        N_MELS,
+        0.0,
+        SAMPLE_RATE as f64 / 2.0,
+    );
 
+    let n_freqs = N_FFT / 2 + 1;
     let mut mel_spec = vec![0.0_f32; n_frames * N_MELS];
     for t in 0..n_frames {
-        let frame_start = t * (N_FFT / 2 + 1);
+        let frame_start = t * n_freqs;
         let mel_start = t * N_MELS;
         for m in 0..N_MELS {
             let mut sum = 0.0_f32;
-            for k in 0..(N_FFT / 2 + 1) {
-                sum += stft_mag[frame_start + k] * mel_matrix[m * (N_FFT / 2 + 1) + k];
+            for k in 0..n_freqs {
+                sum += stft_mag[frame_start + k] * mel_matrix[m * n_freqs + k];
             }
-            mel_spec[mel_start + m] = sum.max(1e-10).ln();
+            mel_spec[mel_start + m] = sum;
         }
     }
 
@@ -343,18 +362,20 @@ fn compute_log_mel_spectrogram(audio: &[f32], _sample_rate: u32) -> Result<Vec<f
     if n_frames >= target_frames {
         for t in 0..target_frames {
             for m in 0..N_MELS {
-                output[t * N_MELS + m] = mel_spec[t * N_MELS + m].clamp(-10.0, 10.0);
+                let val = mel_spec[t * N_MELS + m].max(1e-10);
+                output[t * N_MELS + m] = val;
             }
         }
     } else {
         for t in 0..n_frames {
             for m in 0..N_MELS {
-                output[t * N_MELS + m] = mel_spec[t * N_MELS + m].clamp(-10.0, 10.0);
+                let val = mel_spec[t * N_MELS + m].max(1e-10);
+                output[t * N_MELS + m] = val;
             }
         }
         for t in n_frames..target_frames {
             for m in 0..N_MELS {
-                output[t * N_MELS + m] = -10.0;
+                output[t * N_MELS + m] = 1e-10;
             }
         }
     }
@@ -418,64 +439,99 @@ fn mel_to_hz(mel: f64) -> f64 {
 }
 
 // ---------------------------------------------------------------------------
-// Encoder / Decoder inference (tract-onnx)
+// Encoder / Decoder inference (ONNX Runtime)
 // ---------------------------------------------------------------------------
 
-fn run_encoder(encoder: &Plan, mel: &[f32]) -> Result<Vec<f32>, String> {
-    let shape = (1, N_MELS, CHUNK_LENGTH);
-    let array = tract_ndarray::Array3::<f32>::from_shape_vec(shape, mel.to_vec())
-        .map_err(|e| format!("encoder input shape: {}", e))?;
+fn run_encoder(encoder: &mut Session, mel: &[f32]) -> Result<Vec<f32>, String> {
+    let shape = [1usize, N_MELS, CHUNK_LENGTH];
+    let input_tensor = Value::from_array((shape, mel.to_vec()))
+        .map_err(|e| format!("encoder input tensor: {}", e))?;
 
-    let tensor = Tensor::from(array);
-    let result = encoder
-        .run(tvec!(tensor.into()))
+    let input_name = encoder.inputs().first()
+        .map(|o| o.name().to_string())
+        .unwrap_or_else(|| "input_features".to_string());
+
+    let outputs = encoder
+        .run(ort::inputs! { input_name.as_str() => input_tensor })
         .map_err(|e| format!("encoder run: {}", e))?;
 
-    if result.is_empty() {
-        return Err("encoder produced no output".into());
-    }
+    let output = outputs.index(0);
 
-    let output = result[0]
-        .to_array_view::<f32>()
+    let (_shape, data) = output.try_extract_tensor::<f32>()
         .map_err(|e| format!("encoder output view: {}", e))?;
 
-    Ok(output.iter().copied().collect())
+    Ok(data.to_vec())
 }
 
-fn run_decoder_greedy(decoder: &Plan, encoder_output: &[f32]) -> Result<Vec<i64>, String> {
-    let d_model = encoder_output.len() / (CHUNK_LENGTH / 2);
-    let enc_shape = (1, CHUNK_LENGTH / 2, d_model);
-    let encoder_array = tract_ndarray::Array3::<f32>::from_shape_vec(enc_shape, encoder_output.to_vec())
-        .map_err(|e| format!("decoder encoder_input shape: {}", e))?;
+fn run_decoder(
+    decoder: &mut Session,
+    encoder_output: &[f32],
+) -> Result<Vec<i64>, String> {
+    let enc_seq_len = CHUNK_LENGTH / 2;
+    let d_model = encoder_output.len() / enc_seq_len;
+    let enc_shape = [1usize, enc_seq_len, d_model];
 
-    let encoder_tensor: Tensor = encoder_array.into();
+    let encoder_tensor = Value::from_array((enc_shape, encoder_output.to_vec()))
+        .map_err(|e| format!("decoder encoder tensor: {}", e))?;
 
-    let mut tokens: Vec<i64> = vec![SOT_TOKEN, 50259, 50359];
-    let max_steps = MAX_DECODE_STEPS;
     let vocab_size: usize = 51865;
+    let mut tokens: Vec<i64> = vec![SOT_TOKEN, ENGLISH_TOKEN, TRANSCRIBE_TOKEN];
 
-    for _ in 0..max_steps {
-        let seq_shape = (1, tokens.len());
-        let input_array = tract_ndarray::Array2::<i64>::from_shape_vec(seq_shape, tokens.clone())
-            .map_err(|e| format!("decoder input shape: {}", e))?;
+    for _ in 0..MAX_DECODE_STEPS {
+        let seq_len = tokens.len();
+        let input_ids_tensor =
+            Value::from_array(([1usize, seq_len], tokens.clone()))
+                .map_err(|e| format!("decoder input tensor: {}", e))?;
 
-        let input_tensor: Tensor = input_array.into();
+        let input_names: Vec<String> = decoder
+            .inputs()
+            .iter()
+            .map(|o| o.name().to_string())
+            .collect();
 
-        let result = decoder
-            .run(tvec!(input_tensor.into(), encoder_tensor.clone().into()))
-            .map_err(|e| format!("decoder step: {}", e))?;
+        let mut input_map: std::collections::HashMap<String, &str> =
+            std::collections::HashMap::new();
 
-        if result.is_empty() {
-            break;
+        for name in &input_names {
+            let lower = name.to_lowercase();
+            if lower.contains("input_ids") || lower.contains("inputid") {
+                input_map.insert(name.clone(), "input_ids");
+            } else if lower.contains("encoder") || lower.contains("encoderhidden") {
+                input_map.insert(name.clone(), "encoder_output");
+            }
         }
 
-        let logits = result[0]
-            .to_array_view::<f32>()
+        let outputs = if input_map.len() == 2 {
+            let ids_name = input_map.iter()
+                .find(|(_, v)| **v == "input_ids")
+                .map(|(k, _)| k.as_str())
+                .unwrap_or("input_ids");
+            let enc_name = input_map.iter()
+                .find(|(_, v)| **v == "encoder_output")
+                .map(|(k, _)| k.as_str())
+                .unwrap_or("encoder_hidden_states");
+
+            decoder
+                .run(ort::inputs! {
+                    ids_name => input_ids_tensor,
+                    enc_name => &encoder_tensor,
+                })
+                .map_err(|e| format!("decoder run: {}", e))?
+        } else {
+            decoder
+                .run(ort::inputs![input_ids_tensor, &encoder_tensor])
+                .map_err(|e| format!("decoder run: {}", e))?
+        };
+
+        let logits_output = outputs.index(0);
+
+        let (_shape, logits) = logits_output.try_extract_tensor::<f32>()
             .map_err(|e| format!("decoder logits view: {}", e))?;
 
-        let last_pos = tokens.len() - 1;
+        let last_pos = seq_len - 1;
+        let offset = last_pos * vocab_size;
         let next_token = (0..vocab_size)
-            .map(|i| logits[[0, last_pos, i]])
+            .map(|i| logits[offset + i])
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(idx, _)| idx as i64)
@@ -492,17 +548,19 @@ fn run_decoder_greedy(decoder: &Plan, encoder_output: &[f32]) -> Result<Vec<i64>
 }
 
 // ---------------------------------------------------------------------------
-// BPE token decoding
+// Token decoding
 // ---------------------------------------------------------------------------
 
-fn decode_token_ids(token_ids: &[i64]) -> String {
-    let mut bytes: Vec<u8> = Vec::new();
-    for &id in token_ids {
-        if id >= 0 && id < 256 {
-            bytes.push(id as u8);
-        }
+fn decode_token_ids(tokenizer: &tokenizers::Tokenizer, token_ids: &[i64]) -> String {
+    if token_ids.is_empty() {
+        return String::new();
     }
-    String::from_utf8_lossy(&bytes).to_string()
+
+    let ids: Vec<u32> = token_ids.iter().filter_map(|&id| id.try_into().ok()).collect();
+    match tokenizer.decode(&ids, true) {
+        Ok(text) => text,
+        Err(_) => String::new(),
+    }
 }
 
 #[cfg(test)]
@@ -513,7 +571,7 @@ mod tests {
 
     #[tokio::test]
     async fn provider_identity_and_capabilities() {
-        let cache = Arc::new(ModelCache::new(PathBuf::from("/nonexistent")));
+        let cache = Arc::new(SessionCache::new(PathBuf::from("/nonexistent")));
         let provider = WhisperOnnxProvider::new(cache);
 
         assert_eq!(provider.id(), PROVIDER_ID);
@@ -523,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn capabilities_are_local_onnx() {
-        let cache = Arc::new(ModelCache::new(PathBuf::from("/nonexistent")));
+        let cache = Arc::new(SessionCache::new(PathBuf::from("/nonexistent")));
         let provider = WhisperOnnxProvider::new(cache);
         let caps = provider.capabilities();
 
@@ -537,7 +595,7 @@ mod tests {
 
     #[tokio::test]
     async fn health_check_reports_unhealthy_when_no_models() {
-        let cache = Arc::new(ModelCache::new(PathBuf::from("/nonexistent/path")));
+        let cache = Arc::new(SessionCache::new(PathBuf::from("/nonexistent/path")));
         let provider = WhisperOnnxProvider::new(cache);
         let status = provider.health_check().await.unwrap();
         assert!(matches!(status, HealthStatus::Unhealthy(_)));
@@ -545,7 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_fails_without_model_files() {
-        let cache = Arc::new(ModelCache::new(PathBuf::from("/nonexistent")));
+        let cache = Arc::new(SessionCache::new(PathBuf::from("/nonexistent")));
         let provider = WhisperOnnxProvider::new(cache);
 
         let config = SessionConfig {
@@ -557,13 +615,12 @@ mod tests {
         let result = provider.create_session(config).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.code, SessionErrorCode::Internal);
-        assert!(err.message.contains("ONNX model load failed"));
+        assert_eq!(err.code, SessionErrorCode::ModelUnavailable);
     }
 
     #[tokio::test]
     async fn provider_models_include_whisper_tiny() {
-        let cache = Arc::new(ModelCache::new(PathBuf::from("/nonexistent")));
+        let cache = Arc::new(SessionCache::new(PathBuf::from("/nonexistent")));
         let provider = WhisperOnnxProvider::new(cache);
         let models = provider.available_models();
         assert!(!models.is_empty());
@@ -596,43 +653,31 @@ mod tests {
     #[test]
     fn log_mel_spectrogram_pads_very_short_audio() {
         let short = vec![0.0; 100];
-        let result = compute_log_mel_spectrogram(&short, 16000);
+        let result = compute_log_mel_spectrogram(&short);
         assert!(result.is_ok());
     }
 
     #[test]
     fn log_mel_spectrogram_produces_correct_shape_for_30s() {
         let audio = vec![0.01; 480000];
-        let result = compute_log_mel_spectrogram(&audio, 16000).unwrap();
+        let result = compute_log_mel_spectrogram(&audio).unwrap();
         assert_eq!(result.len(), N_MELS * CHUNK_LENGTH);
     }
 
     #[test]
     fn log_mel_spectrogram_pads_short_audio() {
         let audio = vec![0.01; 16000];
-        let result = compute_log_mel_spectrogram(&audio, 16000).unwrap();
+        let result = compute_log_mel_spectrogram(&audio).unwrap();
         assert_eq!(result.len(), N_MELS * CHUNK_LENGTH);
     }
 
     #[test]
-    fn decode_token_ids_handles_ascii() {
-        let ids: Vec<i64> = vec![72, 101, 108, 108, 111];
-        let text = decode_token_ids(&ids);
-        assert_eq!(text, "Hello");
-    }
-
-    #[test]
-    fn decode_token_ids_handles_empty() {
-        let ids: Vec<i64> = vec![];
-        let text = decode_token_ids(&ids);
-        assert_eq!(text, "");
-    }
-
-    #[test]
-    fn decode_token_ids_skips_non_byte_tokens() {
-        let ids: Vec<i64> = vec![72, 256, 101];
-        let text = decode_token_ids(&ids);
-        assert_eq!(text, "He");
+    fn log_mel_values_are_positive() {
+        let audio = vec![0.01; 480000];
+        let result = compute_log_mel_spectrogram(&audio).unwrap();
+        for &v in &result {
+            assert!(v > 0.0, "mel value should be positive, got {}", v);
+        }
     }
 
     #[test]
@@ -646,13 +691,13 @@ mod tests {
 
     #[test]
     fn mel_filterbank_produces_correct_shape() {
-        let fb = mel_filterbank(16000.0, N_FFT, N_MELS, 80.0, 8000.0);
+        let fb = mel_filterbank(16000.0, N_FFT, N_MELS, 0.0, 8000.0);
         assert_eq!(fb.len(), N_MELS * (N_FFT / 2 + 1));
     }
 
     #[test]
     fn mel_filterbank_non_negative_weights() {
-        let fb = mel_filterbank(16000.0, N_FFT, N_MELS, 80.0, 8000.0);
+        let fb = mel_filterbank(16000.0, N_FFT, N_MELS, 0.0, 8000.0);
         for &w in &fb {
             assert!(w >= 0.0, "weight {:.6} is negative", w);
         }

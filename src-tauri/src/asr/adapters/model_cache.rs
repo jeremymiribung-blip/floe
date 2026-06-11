@@ -10,6 +10,15 @@ pub struct ModelPaths {
     pub model_name: String,
 }
 
+impl ModelPaths {
+    pub fn model_dir_path(&self) -> PathBuf {
+        self.encoder_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug)]
 pub enum ModelError {
     NotFound(String),
@@ -117,6 +126,15 @@ impl ModelCache {
 
     pub fn model_dir(&self) -> &PathBuf {
         &self.model_dir
+    }
+
+    pub fn resolve_tokenizer_path(&self, model_name: &str) -> Option<PathBuf> {
+        let path = self.model_dir.join(model_name).join("tokenizer.json");
+        if path.exists() {
+            Some(path)
+        } else {
+            None
+        }
     }
 }
 

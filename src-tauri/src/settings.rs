@@ -323,7 +323,20 @@ fn validate_api_key(
 }
 
 fn validate_app_settings(settings: AppSettings) -> Result<AppSettings, SettingsError> {
-    crate::system::hotkey::validate_app_hotkey_settings(settings)
+    let settings = crate::system::hotkey::validate_app_hotkey_settings(settings)?;
+
+    // Validate stt_provider is a known value if non-empty
+    if !settings.stt_provider.is_empty()
+        && settings.stt_provider != "groq"
+        && settings.stt_provider != "local_whisper"
+    {
+        return Err(settings_error(
+            SettingsErrorCode::InvalidAppSettings,
+            "Unknown speech-to-text provider.",
+        ));
+    }
+
+    Ok(settings)
 }
 
 fn load_hotkey_settings(

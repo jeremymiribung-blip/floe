@@ -155,8 +155,53 @@ impl ProviderRegistry {
 
     /// Returns Groq as the default fallback provider if available and not disabled.
     /// Falls back to any other fallback-compatible provider if Groq is unavailable.
+    /// Excludes the primary provider to avoid self-fallback loops.
     pub fn fallback_provider(&self) -> Option<&dyn AsrProvider> {
-        // First, try to return Groq if it's registered and not disabled
+        self.fallback_provider_excluding(None)
+    }
+
+    /// Returns a fallback provider excluding the given primary provider id.
+    /// If `excluding` is `None`, no provider is excluded.
+    pub fn fallback_provider_excluding(
+        &self,
+        excluding: Option<&str>,
+    ) -> Option<&dyn AsrProvider> {
+        if let Some(exclude_id) = excluding {
+            // When Groq is excluded, look for other compatible providers
+            if exclude_id == "groq" {
+                for provider in self.providers.values() {
+                    let id = provider.id();
+                    if self.disabled.contains(id) || id == exclude_id {
+                        continue;
+                    }
+                    if provider.capabilities().fallback_compatible {
+                        return Some(provider.as_ref());
+                    }
+                }
+                return None;
+            }
+
+            // When a non-Groq provider is excluded, try Groq first
+            if let Some(provider) = self.providers.get("groq") {
+                if !self.disabled.contains("groq") {
+                    return Some(provider.as_ref());
+                }
+            }
+
+            // Fall back to any compatible provider that isn't the excluded one
+            for provider in self.providers.values() {
+                let id = provider.id();
+                if self.disabled.contains(id) || id == exclude_id {
+                    continue;
+                }
+                if provider.capabilities().fallback_compatible {
+                    return Some(provider.as_ref());
+                }
+            }
+            return None;
+        }
+
+        // No exclusion, try Groq first
         if let Some(provider) = self.providers.get("groq") {
             if !self.disabled.contains("groq") {
                 return Some(provider.as_ref());
