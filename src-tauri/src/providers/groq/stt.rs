@@ -38,6 +38,7 @@ impl AttemptError {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct GroqTranscriptionClient {
     http_client: reqwest::Client,
     base_url: String,

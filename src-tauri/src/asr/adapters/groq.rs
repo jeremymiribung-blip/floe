@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use reqwest::StatusCode;
 
 use crate::asr::error::SessionError;
 use crate::asr::traits::{AsrProvider, AsrSession, TranscriptionError, TranscriptionErrorCode};
@@ -10,23 +9,23 @@ use crate::asr::types::{
     AudioChunk, BackendType, Deployment, HealthStatus, ModelSpec, ProviderCapabilities,
     SessionConfig, StreamingSupport, TranscriptResult, AsrDiagnostics,
 };
-
-const GROQ_BASE_URL: &str = "https://api.groq.com";
-const TRANSCRIPTIONS_PATH: &str = "/openai/v1/audio/transcriptions";
-const STT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
+use crate::providers::groq::stt::GroqTranscriptionClient;
+use crate::providers::groq::{GroqTranscriptionError, GroqTranscriptionErrorCode, GROQ_STT_MODEL};
 
 #[derive(Debug)]
 pub struct GroqAdapter {
     http_client: reqwest::Client,
     api_key: String,
+    client: GroqTranscriptionClient,
 }
 
 impl GroqAdapter {
     pub fn new(http_client: reqwest::Client, api_key: String) -> Self {
+        let client = GroqTranscriptionClient::new(http_client.clone());
         Self {
             http_client,
             api_key,
+            client,
         }
     }
 }
@@ -85,7 +84,7 @@ impl AsrProvider for GroqAdapter {
             ));
         }
         Ok(Box::new(GroqSession::new(
-            self.http_client.clone(),
+            self.client.clone(),
             self.api_key.clone(),
         )))
     }
@@ -115,16 +114,16 @@ impl AsrProvider for GroqAdapter {
 
 #[derive(Debug)]
 pub struct GroqSession {
-    http_client: reqwest::Client,
+    client: GroqTranscriptionClient,
     api_key: String,
     audio_data: Mutex<Vec<f32>>,
     sample_rate: AtomicU32,
 }
 
 impl GroqSession {
-    pub fn new(http_client: reqwest::Client, api_key: String) -> Self {
+    pub fn new(client: GroqTranscriptionClient, api_key: String) -> Self {
         Self {
-            http_client,
+            client,
             api_key,
             audio_data: Mutex::new(Vec::new()),
             sample_rate: AtomicU32::new(0),
@@ -175,163 +174,59 @@ impl AsrSession for GroqSession {
 
         let sample_rate = self.sample_rate.load(Ordering::SeqCst).max(16000);
         let wav_bytes = encode_f32_to_wav(&samples, sample_rate);
-
         let started = std::time::Instant::now();
 
-        let file_part = reqwest::multipart::Part::bytes(wav_bytes)
-            .file_name("recording.wav")
-            .mime_str("audio/wav")
-            .map_err(|_| {
-                TranscriptionError::new(
-                    TranscriptionErrorCode::Internal,
-                    "failed to create multipart payload",
-                    false,
-                )
-            })?;
-
-        let form = reqwest::multipart::Form::new()
-            .text("model", GROQ_STT_MODEL)
-            .text("temperature", "0")
-            .part("file", file_part);
-
-        let response = self
-            .http_client
-            .post(format!(
-                "{}{}",
-                GROQ_BASE_URL.trim_end_matches('/'),
-                TRANSCRIPTIONS_PATH
-            ))
-            .timeout(STT_REQUEST_TIMEOUT)
-            .bearer_auth(&self.api_key)
-            .multipart(form)
-            .send()
-            .await;
-
-        let transcription_ms = started.elapsed().as_millis() as u64;
-
-        match response {
-            Ok(resp) => {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-
-                if status.is_success() {
-                    #[derive(serde::Deserialize)]
-                    struct TranscriptionResponse {
-                        text: Option<String>,
-                    }
-
-                    let parsed: TranscriptionResponse =
-                        serde_json::from_str(&body).map_err(|_| {
-                            TranscriptionError::new(
-                                TranscriptionErrorCode::MalformedResponse,
-                                "Groq returned an unreadable response",
-                                false,
-                            )
-                        })?;
-
-                    let text = parsed.text.ok_or_else(|| {
-                        TranscriptionError::new(
-                            TranscriptionErrorCode::MalformedResponse,
-                            "Groq returned a response without text",
-                            false,
-                        )
-                    })?;
-
-                    Ok(TranscriptResult {
-                        text,
-                        model: GROQ_STT_MODEL.to_string(),
-                        diagnostics: AsrDiagnostics::new(
-                            "groq",
-                            GROQ_STT_MODEL,
-                            BackendType::Cloud,
-                            0,
-                            transcription_ms,
-                            "",
-                        ),
-                    })
-                } else {
-                    Err(classify_status_error(status, &body))
-                }
+        match self.client.transcribe_wav(&self.api_key, wav_bytes).await {
+            Ok(transcription) => {
+                let transcription_ms = started.elapsed().as_millis() as u64;
+                Ok(TranscriptResult {
+                    text: transcription.text,
+                    model: transcription.model,
+                    diagnostics: AsrDiagnostics::new(
+                        "groq",
+                        GROQ_STT_MODEL,
+                        BackendType::Cloud,
+                        0,
+                        transcription_ms,
+                        "",
+                    )
+                    .with_retry(transcription.retry_count),
+                })
             }
-            Err(e) => Err(classify_request_error(e)),
+            Err(err) => Err(TranscriptionError::from(err)),
         }
     }
 
     async fn cancel(self: Box<Self>) {}
 }
 
-fn classify_request_error(error: reqwest::Error) -> TranscriptionError {
-    if error.is_timeout() {
-        TranscriptionError::new(
-            TranscriptionErrorCode::Timeout,
-            "Groq transcription request timed out",
-            true,
-        )
-    } else {
-        TranscriptionError::new(
-            TranscriptionErrorCode::ApiUnreachable,
-            "Groq could not be reached",
-            true,
-        )
-    }
-}
-
-fn classify_status_error(status: StatusCode, body: &str) -> TranscriptionError {
-    match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => TranscriptionError::new(
-            TranscriptionErrorCode::InvalidAuth,
-            "Groq API key was rejected",
-            false,
-        ),
-        StatusCode::REQUEST_TIMEOUT => TranscriptionError::new(
-            TranscriptionErrorCode::Timeout,
-            "Groq transcription request timed out",
-            true,
-        ),
-        StatusCode::TOO_MANY_REQUESTS => TranscriptionError::new(
-            TranscriptionErrorCode::RateLimit,
-            "Groq rate limited the request",
-            true,
-        ),
-        StatusCode::BAD_REQUEST => {
-            if looks_like_unsupported_audio(body) {
-                TranscriptionError::new(
-                    TranscriptionErrorCode::UnsupportedAudio,
-                    "Groq could not transcribe the audio",
-                    false,
-                )
-            } else {
-                TranscriptionError::new(
-                    TranscriptionErrorCode::InvalidRequest,
-                    "Groq rejected the request",
-                    false,
-                )
+impl From<GroqTranscriptionError> for TranscriptionError {
+    fn from(err: GroqTranscriptionError) -> Self {
+        let code = match err.code {
+            GroqTranscriptionErrorCode::MissingApiKey
+            | GroqTranscriptionErrorCode::InvalidApiKey => TranscriptionErrorCode::InvalidAuth,
+            GroqTranscriptionErrorCode::RateLimit => TranscriptionErrorCode::RateLimit,
+            GroqTranscriptionErrorCode::Timeout => TranscriptionErrorCode::Timeout,
+            GroqTranscriptionErrorCode::ApiUnreachable => TranscriptionErrorCode::ApiUnreachable,
+            GroqTranscriptionErrorCode::MalformedResponse => {
+                TranscriptionErrorCode::MalformedResponse
             }
-        }
-        StatusCode::UNSUPPORTED_MEDIA_TYPE => TranscriptionError::new(
-            TranscriptionErrorCode::UnsupportedAudio,
-            "Groq could not transcribe the audio",
-            false,
-        ),
-        _ if status.is_server_error() => TranscriptionError::new(
-            TranscriptionErrorCode::ServerError,
-            "Groq server error",
-            true,
-        ),
-        _ => TranscriptionError::new(
-            TranscriptionErrorCode::InvalidRequest,
-            "Groq rejected the request",
-            false,
-        ),
+            GroqTranscriptionErrorCode::UnsupportedAudio => {
+                TranscriptionErrorCode::UnsupportedAudio
+            }
+            GroqTranscriptionErrorCode::InvalidRequest
+            | GroqTranscriptionErrorCode::EmptyAudio => TranscriptionErrorCode::InvalidRequest,
+            GroqTranscriptionErrorCode::ServerError => TranscriptionErrorCode::ServerError,
+        };
+        let retryable = matches!(
+            err.code,
+            GroqTranscriptionErrorCode::RateLimit
+                | GroqTranscriptionErrorCode::Timeout
+                | GroqTranscriptionErrorCode::ApiUnreachable
+                | GroqTranscriptionErrorCode::ServerError
+        );
+        TranscriptionError::new(code, err.message, retryable)
     }
-}
-
-fn looks_like_unsupported_audio(body: &str) -> bool {
-    let lower = body.to_ascii_lowercase();
-    lower.contains("unsupported")
-        || lower.contains("audio")
-        || lower.contains("file type")
-        || lower.contains("file format")
 }
 
 fn encode_f32_to_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
@@ -456,33 +351,73 @@ mod tests {
     }
 
     #[test]
-    fn classify_status_error_maps_correctly() {
-        let err = classify_status_error(StatusCode::UNAUTHORIZED, "");
+    fn transcription_error_from_groq_error_maps_correctly() {
+        use crate::providers::groq::GroqTranscriptionErrorCode;
+
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::InvalidApiKey,
+            "key rejected",
+        ));
         assert_eq!(err.code, TranscriptionErrorCode::InvalidAuth);
         assert!(!err.retryable);
 
-        let err = classify_status_error(StatusCode::TOO_MANY_REQUESTS, "");
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::RateLimit,
+            "rate limited",
+        ));
         assert_eq!(err.code, TranscriptionErrorCode::RateLimit);
         assert!(err.retryable);
 
-        let err = classify_status_error(StatusCode::INTERNAL_SERVER_ERROR, "");
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::ServerError,
+            "server error",
+        ));
         assert_eq!(err.code, TranscriptionErrorCode::ServerError);
         assert!(err.retryable);
 
-        let err = classify_status_error(StatusCode::BAD_REQUEST, "unsupported audio format");
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::MissingApiKey,
+            "missing key",
+        ));
+        assert_eq!(err.code, TranscriptionErrorCode::InvalidAuth);
+
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::UnsupportedAudio,
+            "unsupported",
+        ));
         assert_eq!(err.code, TranscriptionErrorCode::UnsupportedAudio);
         assert!(!err.retryable);
 
-        let err = classify_status_error(StatusCode::BAD_REQUEST, "invalid model");
-        assert_eq!(err.code, TranscriptionErrorCode::InvalidRequest);
-    }
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::Timeout,
+            "timeout",
+        ));
+        assert_eq!(err.code, TranscriptionErrorCode::Timeout);
+        assert!(err.retryable);
 
-    #[test]
-    fn looks_like_unsupported_audio_detects_patterns() {
-        assert!(looks_like_unsupported_audio("unsupported file format"));
-        assert!(looks_like_unsupported_audio("audio file not supported"));
-        assert!(looks_like_unsupported_audio("file type not accepted"));
-        assert!(!looks_like_unsupported_audio("invalid model name"));
-        assert!(!looks_like_unsupported_audio(""));
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::ApiUnreachable,
+            "unreachable",
+        ));
+        assert_eq!(err.code, TranscriptionErrorCode::ApiUnreachable);
+        assert!(err.retryable);
+
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::MalformedResponse,
+            "malformed",
+        ));
+        assert_eq!(err.code, TranscriptionErrorCode::MalformedResponse);
+
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::InvalidRequest,
+            "invalid",
+        ));
+        assert_eq!(err.code, TranscriptionErrorCode::InvalidRequest);
+
+        let err = TranscriptionError::from(GroqTranscriptionError::new(
+            GroqTranscriptionErrorCode::EmptyAudio,
+            "empty",
+        ));
+        assert_eq!(err.code, TranscriptionErrorCode::InvalidRequest);
     }
 }
