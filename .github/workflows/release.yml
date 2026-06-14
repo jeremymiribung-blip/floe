@@ -18,9 +18,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-windows-nsis:
-    name: Build Windows NSIS installer
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis,msi
+            name: Windows
+          - os: ubuntu-latest
+            bundles: deb,appimage,rpm
+            name: Linux
+          - os: macos-latest
+            bundles: dmg
+            name: macOS
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,6 +57,18 @@ jobs:
         with:
           workspaces: src-tauri -> target
 
+      - name: Install Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libasound2-dev \
+            libdbus-1-dev \
+            rpm
+
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
@@ -59,18 +83,47 @@ jobs:
           cargo test --manifest-path src-tauri/Cargo.toml
 
       - name: Warn if signing secrets are missing
-        if: ${{ ! secrets.WINDOWS_CERTIFICATE || ! secrets.WINDOWS_CERTIFICATE_PASSWORD || ! secrets.TAURI_SIGNING_PRIVATE_KEY || ! secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          Write-Host "::warning::One or more signing secrets are missing. Building an UNSIGNED installer. Set WINDOWS_CERTIFICATE, WINDOWS_CERTIFICATE_PASSWORD, TAURI_SIGNING_PRIVATE_KEY, and TAURI_SIGNING_PRIVATE_KEY_PASSWORD as repository secrets to enable code signing."
+          echo "::warning::Code signing secrets are not fully configured. Building UNSIGNED bundle."
 
-      - name: Build and publish Windows NSIS installer
-        uses: tauri-apps/tauri-action@v0
+      - name: Build Tauri app
+        run: pnpm tauri build --bundles ${{ matrix.bundles }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          find src-tauri/target/release/bundle -type f \( \
+            -name "*.exe" -o -name "*.msi" -o -name "*.dmg" -o \
+            -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \
+          \) -exec cp {} artifacts/ \;
+
+      - uses: actions/upload-artifact@v4
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Floe ${{ github.ref_name }}"
-          releaseBody: "Automated Windows NSIS build for ${{ github.ref_name }}. See CHANGELOG.md for changes."
-          releaseDraft: true
-          prerelease: false
-          args: --bundles nsis
+          name: floe-${{ matrix.name }}
+          path: artifacts/
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Floe ${{ github.ref_name }}
+          body: "See CHANGELOG.md for changes."
+          draft: true
+          files: |
+            floe-*/*

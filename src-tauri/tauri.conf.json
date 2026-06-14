@@ -44,7 +44,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "dmg", "deb", "appimage"],
+    "targets": ["nsis", "msi", "dmg", "deb", "appimage", "rpm"],
     "publisher": "Floe Contributors",
     "category": "Productivity",
     "shortDescription": "Push-to-talk transcription with Groq",
