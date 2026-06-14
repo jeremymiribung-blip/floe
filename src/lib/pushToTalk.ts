@@ -63,7 +63,9 @@ export class PushToTalkController {
   }
 
   async handleShortcutState(state: ShortcutState): Promise<void> {
-    diagLog(`[FE] handleShortcutState: ${state} hotkeyDown=${this.hotkeyDown} recording=${this.recording} startInFlight=${this.startInFlight} finishing=${this.finishing} releaseAfterStart=${this.releaseAfterStart}`);
+    diagLog(
+      `[FE] handleShortcutState: ${state} hotkeyDown=${this.hotkeyDown} recording=${this.recording} startInFlight=${this.startInFlight} finishing=${this.finishing} releaseAfterStart=${this.releaseAfterStart}`,
+    );
     if (state === "Pressed") {
       await this.handlePressed();
       return;
@@ -87,7 +89,9 @@ export class PushToTalkController {
   }
 
   private async handleReleased(): Promise<void> {
-    diagLog(`[FE] handleReleased: hotkeyDown=${this.hotkeyDown} startInFlight=${this.startInFlight} recording=${this.recording} finishing=${this.finishing}`);
+    diagLog(
+      `[FE] handleReleased: hotkeyDown=${this.hotkeyDown} startInFlight=${this.startInFlight} recording=${this.recording} finishing=${this.finishing}`,
+    );
     this.hotkeyDown = false;
 
     if (this.startInFlight) {
@@ -97,7 +101,9 @@ export class PushToTalkController {
     }
 
     if (!this.recording || this.finishing) {
-      diagLog(`[FE] handleReleased: early return - recording=${this.recording} finishing=${this.finishing}`);
+      diagLog(
+        `[FE] handleReleased: early return - recording=${this.recording} finishing=${this.finishing}`,
+      );
       return;
     }
 
@@ -129,7 +135,9 @@ export class PushToTalkController {
 
     const shouldFinishAfterStart = this.releaseAfterStart;
     this.releaseAfterStart = false;
-    diagLog(`[FE] startRecording done: shouldFinishAfterStart=${shouldFinishAfterStart} recording=${this.recording} finishing=${this.finishing}`);
+    diagLog(
+      `[FE] startRecording done: shouldFinishAfterStart=${shouldFinishAfterStart} recording=${this.recording} finishing=${this.finishing}`,
+    );
 
     if (shouldFinishAfterStart && this.recording && !this.finishing) {
       await this.finishRecording();

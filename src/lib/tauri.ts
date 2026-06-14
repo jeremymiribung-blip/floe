@@ -60,10 +60,7 @@ function recordingError(
   return { code, message };
 }
 
-function transcriptionError(
-  code: SttError["code"],
-  message: string,
-): SttError {
+function transcriptionError(code: SttError["code"], message: string): SttError {
   return { code, message };
 }
 

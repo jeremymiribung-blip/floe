@@ -74,8 +74,7 @@ export default function App() {
   const [latestDiagnosticsJson, setLatestDiagnosticsJson] = useState<
     string | null
   >(null);
-  const [showHotkeyStepAfterSave, setShowHotkeyStepAfterSave] =
-    useState(false);
+  const [showHotkeyStepAfterSave, setShowHotkeyStepAfterSave] = useState(false);
   const controllerRef = useRef<PushToTalkController | null>(null);
 
   if (controllerRef.current === null) {

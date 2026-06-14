@@ -39,7 +39,9 @@ describe("computeSetupState", () => {
 
   it("routes to the API key step when the key is missing", () => {
     expect(computeSetupState(apiKeyMissing, null)).toBe("setup_api_key");
-    expect(computeSetupState(apiKeyMissing, hotkeyRegistered)).toBe("setup_api_key");
+    expect(computeSetupState(apiKeyMissing, hotkeyRegistered)).toBe(
+      "setup_api_key",
+    );
   });
 
   it("routes to the Hotkey step when the key is set but the hotkey is unknown or unregistered", () => {
@@ -54,7 +56,9 @@ describe("computeSetupState", () => {
   });
 
   it("returns to the API key step after the key is cleared", () => {
-    expect(computeSetupState(apiKeyMissing, hotkeyRegistered)).toBe("setup_api_key");
+    expect(computeSetupState(apiKeyMissing, hotkeyRegistered)).toBe(
+      "setup_api_key",
+    );
   });
 
   it("returns to the Hotkey step if the hotkey becomes invalid", () => {

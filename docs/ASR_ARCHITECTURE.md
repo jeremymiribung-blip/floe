@@ -12,6 +12,7 @@ Floe implements a **provider-agnostic ASR (Automatic Speech Recognition) archite
 ## Core Principles
 
 From AGENTS.md:
+
 > - Respect the STT rule: one Groq STT request after recording stops.
 > - Do not add streaming, chunking, transcript merging, or realtime partials.
 > - Floe uses Groq for STT.
@@ -78,10 +79,10 @@ pub trait AsrProvider: Send + Sync + std::fmt::Debug {
     fn capabilities(&self) -> ProviderCapabilities;
     fn default_model(&self) -> &'static str;
     fn available_models(&self) -> &[ModelSpec];
-    
-    async fn create_session(&self, config: SessionConfig) 
+
+    async fn create_session(&self, config: SessionConfig)
         -> Result<Box<dyn AsrSession>, SessionError>;
-    
+
     async fn health_check(&self) -> Result<HealthStatus, ()>;
 }
 ```
@@ -122,6 +123,7 @@ pub struct ProviderCapabilities {
 - **Streaming Support**: Full
 
 **Behavior**:
+
 - Uses Groq's OpenAI-compatible API endpoint
 - Sends 16 kHz mono 16-bit PCM WAV audio
 - Single request after recording stops (per AGENTS.md rule)
@@ -141,6 +143,7 @@ pub struct ProviderCapabilities {
 - **Streaming Support**: Full
 
 **Behavior**:
+
 - Uses Kaldi-based models in ONNX format
 - Models must be downloaded and placed in standard locations
 - Supports multiple model sizes and languages
@@ -157,6 +160,7 @@ pub struct ProviderCapabilities {
 - **GPU Required**: Depends on model
 
 **Models Available**:
+
 - `tiny` (39M params, no GPU)
 - `base` (74M params, no GPU) - **Default**
 - `small` (244M params, no GPU)
@@ -245,13 +249,15 @@ pub struct ResourcePolicy {
 ### Policy Enforcement
 
 Audio is validated before transcription:
+
 - Duration must be ≤ `max_audio_duration_secs`
 - Size must be ≤ `max_audio_bytes`
 - Violations return `AsrErrorCode::AudioTooLong` or `AsrErrorCode::AudioTooLarge`
 
 ## Streaming Architecture
 
-**Key Principle from AGENTS.md**: 
+**Key Principle from AGENTS.md**:
+
 > Streaming is active internally in the background. Only final transcript continues to cleanup/paste.
 
 ### Internal Streaming (Runtime Layer)
@@ -264,6 +270,7 @@ The `asr::runtime` module provides:
 - **Backpressure**: Flow control when runtime is busy
 
 **Important**: Despite internal streaming, from the user's perspective:
+
 - One STT request after recording stops
 - Only final transcript is used
 - No partial results shown to user
@@ -280,6 +287,7 @@ The runtime layer (`asr::runtime::supervisor`) manages:
 - **Auto-Restart**: Configurable automatic recovery (default: disabled)
 
 **Process States**:
+
 ```rust
 pub enum ProcessState {
     Stopped,      // Not running
@@ -325,6 +333,7 @@ pub struct AsrDiagnostics {
 ### Privacy Rules
 
 **NEVER LOGGED**:
+
 - Raw transcript text
 - Raw audio data
 - Full API keys
@@ -333,6 +342,7 @@ pub struct AsrDiagnostics {
 - HTTP request/response bodies
 
 **ALWAYS SANITIZED**:
+
 - Error codes (removes secrets, normalizes characters)
 - Any user-provided strings in diagnostics
 
@@ -354,6 +364,7 @@ The `commands::diag::DiagLog` provides privacy-safe logging:
 - **Optional Path**: Only writes if path is configured
 
 **Example Log Entry**:
+
 ```
 [08:30:45.123] provider_name=groq,model_name=whisper-large-v3-turbo,backend_type=cloud,audio_duration_ms=5000,transcription_ms=1200,cleanup_ms=300,realtime_factor=0.240,retry_count=0,fallback_used=false,error_code=timeout_error
 ```
@@ -372,6 +383,7 @@ pub struct ModelManager {
 ```
 
 **Features**:
+
 - Register models for each provider
 - Get default model for provider
 - Find specific model
@@ -421,6 +433,7 @@ let _ = registry.register(Box::new(asr::adapters::groq::GroqAdapter::new(
 ```
 
 **Requirements**:
+
 - Valid Groq API key in OS keychain (`groq-api-key`)
 - Internet connectivity to Groq API
 
@@ -439,6 +452,7 @@ if asr::adapters::vosk::is_vosk_enabled() {
 **Enable**: Set `FLOE_VOSK_ENABLED=true` environment variable OR have models installed.
 
 **Requirements**:
+
 - Vosk ONNX models downloaded and in path
 - No API key required (local inference)
 
@@ -457,6 +471,7 @@ if asr::adapters::whisper_local::is_local_whisper_enabled() {
 **Enable**: Set `FLOE_WHISPER_ENABLED=true` environment variable OR have models installed.
 
 **Requirements**:
+
 - Whisper ONNX models downloaded and in path
 - No API key required (local inference)
 - GPU required for larger models
@@ -474,6 +489,7 @@ registry.mark_disabled("groq");  // Disable Groq
 ### Via Settings
 
 Providers can be disabled through the `SettingsManager`:
+
 - Disabled providers are persisted in settings
 - Re-enabled through settings UI or API
 
@@ -598,6 +614,7 @@ The Floe ASR architecture is **provider-neutral by design**:
 6. Resource limits prevent abuse
 
 The architecture supports the AGENTS.md constraints:
+
 - One Groq STT request after recording stops ✅
 - No streaming/chunking/partials exposed to UI ✅
 - Groq fallback always available ✅

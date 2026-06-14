@@ -30,26 +30,26 @@ This audit examined the Floe ASR architecture to ensure it meets the AGENTS.md c
 
 ### Test Files (NEW)
 
-| File | Purpose | Tests Added |
-|------|---------|-------------|
-| `src-tauri/src/asr/tests/mod.rs` | Test module entry point | - |
-| `src-tauri/src/asr/tests/provider_selection.rs` | Provider selection logic | 14 tests |
-| `src-tauri/src/asr/tests/adapter_tests.rs` | Individual adapter implementations | 14 tests |
-| `src-tauri/src/asr/tests/fallback_tests.rs` | Fallback behavior | 11 tests |
-| `src-tauri/src/asr/tests/runtime_tests.rs` | Runtime lifecycle | 12 tests |
-| `src-tauri/src/asr/tests/policy_tests.rs` | Resource policy enforcement | 12 tests |
-| `src-tauri/src/asr/tests/diagnostics_tests.rs` | Diagnostics and metadata | 11 tests |
-| `src-tauri/src/asr/tests/privacy_tests.rs` | Privacy and security | 13 tests |
-| **Total** | | **87 new tests** |
+| File                                            | Purpose                            | Tests Added      |
+| ----------------------------------------------- | ---------------------------------- | ---------------- |
+| `src-tauri/src/asr/tests/mod.rs`                | Test module entry point            | -                |
+| `src-tauri/src/asr/tests/provider_selection.rs` | Provider selection logic           | 14 tests         |
+| `src-tauri/src/asr/tests/adapter_tests.rs`      | Individual adapter implementations | 14 tests         |
+| `src-tauri/src/asr/tests/fallback_tests.rs`     | Fallback behavior                  | 11 tests         |
+| `src-tauri/src/asr/tests/runtime_tests.rs`      | Runtime lifecycle                  | 12 tests         |
+| `src-tauri/src/asr/tests/policy_tests.rs`       | Resource policy enforcement        | 12 tests         |
+| `src-tauri/src/asr/tests/diagnostics_tests.rs`  | Diagnostics and metadata           | 11 tests         |
+| `src-tauri/src/asr/tests/privacy_tests.rs`      | Privacy and security               | 13 tests         |
+| **Total**                                       |                                    | **87 new tests** |
 
 ### Modified Files
 
-| File | Change |
-|------|--------|
-| `src-tauri/src/asr/mod.rs` | Added `#[cfg(test)] pub mod tests;` |
-| `src/App.tsx` | Renamed `handleSaveGroq` → `handleSaveApiKey`, `handleClearGroq` → `handleClearApiKey` |
-| `src/lib/setupState.ts` | Renamed `showHotkeyStepAfterGroqSave` → `showHotkeyStepAfterApiKeySave` |
-| `docs/ASR_ARCHITECTURE.md` | **NEW** - Complete architecture documentation |
+| File                       | Change                                                                                 |
+| -------------------------- | -------------------------------------------------------------------------------------- |
+| `src-tauri/src/asr/mod.rs` | Added `#[cfg(test)] pub mod tests;`                                                    |
+| `src/App.tsx`              | Renamed `handleSaveGroq` → `handleSaveApiKey`, `handleClearGroq` → `handleClearApiKey` |
+| `src/lib/setupState.ts`    | Renamed `showHotkeyStepAfterGroqSave` → `showHotkeyStepAfterApiKeySave`                |
+| `docs/ASR_ARCHITECTURE.md` | **NEW** - Complete architecture documentation                                          |
 
 ---
 
@@ -88,7 +88,7 @@ This audit examined the Floe ASR architecture to ensure it meets the AGENTS.md c
 
 ### ❌ Issues Found and Fixed
 
-1. **Provider-Specific UI Naming**: 
+1. **Provider-Specific UI Naming**:
    - ✅ **FIXED**: `handleSaveGroq` → `handleSaveApiKey`
    - ✅ **FIXED**: `handleClearGroq` → `handleClearApiKey`
    - ✅ **FIXED**: `showHotkeyStepAfterGroqSave` → `showHotkeyStepAfterApiKeySave`
@@ -154,21 +154,22 @@ Complete architecture documentation covering:
 
 ### Test Categories and Counts
 
-| Category | Tests | File |
-|----------|-------|------|
-| Provider Selection | 14 | `asr/tests/provider_selection.rs` |
-| Adapter Tests | 14 | `asr/tests/adapter_tests.rs` |
-| Fallback Tests | 11 | `asr/tests/fallback_tests.rs` |
-| Runtime Tests | 12 | `asr/tests/runtime_tests.rs` |
-| Policy Tests | 12 | `asr/tests/policy_tests.rs` |
-| Diagnostics Tests | 11 | `asr/tests/diagnostics_tests.rs` |
-| Privacy Tests | 13 | `asr/tests/privacy_tests.rs` |
-| **Existing Tests** | ~50+ | Various files |
-| **TOTAL** | **~187+** | |
+| Category           | Tests     | File                              |
+| ------------------ | --------- | --------------------------------- |
+| Provider Selection | 14        | `asr/tests/provider_selection.rs` |
+| Adapter Tests      | 14        | `asr/tests/adapter_tests.rs`      |
+| Fallback Tests     | 11        | `asr/tests/fallback_tests.rs`     |
+| Runtime Tests      | 12        | `asr/tests/runtime_tests.rs`      |
+| Policy Tests       | 12        | `asr/tests/policy_tests.rs`       |
+| Diagnostics Tests  | 11        | `asr/tests/diagnostics_tests.rs`  |
+| Privacy Tests      | 13        | `asr/tests/privacy_tests.rs`      |
+| **Existing Tests** | ~50+      | Various files                     |
+| **TOTAL**          | **~187+** |                                   |
 
 ### Test Areas Covered
 
 #### ✅ Generic Provider Selection
+
 - Default provider selection
 - Preferred provider selection
 - Criteria-based selection (local, streaming, fallback-compatible)
@@ -177,11 +178,13 @@ Complete architecture documentation covering:
 - Experimental provider flag
 
 #### ✅ Feature Flag Disabled Path
+
 - Vosk disabled when feature flag off
 - Whisper Local disabled when feature flag off
 - Local model loading disabled when policy prohibits
 
 #### ✅ First Adapter (Groq)
+
 - Identity checks (id, name)
 - Capabilities verification (Cloud, fallback-compatible)
 - Default model (whisper-large-v3-turbo)
@@ -189,6 +192,7 @@ Complete architecture documentation covering:
 - Empty API key handling
 
 #### ✅ Second Adapter (Vosk)
+
 - Identity checks
 - Capabilities verification (ONNX, Local)
 - Default model (vosk-model-en-us-0.22)
@@ -196,6 +200,7 @@ Complete architecture documentation covering:
 - Multilingual model support
 
 #### ✅ Fallback to Groq
+
 - Non-retryable error triggers fallback
 - Retryable error retries then falls back
 - No fallback returns error
@@ -205,6 +210,7 @@ Complete architecture documentation covering:
 - Deterministic fallback order (Groq preferred)
 
 #### ✅ Runtime Start/Ready/Heartbeat/Timeout/Crash
+
 - Process state transitions (Stopped → Running → Crashed → Error)
 - Heartbeat tracking and timing
 - Crash counting and reset
@@ -213,6 +219,7 @@ Complete architecture documentation covering:
 - Supervisor building
 
 #### ✅ Diagnostics Privacy
+
 - DiagEntry contains only safe fields
 - No transcript in diagnostics
 - No audio in diagnostics
@@ -221,32 +228,39 @@ Complete architecture documentation covering:
 - Chained diagnostics modifications
 
 #### ✅ No Transcript Logging
+
 - Type-level enforcement (DiagEntry has no text field)
 - Log string verification (no text= in output)
 - File logging verification
 
 #### ✅ No Audio Logging
+
 - Type-level enforcement (DiagEntry has no audio field)
 - Log string verification (no audio= in output)
 
 #### ✅ No Clipboard Leakage
+
 - No clipboard fields in any diagnostics struct
 - No clipboard logging in DiagEntry
 - Privacy tests verify absence
 
 #### ✅ No Bubble Regressions
+
 - N/A (bubble is UI layer, not ASR core)
 
 #### ✅ No Recording Regressions
+
 - N/A (recording is separate layer)
 
 #### ✅ Model Loading and Cache Behavior
+
 - Model path resolution
 - Model validation
 - Model caching
 - Resource policy enforcement for model loading
 
 #### ✅ Resource Policy Enforcement
+
 - Audio duration validation
 - Audio size validation
 - Policy configuration
@@ -329,38 +343,38 @@ The architecture is sound, well-tested, and follows the AGENTS.md constraints. T
 
 ## 8. Compliance with AGENTS.md
 
-| AGENTS.md Rule | Status | Notes |
-|---------------|--------|-------|
-| One Groq STT request after recording stops | ✅ | Implemented in Groq adapter |
-| No streaming to UI | ✅ | Streaming is internal only |
-| No chunking exposed | ✅ | Chunking is internal |
-| No transcript merging | ✅ | Only final transcript used |
-| No realtime partials | ✅ | Partials are internal only |
-| Groq for STT | ✅ | Primary provider |
-| Whisper Large v3 Turbo | ✅ | Default Groq model |
-| Groq for cleanup | ✅ | Cleanup uses Groq |
-| Llama 3.3 70B Versatile | ✅ | Cleanup model |
-| 16 kHz mono 16-bit PCM WAV | ✅ | Audio format |
-| Same Groq API key for STT and cleanup | ✅ | Shared HTTP client |
-| API key in OS keychain (`groq-api-key`) | ✅ | Keyring storage |
-| Audio never sent for cleanup | ✅ | Only text sent |
-| Cleanup fallback to raw transcript | ✅ | With warning |
-| Audio in memory only by default | ✅ | Not persisted |
-| Secrets and non-secrets separate | ✅ | Settings separation |
-| Configurable push-to-talk hotkey | ✅ | Hotkey management |
-| Start at login optional | ✅ | Autostart plugin |
-| No background startup actions | ✅ | No Groq/mic/paste on startup |
-| Single app instance | ✅ | Tauri single-instance plugin |
-| Setup state gating | ✅ | `setupState` logic |
-| No cleanup modes shown | ✅ | Simple cleanup only |
-| No behavior settings shown | ✅ | No behavior UI |
-| No provider labels shown | ✅ | Generic UI (now fixed) |
-| No raw transcripts logged | ✅ | Type-level enforcement |
-| No raw audio logged | ✅ | Type-level enforcement |
-| No full API keys logged | ✅ | Sanitization |
-| No auth headers logged | ✅ | Sanitization |
-| Prefer small modules | ✅ | Modular design |
-| Focused tests | ✅ | Comprehensive test coverage |
+| AGENTS.md Rule                             | Status | Notes                        |
+| ------------------------------------------ | ------ | ---------------------------- |
+| One Groq STT request after recording stops | ✅     | Implemented in Groq adapter  |
+| No streaming to UI                         | ✅     | Streaming is internal only   |
+| No chunking exposed                        | ✅     | Chunking is internal         |
+| No transcript merging                      | ✅     | Only final transcript used   |
+| No realtime partials                       | ✅     | Partials are internal only   |
+| Groq for STT                               | ✅     | Primary provider             |
+| Whisper Large v3 Turbo                     | ✅     | Default Groq model           |
+| Groq for cleanup                           | ✅     | Cleanup uses Groq            |
+| Llama 3.3 70B Versatile                    | ✅     | Cleanup model                |
+| 16 kHz mono 16-bit PCM WAV                 | ✅     | Audio format                 |
+| Same Groq API key for STT and cleanup      | ✅     | Shared HTTP client           |
+| API key in OS keychain (`groq-api-key`)    | ✅     | Keyring storage              |
+| Audio never sent for cleanup               | ✅     | Only text sent               |
+| Cleanup fallback to raw transcript         | ✅     | With warning                 |
+| Audio in memory only by default            | ✅     | Not persisted                |
+| Secrets and non-secrets separate           | ✅     | Settings separation          |
+| Configurable push-to-talk hotkey           | ✅     | Hotkey management            |
+| Start at login optional                    | ✅     | Autostart plugin             |
+| No background startup actions              | ✅     | No Groq/mic/paste on startup |
+| Single app instance                        | ✅     | Tauri single-instance plugin |
+| Setup state gating                         | ✅     | `setupState` logic           |
+| No cleanup modes shown                     | ✅     | Simple cleanup only          |
+| No behavior settings shown                 | ✅     | No behavior UI               |
+| No provider labels shown                   | ✅     | Generic UI (now fixed)       |
+| No raw transcripts logged                  | ✅     | Type-level enforcement       |
+| No raw audio logged                        | ✅     | Type-level enforcement       |
+| No full API keys logged                    | ✅     | Sanitization                 |
+| No auth headers logged                     | ✅     | Sanitization                 |
+| Prefer small modules                       | ✅     | Modular design               |
+| Focused tests                              | ✅     | Comprehensive test coverage  |
 
 **Result**: ✅ **FULLY COMPLIANT** with all AGENTS.md constraints.
 
@@ -369,6 +383,7 @@ The architecture is sound, well-tested, and follows the AGENTS.md constraints. T
 ## 9. Files to Review
 
 ### New Files (Should be Added)
+
 ```
 NEW: docs/ASR_ARCHITECTURE.md
 NEW: src-tauri/src/asr/tests/mod.rs
@@ -382,6 +397,7 @@ NEW: src-tauri/src/asr/tests/privacy_tests.rs
 ```
 
 ### Modified Files (Should be Committed)
+
 ```
 MODIFIED: src-tauri/src/asr/mod.rs
 MODIFIED: src/App.tsx
@@ -389,6 +405,7 @@ MODIFIED: src/lib/setupState.ts
 ```
 
 ### Already Deleted (Confirmed)
+
 ```
 DELETED: docs/nemotron-streaming-benchmark.md
 DELETED: src-tauri/src/asr/mock_sidecar.rs
@@ -407,17 +424,20 @@ DELETED: tools/nemotron_sidecar/requirements.txt
 ## 10. Recommendations
 
 ### Immediate (Required)
+
 1. ✅ **DONE**: Add comprehensive tests
 2. ✅ **DONE**: Clean up provider-specific UI naming
 3. ✅ **DONE**: Document architecture
 4. ✅ **DONE**: Remove experiment leftovers
 
 ### Short-term (Optional)
+
 1. Run `cargo test` to verify all new tests pass
 2. Update CHANGELOG.md with architecture hardening notes
 3. Consider adding integration tests for full transcription flow
 
 ### Long-term (Future)
+
 1. Consider runtime process integration for true background streaming
 2. Consider additional local providers (if needed)
 3. Consider model download management (if local models become common)
@@ -439,5 +459,5 @@ The Floe ASR architecture has been **successfully hardened**:
 
 ---
 
-*Generated: 2026-06-10*  
-*Task: Harden the provider-agnostic ASR architecture with tests and implementation audit*
+_Generated: 2026-06-10_  
+_Task: Harden the provider-agnostic ASR architecture with tests and implementation audit_
