@@ -30,8 +30,6 @@ pub use self::{
     },
 };
 
-use self::types::{DEFAULT_WATCHDOG_GRACE_SECONDS, OUTPUT_CHANNELS};
-
 type SharedLevelEmitter = Arc<Mutex<LevelEmitterFn>>;
 type LevelEmitterFn = Box<dyn Fn(f32) + Send + Sync>;
 
@@ -68,7 +66,7 @@ struct ActiveRecording {
     meter: Arc<LevelMeter>,
 }
 
-struct CompletedRecording {
+pub(super) struct CompletedRecording {
     info: RecordingInfo,
     wav_bytes: Vec<u8>,
 }
@@ -583,7 +581,7 @@ mod tests {
         input::{RecordingInput, RecordingStream, StartedRecording},
         types::{
             MAX_RECORDING_DURATION_SECONDS, RecordingEndReason, ShutdownRecordingResult,
-            TARGET_WAV_SAMPLE_RATE, WAV_HEADER_LEN,
+            WAV_HEADER_LEN,
         },
         wav::read_u32_le,
         RecordingManager,

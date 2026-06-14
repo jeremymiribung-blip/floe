@@ -212,11 +212,10 @@ pub fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        encode_pcm16_wav, encode_recording_wav, float_to_pcm16, read_u16_le, read_u32_le,
-        resample_mono_linear, RecordingErrorCode, WAV_HEADER_LEN,
-    };
-    use crate::recording::types::TARGET_WAV_SAMPLE_RATE;
+use super::{
+    encode_pcm16_wav, encode_recording_wav, float_to_pcm16, read_u16_le, read_u32_le,
+    resample_mono_linear, RecordingErrorCode, TARGET_WAV_SAMPLE_RATE, WAV_HEADER_LEN,
+};
 
     #[test]
     fn wav_header_matches_pcm16_mono_recording() {

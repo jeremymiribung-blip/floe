@@ -133,17 +133,17 @@ impl RecordingBuffer {
     }
 
     #[cfg(test)]
-    pub fn into_completed(
+    pub(super) fn into_completed(
         mut self,
         default_reason: RecordingEndReason,
-    ) -> Result<(super::CompletedRecording), RecordingError> {
+    ) -> Result<super::CompletedRecording, RecordingError> {
         self.snapshot_completed(default_reason)
     }
 
-    pub fn snapshot_completed(
+    pub(super) fn snapshot_completed(
         &mut self,
         default_reason: RecordingEndReason,
-    ) -> Result<(super::CompletedRecording), RecordingError> {
+    ) -> Result<super::CompletedRecording, RecordingError> {
         if self.samples.is_empty() {
             return Err(recording_error(
                 RecordingErrorCode::EmptyRecording,
