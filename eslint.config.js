@@ -6,7 +6,7 @@ import tsParser from "@typescript-eslint/parser";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", "src-tauri/**"],
+    ignores: ["dist/**", "node_modules/**", "src-tauri/**", ".venv-nemotron/**"],
   },
   js.configs.recommended,
   {
