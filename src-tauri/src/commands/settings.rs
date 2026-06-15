@@ -17,9 +17,7 @@ pub fn save_api_key(
 }
 
 #[tauri::command]
-pub fn clear_api_key(
-    manager: State<'_, SettingsManager>,
-) -> Result<ApiKeyStatus, SettingsError> {
+pub fn clear_api_key(manager: State<'_, SettingsManager>) -> Result<ApiKeyStatus, SettingsError> {
     manager.clear_api_key()
 }
 

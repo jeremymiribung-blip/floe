@@ -1,13 +1,22 @@
+export type RecordingState = "idle" | "starting" | "recording" | "stopping";
+
 export type AppState =
   | "idle"
   | "ready"
+  | "starting"
   | "recording"
+  | "stopping"
   | "transcribing"
   | "cleaning"
   | "pasting"
   | "pasted"
   | "copied"
   | "error";
+
+export interface RecordingStatePayload {
+  state: RecordingState;
+  isRecording: boolean;
+}
 
 export interface AppStatus {
   appName: "Floe";
@@ -22,7 +31,6 @@ export interface ApiKeyStatus {
 
 export interface AppSettings {
   hotkey: HotkeySettings;
-  sttProvider: string;
 }
 
 export interface HotkeySettings {
@@ -39,6 +47,7 @@ export interface HotkeyStatus {
 }
 
 export interface HotkeyError {
+  domain: "hotkey";
   code:
     | "invalidHotkey"
     | "unsupportedHotkey"
@@ -55,6 +64,7 @@ export interface StartAtLoginStatus {
 }
 
 export interface StartAtLoginError {
+  domain: "startAtLogin";
   code: "enableFailed" | "disableFailed" | "unavailable";
   message: string;
 }
@@ -64,6 +74,7 @@ export interface GlobalHotkeyEvent {
 }
 
 export interface SettingsError {
+  domain: "settings";
   code:
     | "invalidGroqApiKey"
     | "invalidAppSettings"
@@ -97,9 +108,11 @@ export type RecordingErrorCode =
   | "wavEncodingFailed"
   | "stopFailed"
   | "watchdogTimeout"
+  | "appShuttingDown"
   | "internal";
 
 export interface RecordingError {
+  domain: "recording";
   code: RecordingErrorCode;
   message: string;
 }
@@ -134,6 +147,7 @@ export interface RecordingStatus {
   maxDurationSeconds: number;
   latestRecording: RecordingInfo | null;
   lastError: RecordingError | null;
+  traceId?: string;
 }
 
 export type SttErrorCode =
@@ -153,25 +167,15 @@ export interface SttResult {
   model: string;
   retryCount: number;
   rateLimit?: RateLimitMetadata;
-  sttProvider?: SttProviderDiagnostics;
 }
 
 export interface SttError {
+  domain: "stt";
   code: SttErrorCode;
   message: string;
   model?: string;
   retryCount?: number;
   rateLimit?: RateLimitMetadata;
-  sttProvider?: SttProviderDiagnostics;
-}
-
-export interface SttProviderDiagnostics {
-  providerName: string;
-  audioDurationMs: number;
-  transcriptionMs: number;
-  realtimeFactor: number;
-  fallbackUsed: boolean;
-  errorCode?: string;
 }
 
 export interface TranscriptCleanupResult {
@@ -195,7 +199,16 @@ export interface RateLimitMetadata {
 
 export type ClipboardErrorCode = "clipboardUnavailable" | "pasteUnavailable";
 
+export type FloeError =
+  | SettingsError
+  | HotkeyError
+  | RecordingError
+  | SttError
+  | ClipboardError
+  | StartAtLoginError;
+
 export interface ClipboardError {
+  domain: "clipboard";
   code: ClipboardErrorCode;
   message: string;
 }

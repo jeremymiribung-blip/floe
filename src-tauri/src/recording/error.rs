@@ -3,6 +3,7 @@ use serde::Serialize;
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RecordingError {
+    pub domain: &'static str,
     pub code: RecordingErrorCode,
     pub message: String,
 }
@@ -22,16 +23,19 @@ pub enum RecordingErrorCode {
     WavEncodingFailed,
     StopFailed,
     WatchdogTimeout,
+    AppShuttingDown,
     Internal,
 }
 
 pub fn recording_error(code: RecordingErrorCode, message: &'static str) -> RecordingError {
     RecordingError {
+        domain: "recording",
         code,
         message: message.to_string(),
     }
 }
 
+#[allow(dead_code)]
 pub fn internal_error() -> RecordingError {
     recording_error(
         RecordingErrorCode::Internal,
@@ -39,6 +43,7 @@ pub fn internal_error() -> RecordingError {
     )
 }
 
+#[allow(dead_code)]
 pub fn wav_encoding_error() -> RecordingError {
     recording_error(
         RecordingErrorCode::WavEncodingFailed,

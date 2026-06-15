@@ -125,7 +125,15 @@ impl FallbackStrategy {
             }
         }
 
-        Self::try_fallback(fallback, fallback_name, audio, audio_duration_ms, last_err, MAX_RETRY_ATTEMPTS as u32).await
+        Self::try_fallback(
+            fallback,
+            fallback_name,
+            audio,
+            audio_duration_ms,
+            last_err,
+            MAX_RETRY_ATTEMPTS as u32,
+        )
+        .await
     }
 
     async fn try_fallback(
@@ -202,8 +210,10 @@ fn decode_wav_to_f32(wav_bytes: &[u8]) -> Result<Vec<f32>, WavError> {
 
     while pos + 8 <= wav_bytes.len() && !(found_fmt && found_data) {
         let chunk_size = u32::from_le_bytes([
-            wav_bytes[pos + 4], wav_bytes[pos + 5],
-            wav_bytes[pos + 6], wav_bytes[pos + 7],
+            wav_bytes[pos + 4],
+            wav_bytes[pos + 5],
+            wav_bytes[pos + 6],
+            wav_bytes[pos + 7],
         ]) as usize;
 
         if pos + 8 + chunk_size > wav_bytes.len() {
@@ -229,7 +239,7 @@ fn decode_wav_to_f32(wav_bytes: &[u8]) -> Result<Vec<f32>, WavError> {
         }
 
         // Advance past 8-byte chunk header + padded payload
-        let padding = if chunk_size % 2 != 0 { 1 } else { 0 };
+        let padding = if !chunk_size.is_multiple_of(2) { 1 } else { 0 };
         pos += 8 + chunk_size + padding;
     }
 
@@ -389,9 +399,10 @@ mod tests {
             succeed: true,
             retryable: false,
         };
-        let result = FallbackStrategy::execute(&primary, Some(&fallback), build_mono_wav(&[0i16; 2]), 1000)
-            .await
-            .unwrap();
+        let result =
+            FallbackStrategy::execute(&primary, Some(&fallback), build_mono_wav(&[0i16; 2]), 1000)
+                .await
+                .unwrap();
         assert!(!result.diagnostics.fallback_used);
     }
 
@@ -407,9 +418,10 @@ mod tests {
             succeed: true,
             retryable: false,
         };
-        let result = FallbackStrategy::execute(&primary, Some(&fallback), build_mono_wav(&[0i16; 2]), 1000)
-            .await
-            .unwrap();
+        let result =
+            FallbackStrategy::execute(&primary, Some(&fallback), build_mono_wav(&[0i16; 2]), 1000)
+                .await
+                .unwrap();
         assert!(result.diagnostics.fallback_used);
         assert_eq!(
             result.diagnostics.fallback_provider.as_deref(),
@@ -442,9 +454,10 @@ mod tests {
             succeed: false,
             retryable: false,
         };
-        let err = FallbackStrategy::execute(&primary, Some(&fallback), build_mono_wav(&[0i16; 2]), 1000)
-            .await
-            .unwrap_err();
+        let err =
+            FallbackStrategy::execute(&primary, Some(&fallback), build_mono_wav(&[0i16; 2]), 1000)
+                .await
+                .unwrap_err();
         assert_eq!(err.code, crate::asr::error::AsrErrorCode::FallbackFailed);
     }
 
@@ -462,13 +475,13 @@ mod tests {
             succeed: true,
             retryable: false,
         };
-        
+
         // Use non-empty audio data
         let audio_data = build_mono_wav(&[100i16, -100i16]);
         let result = FallbackStrategy::execute(&primary, Some(&fallback), audio_data.clone(), 1000)
             .await
             .unwrap();
-        
+
         assert!(result.diagnostics.fallback_used);
         assert_eq!(result.text, "hello");
     }
@@ -486,12 +499,12 @@ mod tests {
             succeed: true,
             retryable: false,
         };
-        
+
         let audio_data = build_mono_wav(&[10i16, 20]);
         let result = FallbackStrategy::execute(&primary, Some(&fallback), audio_data.clone(), 1000)
             .await
             .unwrap();
-        
+
         // Should have retried and then fallen back
         assert!(result.diagnostics.fallback_used);
         assert_eq!(result.text, "hello");
@@ -511,15 +524,18 @@ mod tests {
             succeed: true,
             retryable: false,
         };
-        
+
         let audio_data = build_mono_wav(&[1i16]);
         let result = FallbackStrategy::execute(&primary, Some(&fallback), audio_data, 1000)
             .await
             .unwrap();
-        
+
         // Fallback should have been used
         assert!(result.diagnostics.fallback_used);
-        assert_eq!(result.diagnostics.fallback_provider.as_deref(), Some("fallback"));
+        assert_eq!(
+            result.diagnostics.fallback_provider.as_deref(),
+            Some("fallback")
+        );
     }
 
     // ========================================================================
@@ -564,7 +580,7 @@ mod tests {
         let bytes_per_sample = (bits_per_sample / 8) as u32;
         let block_align = channels as u32 * bytes_per_sample;
         let byte_rate = sample_rate * block_align;
-        let data_size = (left.len() as u32 * bytes_per_sample * channels as u32);
+        let data_size = left.len() as u32 * bytes_per_sample * channels as u32;
         let file_size = 36 + data_size;
 
         let mut wav = Vec::with_capacity(44 + data_size as usize);
@@ -702,13 +718,11 @@ mod tests {
         wav.extend_from_slice(&channels.to_le_bytes());
         wav.extend_from_slice(&sample_rate.to_le_bytes());
         wav.extend_from_slice(&(sample_rate * channels as u32).to_le_bytes());
-        wav.extend_from_slice(&(channels as u16).to_le_bytes());
+        wav.extend_from_slice(&channels.to_le_bytes());
         wav.extend_from_slice(&8u16.to_le_bytes()); // 8-bit — unsupported
         wav.extend_from_slice(b"data");
         wav.extend_from_slice(&data_size.to_le_bytes());
-        for _ in 0..4 {
-            wav.push(0);
-        }
+        wav.extend([0; 4]);
 
         assert!(decode_wav_to_f32(&wav).is_err());
     }
@@ -769,7 +783,7 @@ mod tests {
         wav.extend_from_slice(&junk_size.to_le_bytes());
         wav.extend_from_slice(b"hello");
         wav.push(0); // pad to even boundary
-        // fmt  chunk
+                     // fmt  chunk
         wav.extend_from_slice(b"fmt ");
         wav.extend_from_slice(&16u32.to_le_bytes());
         wav.extend_from_slice(&1u16.to_le_bytes());
@@ -812,5 +826,4 @@ mod tests {
         assert_eq!(decoded.len(), 100);
         assert!(decoded.iter().all(|&s| s == 0.0));
     }
-
 }

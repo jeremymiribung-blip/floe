@@ -1,308 +1,167 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("browser transcription fallback", () => {
+// Re-import after clearing state
+async function freshImports() {
+  return await import("./tauri");
+}
+
+describe("tauri runtime detection", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("detects Tauri runtime when __TAURI_INTERNALS__ is present", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", {});
+    const { isTauriRuntime } = await freshImports();
+    expect(isTauriRuntime()).toBe(true);
+  });
+
+  it("detects browser runtime when __TAURI_INTERNALS__ is absent", async () => {
+    vi.stubGlobal("__TAURI_INTERNALS__", undefined);
+    const { isTauriRuntime } = await freshImports();
+    expect(isTauriRuntime()).toBe(false);
+  });
+});
+
+describe("command rejection in browser mode", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(1_000);
+    vi.stubGlobal("__TAURI_INTERNALS__", undefined);
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.resetModules();
+  it("saveApiKey rejects in browser mode", async () => {
+    const { saveApiKey } = await freshImports();
+    await expect(saveApiKey("test-key")).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
   });
 
-  it("rejects transcription before a recording exists", async () => {
-    const { transcribeLatestRecording } = await import("./tauri");
-
-    await expect(transcribeLatestRecording()).rejects.toMatchObject({
-      code: "emptyAudio",
-    });
+  it("clearApiKey rejects in browser mode", async () => {
+    const { clearApiKey } = await freshImports();
+    await expect(clearApiKey()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
   });
 
-  it("returns a manual-flow mock transcript after recording stops", async () => {
-    const { startRecording, stopRecording, transcribeLatestRecording } =
-      await import("./tauri");
-
-    await startRecording();
-    vi.setSystemTime(2_500);
-    await stopRecording();
-
-    await expect(transcribeLatestRecording()).resolves.toEqual({
-      text: "Mock transcript from the latest manual recording.",
-      model: "whisper-large-v3-turbo",
-      retryCount: 0,
-    });
+  it("getApiKeyStatus rejects in browser mode", async () => {
+    const { getApiKeyStatus } = await freshImports();
+    await expect(getApiKeyStatus()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
   });
 
-  it("rejects empty browser recordings without creating a latest recording", async () => {
-    const { getLatestRecordingInfo, startRecording, stopRecording } =
-      await import("./tauri");
-
-    await startRecording();
-
-    await expect(stopRecording()).rejects.toMatchObject({
-      code: "emptyRecording",
-    });
-    await expect(getLatestRecordingInfo()).resolves.toBeNull();
+  it("getHotkeySettings rejects in browser mode", async () => {
+    const { getHotkeySettings } = await freshImports();
+    await expect(getHotkeySettings()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
   });
 
-  it("rejects overlapping browser recording starts", async () => {
-    const { startRecording } = await import("./tauri");
+  it("setHotkey rejects in browser mode", async () => {
+    const { setHotkey } = await freshImports();
+    await expect(setHotkey("Control+Space")).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
 
-    await startRecording();
+  it("resetHotkeyToDefault rejects in browser mode", async () => {
+    const { resetHotkeyToDefault } = await freshImports();
+    await expect(resetHotkeyToDefault()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
 
-    await expect(startRecording()).rejects.toMatchObject({
-      code: "alreadyRecording",
-    });
+  it("startRecording rejects in browser mode", async () => {
+    const { startRecording } = await freshImports();
+    await expect(startRecording()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
+
+  it("stopRecording rejects in browser mode", async () => {
+    const { stopRecording } = await freshImports();
+    await expect(stopRecording()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
+
+  it("transcribeLatestRecording rejects in browser mode", async () => {
+    const { transcribeLatestRecording } = await freshImports();
+    await expect(transcribeLatestRecording()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
+
+  it("cleanupTranscript rejects in browser mode", async () => {
+    const { cleanupTranscript } = await freshImports();
+    await expect(cleanupTranscript("test")).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
+
+  it("getStartAtLoginStatus rejects in browser mode", async () => {
+    const { getStartAtLoginStatus } = await freshImports();
+    await expect(getStartAtLoginStatus()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
+
+  it("setStartAtLoginEnabled rejects in browser mode", async () => {
+    const { setStartAtLoginEnabled } = await freshImports();
+    await expect(setStartAtLoginEnabled(true)).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
+
+  it("copyTextToClipboard rejects in browser mode", async () => {
+    const { copyTextToClipboard } = await freshImports();
+    await expect(copyTextToClipboard("test")).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
+  });
+
+  it("pasteClipboard rejects in browser mode", async () => {
+    const { pasteClipboard } = await freshImports();
+    await expect(pasteClipboard()).rejects.toThrow(
+      "only available in the Tauri runtime",
+    );
   });
 });
 
-describe("browser settings fallback", () => {
+describe("bubble commands in browser mode", () => {
   afterEach(() => {
-    vi.resetModules();
+    vi.unstubAllGlobals();
   });
 
-  it("uses a customization-ready default hotkey on Windows/Linux", async () => {
-    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
-      "Win32" as unknown as string,
-    );
-    const { getAppSettings, getHotkeySettings } = await import("./tauri");
-
-    await expect(getAppSettings()).resolves.toEqual({
-      hotkey: {
-        accelerator: "Control+Space",
-        label: "Ctrl + Space",
-      },
-      sttProvider: "",
-    });
-    await expect(getHotkeySettings()).resolves.toMatchObject({
-      accelerator: "Control+Space",
-      label: "Ctrl + Space",
-      isDefault: true,
-      isRegistered: true,
-      error: null,
-    });
-    vi.restoreAllMocks();
+  beforeEach(() => {
+    vi.stubGlobal("__TAURI_INTERNALS__", undefined);
   });
 
-  it("uses Option + Space as the default hotkey on macOS", async () => {
-    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
-      "MacIntel" as unknown as string,
-    );
-    const { getAppSettings, getHotkeySettings } = await import("./tauri");
-
-    await expect(getAppSettings()).resolves.toEqual({
-      hotkey: {
-        accelerator: "Alt+Space",
-        label: "Option + Space",
-      },
-      sttProvider: "",
-    });
-    await expect(getHotkeySettings()).resolves.toMatchObject({
-      accelerator: "Alt+Space",
-      label: "Option + Space",
-      isDefault: true,
-      isRegistered: true,
-      error: null,
-    });
-    vi.restoreAllMocks();
+  it("bubbleShow resolves silently in browser mode", async () => {
+    const { bubbleShow } = await freshImports();
+    await expect(bubbleShow()).resolves.toBeUndefined();
   });
 
-  it("saves trimmed hotkey settings", async () => {
-    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
-      "Win32" as unknown as string,
-    );
-    const { getAppSettings, saveAppSettings } = await import("./tauri");
-
-    await saveAppSettings({
-      hotkey: {
-        accelerator: "  Control+Shift+KeyA  ",
-        label: "  Control+Shift+A  ",
-      },
-      sttProvider: "",
-    });
-
-    await expect(getAppSettings()).resolves.toEqual({
-      hotkey: {
-        accelerator: "Control+Shift+KeyA",
-        label: "Ctrl + Shift + A",
-      },
-      sttProvider: "",
-    });
-    vi.restoreAllMocks();
-  });
-
-  it("accepts single-modifier shortcuts like Control+Space", async () => {
-    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
-      "Win32" as unknown as string,
-    );
-    const { getHotkeySettings, setHotkey } = await import("./tauri");
-
-    await expect(setHotkey("Control+Space")).resolves.toMatchObject({
-      accelerator: "Control+Space",
-      label: "Ctrl + Space",
-      isDefault: true,
-      isRegistered: true,
-      error: null,
-    });
-    await expect(getHotkeySettings()).resolves.toMatchObject({
-      accelerator: "Control+Space",
-      label: "Ctrl + Space",
-      isRegistered: true,
-    });
-    vi.restoreAllMocks();
-  });
-
-  it("rejects plain Space without a modifier", async () => {
-    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
-      "Win32" as unknown as string,
-    );
-    const { setHotkey } = await import("./tauri");
-
-    expect(() => setHotkey("Space")).toThrow(/This shortcut is not supported/);
-    vi.restoreAllMocks();
-  });
-
-  it("changes and resets browser hotkey settings on Windows/Linux", async () => {
-    vi.spyOn(window.navigator, "platform", "get").mockReturnValue(
-      "Win32" as unknown as string,
-    );
-    const { getHotkeySettings, resetHotkeyToDefault, setHotkey } =
-      await import("./tauri");
-
-    await expect(setHotkey("Control+Shift+KeyB")).resolves.toMatchObject({
-      accelerator: "Control+Shift+KeyB",
-      label: "Ctrl + Shift + B",
-      isDefault: false,
-      isRegistered: true,
-    });
-    await expect(getHotkeySettings()).resolves.toMatchObject({
-      accelerator: "Control+Shift+KeyB",
-      label: "Ctrl + Shift + B",
-      isRegistered: true,
-    });
-    await expect(resetHotkeyToDefault()).resolves.toMatchObject({
-      accelerator: "Control+Space",
-      label: "Ctrl + Space",
-      isDefault: true,
-    });
-    vi.restoreAllMocks();
-  });
-
-  it("gets and updates browser start at login status", async () => {
-    const { getStartAtLoginStatus, setStartAtLoginEnabled } =
-      await import("./tauri");
-
-    await expect(getStartAtLoginStatus()).resolves.toEqual({
-      enabled: false,
-      available: true,
-    });
-    await expect(setStartAtLoginEnabled(true)).resolves.toEqual({
-      enabled: true,
-      available: true,
-    });
-    await expect(getStartAtLoginStatus()).resolves.toEqual({
-      enabled: true,
-      available: true,
-    });
-    await expect(setStartAtLoginEnabled(false)).resolves.toEqual({
-      enabled: false,
-      available: true,
-    });
-  });
-
-  it("masks and clears browser Groq API key status without exposing the full key", async () => {
-    const { clearApiKey, getApiKeyStatus, saveApiKey } =
-      await import("./tauri");
-
-    await expect(saveApiKey("  gsk_12345678abcd  ")).resolves.toEqual({
-      configured: true,
-      maskedPreview: "gsk_...abcd",
-    });
-    await expect(getApiKeyStatus()).resolves.toEqual({
-      configured: true,
-      maskedPreview: "gsk_...abcd",
-    });
-    await expect(clearApiKey()).resolves.toEqual({
-      configured: false,
-      maskedPreview: null,
-    });
-  });
-
-  it("uses a generic browser mask for short Groq API keys", async () => {
-    const { saveApiKey } = await import("./tauri");
-
-    await expect(saveApiKey("short")).resolves.toEqual({
-      configured: true,
-      maskedPreview: "Configured key",
-    });
-  });
-
-  it("browser cleanupTranscript returns the raw transcript without invoking cleanup", async () => {
-    const { cleanupTranscript } = await import("./tauri");
-
-    await expect(cleanupTranscript("raw text")).resolves.toEqual({
-      text: "raw text",
-      model: "llama-3.3-70b-versatile",
-      retryCount: 0,
-      validationMs: 0,
-      fallbackUsed: false,
-    });
-  });
-
-  it("browser cleanupTranscript uses llama-3.3-70b-versatile and not a gpt-oss model", async () => {
-    const { cleanupTranscript } = await import("./tauri");
-
-    const result = await cleanupTranscript("raw text");
-    expect(result.model).toBe("llama-3.3-70b-versatile");
-    expect(result.model).not.toContain("gpt-oss");
-    expect(result.model).not.toContain("openai/");
-    expect(result.model).not.toContain("qwen");
-  });
-
-  it("default browser app settings have no cleanupMode field", async () => {
-    const { getAppSettings } = await import("./tauri");
-
-    const settings = await getAppSettings();
-
-    expect(settings).not.toHaveProperty("cleanupMode");
-    expect(JSON.stringify(settings)).not.toContain("cleanupMode");
+  it("bubbleHide resolves silently in browser mode", async () => {
+    const { bubbleHide } = await freshImports();
+    await expect(bubbleHide()).resolves.toBeUndefined();
   });
 });
 
-describe("browser clipboard fallback", () => {
+describe("diagLog in browser mode", () => {
   afterEach(() => {
-    vi.resetModules();
+    vi.unstubAllGlobals();
   });
 
-  it("copies text into browser test clipboard state", async () => {
-    const { copyTextToClipboard, getBrowserClipboardTextForTest } =
-      await import("./tauri");
-
-    await copyTextToClipboard("copied text");
-
-    expect(getBrowserClipboardTextForTest()).toBe("copied text");
+  beforeEach(() => {
+    vi.stubGlobal("__TAURI_INTERNALS__", undefined);
   });
 
-  it("paste writes text into browser test clipboard state", async () => {
-    const { getBrowserClipboardTextForTest, pasteText } =
-      await import("./tauri");
-
-    await pasteText("pasted text");
-
-    expect(getBrowserClipboardTextForTest()).toBe("pasted text");
-  });
-
-  it("pasteClipboard leaves existing browser clipboard text alone", async () => {
-    const {
-      copyTextToClipboard,
-      getBrowserClipboardTextForTest,
-      pasteClipboard,
-    } = await import("./tauri");
-
-    await copyTextToClipboard("already copied");
-    await pasteClipboard();
-
-    expect(getBrowserClipboardTextForTest()).toBe("already copied");
+  it("diagLog does not throw in browser mode", async () => {
+    const { diagLog } = await freshImports();
+    expect(() => diagLog("test log")).not.toThrow();
   });
 });

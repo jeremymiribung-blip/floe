@@ -1,22 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clipboardErrorMessage } from "./clipboardErrors";
+import { recordingErrorMessage } from "./recordingErrors";
+import { isFloeErrorDomain, floeErrorMessage } from "./errors";
 import { PushToTalkController } from "./pushToTalk";
 import { shouldShowBubble } from "./recordingBubble";
 import {
   MICROPHONE_UNAVAILABLE,
   RECORDING_ALREADY_ACTIVE,
   RECORDING_TOO_SHORT,
-  recordingErrorMessage,
 } from "./recordingErrors";
 import type {
   AppState,
-  ClipboardError,
   SttResult,
-  SttError,
   RecordingError,
   RecordingInfo,
   RecordingStatus,
   TranscriptCleanupResult,
+  FloeError,
 } from "../types/app";
 
 const latestRecording: RecordingInfo = {
@@ -70,7 +70,7 @@ interface HarnessOptions {
   cleanupTranscript?: (transcript: string) => Promise<TranscriptCleanupResult>;
   copyTextToClipboard?: (text: string) => Promise<void>;
   pasteClipboard?: () => Promise<void>;
-  errorMessage?: (caught: unknown) => string;
+  errorMessage?: (error: FloeError) => string;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -138,6 +138,7 @@ function createHarness(options: HarnessOptions = {}) {
         calls.push("clean");
         return {
           text: `${transcript}.`,
+          model: "llama-3.3-70b-versatile",
         };
       }),
   );
@@ -244,7 +245,9 @@ describe("PushToTalkController", () => {
       "paste",
     ]);
     expect(harness.states).toEqual([
+      "starting",
       "recording",
+      "stopping",
       "ready",
       "transcribing",
       "cleaning",
@@ -269,8 +272,17 @@ describe("PushToTalkController", () => {
 
     expect(harness.stopRecording).toHaveBeenCalledTimes(1);
     expect(harness.transcribeLatestRecording).not.toHaveBeenCalled();
-    expect(harness.states).toEqual(["recording", "ready"]);
-    expect(harness.states.filter(shouldShowBubble)).toEqual(["recording"]);
+    expect(harness.states).toEqual([
+      "starting",
+      "recording",
+      "stopping",
+      "ready",
+    ]);
+    expect(harness.states.filter(shouldShowBubble)).toEqual([
+      "starting",
+      "recording",
+      "stopping",
+    ]);
 
     resolveStop(latestRecording);
     await release;
@@ -311,7 +323,11 @@ describe("PushToTalkController", () => {
   it("reports start failures without stopping or transcribing", async () => {
     const harness = createHarness({
       startRecording: async () => {
-        throw new Error("start failed");
+        throw {
+          domain: "recording",
+          code: "internal",
+          message: "start failed",
+        };
       },
     });
 
@@ -432,8 +448,9 @@ describe("PushToTalkController", () => {
     });
 
     await harness.controller.handleShortcutState("Pressed");
+    expect(harness.states).toContain("starting");
     await harness.controller.handleShortcutState("Released");
-    expect(lastState(harness.states)).toBe("error");
+    expect(harness.states).toContain("error");
 
     await harness.controller.handleShortcutState("Pressed");
     await harness.controller.handleShortcutState("Released");
@@ -613,8 +630,13 @@ describe("PushToTalkController", () => {
   it("pastes nothing when transcription fails", async () => {
     const harness = createHarness({
       transcribeLatestRecording: async () => {
-        throw new Error("transcription failed");
+        throw {
+          domain: "stt",
+          code: "serverError",
+          message: "transcription failed",
+        };
       },
+      errorMessage: pushToTalkErrorMessage,
     });
 
     await harness.controller.handleShortcutState("Pressed");
@@ -652,7 +674,11 @@ describe("PushToTalkController", () => {
     await harness.controller.handleShortcutState("Released");
 
     const finalState = lastState(harness.states);
-    expect(harness.states.filter(shouldShowBubble)).toEqual(["recording"]);
+    expect(harness.states.filter(shouldShowBubble)).toEqual([
+      "starting",
+      "recording",
+      "stopping",
+    ]);
     expect(finalState).toBe("pasted");
     expect(
       finalState === undefined ? undefined : shouldShowBubble(finalState),
@@ -702,11 +728,11 @@ describe("PushToTalkController", () => {
   it("does not attempt paste when clipboard write fails", async () => {
     const harness = createHarness({
       copyTextToClipboard: async () => {
-        const error = new Error(
-          "Floe could not write to the clipboard.",
-        ) as Error & { code?: string };
-        error.code = "clipboardUnavailable";
-        throw error;
+        throw {
+          domain: "clipboard",
+          code: "clipboardUnavailable",
+          message: "Floe could not write to the clipboard.",
+        };
       },
       errorMessage: pushToTalkErrorMessage,
     });
@@ -723,9 +749,11 @@ describe("PushToTalkController", () => {
   it("surfaces Clipboard unavailable for clipboard write failures", async () => {
     const harness = createHarness({
       copyTextToClipboard: async () => {
-        const error = new Error("backend detail") as Error & { code?: string };
-        error.code = "clipboardUnavailable";
-        throw error;
+        throw {
+          domain: "clipboard",
+          code: "clipboardUnavailable",
+          message: "backend detail",
+        };
       },
       errorMessage: pushToTalkErrorMessage,
     });
@@ -757,9 +785,11 @@ describe("PushToTalkController", () => {
   it("records clipboard write failure in diagnostics with error_stage clipboard and no clipboard text", async () => {
     const harness = createHarness({
       copyTextToClipboard: async () => {
-        const error = new Error("backend detail") as Error & { code?: string };
-        error.code = "clipboardUnavailable";
-        throw error;
+        throw {
+          domain: "clipboard",
+          code: "clipboardUnavailable",
+          message: "backend detail",
+        };
       },
       errorMessage: pushToTalkErrorMessage,
     });
@@ -782,7 +812,11 @@ describe("PushToTalkController", () => {
   it("records paste failure in diagnostics with error_stage paste and copied_only true", async () => {
     const harness = createHarness({
       pasteClipboard: async () => {
-        throw new Error("paste failure detail");
+        throw {
+          domain: "clipboard",
+          code: "pasteUnavailable",
+          message: "paste failure detail",
+        };
       },
     });
 
@@ -841,11 +875,12 @@ describe("PushToTalkController", () => {
   it("transitions to copied when paste automation is blocked", async () => {
     const harness = createHarness({
       pasteClipboard: async () => {
-        const error = new Error(
-          "Transcript copied to clipboard, but Floe could not send the paste shortcut. Paste manually with Command+V or Control+V.",
-        ) as Error & { code?: string };
-        error.code = "pasteUnavailable";
-        throw error;
+        throw {
+          domain: "clipboard",
+          code: "pasteUnavailable",
+          message:
+            "Transcript copied to clipboard, but Floe could not send the paste shortcut. Paste manually with Command+V or Control+V.",
+        };
       },
     });
 
@@ -914,8 +949,6 @@ describe("PushToTalkController", () => {
       bytes: 96_044,
     });
     expect(diagnostics.result.stt_success).toBe(true);
-    expect(diagnostics.stt_provider.provider_name).toBe("groq_whisper");
-    expect(diagnostics.stt_provider.fallback_used).toBe(false);
     expect(diagnostics.result.cleanup_success).toBe(true);
     expect(diagnostics.result.clipboard_success).toBe(true);
     expect(diagnostics.result.paste_success).toBe(true);
@@ -951,17 +984,13 @@ describe("PushToTalkController", () => {
 
   it("does not leak raw Groq response bodies or audio samples into diagnostics on transcription failure", async () => {
     const audioSamplesSentinel = "rawAudio:12345,67890,11111";
-    const error = new Error("backend detail") as Error & {
-      code?: string;
-      message?: string;
-      retryCount?: number;
-      model?: string;
+    const error = {
+      domain: "stt" as const,
+      code: "malformedResponse" as const,
+      message: '{"error":{"message":"Authorization: Bearer abcdefghijklmnop"}}',
+      retryCount: 1,
+      model: "whisper-large-v3-turbo",
     };
-    error.code = "malformedResponse";
-    error.message =
-      '{"error":{"message":"Authorization: Bearer abcdefghijklmnop"}}';
-    error.retryCount = 1;
-    error.model = "whisper-large-v3-turbo";
     const harness = createHarness({
       transcribeLatestRecording: async () => {
         throw error;
@@ -984,14 +1013,13 @@ describe("PushToTalkController", () => {
   });
 
   it("tracks failed STT with a sanitized stage and retry count", async () => {
-    const error = new Error("Transcription failed") as Error & {
-      code?: string;
-      model?: string;
-      retryCount?: number;
+    const error = {
+      domain: "stt" as const,
+      code: "timeout" as const,
+      message: "Transcription failed",
+      model: "whisper-large-v3-turbo",
+      retryCount: 2,
     };
-    error.code = "timeout";
-    error.model = "whisper-large-v3-turbo";
-    error.retryCount = 2;
     const harness = createHarness({
       transcribeLatestRecording: async () => {
         throw error;
@@ -1071,14 +1099,14 @@ describe("PushToTalkController", () => {
     });
 
     it("treats backend watchdogTimeout as a forced error", async () => {
-      const watchdogError = new Error("Recording failed") as Error & {
-        code?: string;
-      };
-      watchdogError.code = "watchdogTimeout";
       const harness = createHarness({
         stopRecording: async () => {
           harness.calls.push("stop");
-          throw watchdogError;
+          throw {
+            domain: "recording",
+            code: "watchdogTimeout",
+            message: "Recording failed",
+          };
         },
       });
 
@@ -1090,14 +1118,14 @@ describe("PushToTalkController", () => {
     });
 
     it("treats backend stopFailed as a forced error", async () => {
-      const stopError = new Error("Recording failed") as Error & {
-        code?: string;
-      };
-      stopError.code = "stopFailed";
       const harness = createHarness({
         stopRecording: async () => {
           harness.calls.push("stop");
-          throw stopError;
+          throw {
+            domain: "recording",
+            code: "stopFailed",
+            message: "Recording failed",
+          };
         },
       });
 
@@ -1164,7 +1192,7 @@ describe("PushToTalkController", () => {
     await harness.controller.handleShortcutState("Released");
 
     const statesShown = harness.states.filter(shouldShowBubble);
-    expect(statesShown).toEqual(["recording"]);
+    expect(statesShown).toEqual(["starting", "recording", "stopping"]);
     expect(shouldShowBubble(lastState(harness.states) ?? "ready")).toBe(false);
   });
 
@@ -1183,48 +1211,38 @@ function lastState(states: AppState[]): AppState | undefined {
   return states[states.length - 1];
 }
 
-function pushToTalkErrorMessage(caught: unknown): string {
-  const maybeClipboardError = caught as Partial<ClipboardError>;
-  if (
-    maybeClipboardError.code === "clipboardUnavailable" ||
-    maybeClipboardError.code === "pasteUnavailable"
-  ) {
-    return clipboardErrorMessage(caught);
+function pushToTalkErrorMessage(error: FloeError): string {
+  if (isFloeErrorDomain(error, "clipboard")) {
+    return clipboardErrorMessage(error);
   }
-
-  const maybeTranscriptionError = caught as Partial<SttError>;
-  if (typeof maybeTranscriptionError.code === "string") {
-    return transcriptionErrorMessage(caught);
+  if (isFloeErrorDomain(error, "stt")) {
+    return transcriptionErrorMessage(error);
   }
-
-  return recordingErrorMessage(caught);
+  if (isFloeErrorDomain(error, "recording")) {
+    return recordingErrorMessage(error);
+  }
+  return floeErrorMessage(error);
 }
 
-function transcriptionErrorMessage(caught: unknown): string {
-  const transcriptionError = caught as Partial<SttError>;
-  if (typeof transcriptionError.message === "string") {
-    return transcriptionError.message;
-  }
-  return "Transcription failed";
+function transcriptionErrorMessage(error: FloeError): string {
+  return floeErrorMessage(error) || "Transcription failed";
 }
 
 function recordingFailure(
   code: RecordingError["code"],
   message: string,
 ): RecordingError {
-  return { code, message };
+  return { domain: "recording", code, message };
 }
 
 function transcription(
   text: string,
   model = "whisper-large-v3-turbo",
-  sttProvider?: SttResult["sttProvider"],
 ): SttResult {
   return {
     text,
     model,
     retryCount: 0,
-    sttProvider,
   };
 }
 

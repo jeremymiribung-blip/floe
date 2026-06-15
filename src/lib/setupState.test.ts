@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ApiKeyStatus, HotkeyStatus } from "../types/app";
-import {
-  computeSetupState,
-  computeVisibleSetupState,
-  isReady,
-} from "./setupState";
+import { computeSetupState, computeVisibleSetupState } from "./setupState";
 
 const apiKeyConfigured: ApiKeyStatus = {
   configured: true,
@@ -85,16 +81,5 @@ describe("computeVisibleSetupState", () => {
     expect(
       computeVisibleSetupState(apiKeyConfigured, hotkeyUnregistered, false),
     ).toBe("setup_hotkey");
-  });
-});
-
-describe("isReady", () => {
-  it("matches the ready state", () => {
-    expect(isReady("ready")).toBe(true);
-  });
-
-  it("rejects setup states", () => {
-    expect(isReady("setup_api_key")).toBe(false);
-    expect(isReady("setup_hotkey")).toBe(false);
   });
 });

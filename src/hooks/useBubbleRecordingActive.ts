@@ -1,12 +1,8 @@
 import { useEffect, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "../lib/tauri";
-
-const BUBBLE_STATE_EVENT: string = "recording-bubble-state";
-
-interface BubbleStatePayload {
-  recording: boolean;
-}
+import { EVENT_BUBBLE_STATE } from "../lib/contract";
+import type { BubbleStatePayload } from "../lib/contract";
 
 export function useBubbleRecordingActive(): boolean {
   const [active, setActive] = useState(() => !isTauriRuntime());
@@ -19,7 +15,7 @@ export function useBubbleRecordingActive(): boolean {
     let unlisten: UnlistenFn | null = null;
     let cancelled = false;
 
-    listen<BubbleStatePayload>(BUBBLE_STATE_EVENT, (event) => {
+    listen<BubbleStatePayload>(EVENT_BUBBLE_STATE, (event) => {
       setActive(event.payload.recording);
     })
       .then((nextUnlisten) => {

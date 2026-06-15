@@ -5,7 +5,7 @@ use tauri::{
 };
 
 use crate::{
-    lifecycle::{log_lifecycle, mark_quitting, LifecycleLevel},
+    lifecycle::{log_lifecycle, transition_lifecycle, AppLifecycle, LifecycleLevel},
     system::window::{hide_main_window, show_main_window},
 };
 
@@ -13,7 +13,7 @@ const TRAY_SHOW_ID: &str = "tray-show-floe";
 const TRAY_HIDE_ID: &str = "tray-hide-floe";
 const TRAY_SETTINGS_ID: &str = "tray-settings";
 const TRAY_QUIT_ID: &str = "tray-quit";
-const SETTINGS_EVENT: &str = "floe-show-settings";
+pub use crate::contract::EVENT_SHOW_SETTINGS as SETTINGS_EVENT;
 const TRAY_TOOLTIP: &str = "Floe";
 
 pub fn setup_tray(app: &mut App) -> tauri::Result<()> {
@@ -78,7 +78,12 @@ fn handle_settings<R: Runtime>(app: &AppHandle<R>) {
 
 fn handle_quit<R: Runtime>(app: &AppHandle<R>) {
     log_lifecycle(LifecycleLevel::Info, "tray_quit_requested");
-    mark_quitting();
+
+    if !transition_lifecycle(AppLifecycle::Running, AppLifecycle::Quitting) {
+        log_lifecycle(LifecycleLevel::Warn, "tray_quit_already_quitting");
+        return;
+    }
+
     app.exit(0);
 }
 

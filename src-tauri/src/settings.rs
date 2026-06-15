@@ -1,4 +1,8 @@
-use std::{fs, path::PathBuf, sync::Mutex};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
@@ -15,6 +19,7 @@ pub struct ApiKeyStatus {
     pub masked_preview: Option<String>,
 }
 
+#[allow(dead_code)]
 fn default_empty_string() -> String {
     String::new()
 }
@@ -24,15 +29,16 @@ fn default_empty_string() -> String {
 pub struct AppSettings {
     #[serde(default)]
     pub hotkey: HotkeySettings,
-    #[serde(default = "default_empty_string")]
-    pub stt_provider: String,
+    #[serde(default)]
+    pub keyring_migrated: bool,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             hotkey: HotkeySettings::default(),
-            stt_provider: default_empty_string(),
+            keyring_migrated: false,
         }
     }
 }
@@ -53,6 +59,7 @@ impl Default for HotkeySettings {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsError {
+    pub domain: &'static str,
     pub code: SettingsErrorCode,
     pub message: String,
 }
@@ -109,7 +116,11 @@ impl SecretStore for KeyringSecretStore {
     }
 }
 
-pub fn migrate_legacy_keyring_entries() {
+pub fn migrate_legacy_keyring_entries(settings: &mut AppSettings) {
+    if settings.keyring_migrated {
+        return;
+    }
+
     for legacy_service in LEGACY_KEYRING_SERVICES {
         if *legacy_service == KEYRING_SERVICE {
             continue;
@@ -128,6 +139,8 @@ pub fn migrate_legacy_keyring_entries() {
             &KeyringEntryStore(legacy_entry),
         );
     }
+
+    settings.keyring_migrated = true;
 }
 
 fn migrate_secret_from_to(target: &dyn SecretStore, source: &dyn SecretStore) -> bool {
@@ -220,6 +233,11 @@ impl SettingsManager {
         self.app_settings_store.load()
     }
 
+    #[allow(dead_code)]
+    pub async fn get_app_settings_async(&self) -> Result<AppSettings, SettingsError> {
+        self.app_settings_store.load_async().await
+    }
+
     pub fn save_app_settings(&self, settings: AppSettings) -> Result<AppSettings, SettingsError> {
         let settings = validate_app_settings(settings)?;
         self.app_settings_store.save(&settings)?;
@@ -227,55 +245,149 @@ impl SettingsManager {
         Ok(settings)
     }
 
+    #[allow(dead_code)]
+    pub async fn save_app_settings_async(
+        &self,
+        settings: AppSettings,
+    ) -> Result<AppSettings, SettingsError> {
+        let settings = validate_app_settings(settings)?;
+        self.app_settings_store.save_async(&settings).await?;
+
+        Ok(settings)
+    }
+
+    #[allow(dead_code)]
+    pub fn restore_settings_from_backup(&self) -> Result<(), SettingsError> {
+        self.app_settings_store.restore_from_backup()
+    }
 }
 
 struct AppSettingsStore {
     path: PathBuf,
-    lock: Mutex<()>,
+    lock: Arc<Mutex<()>>,
 }
 
+#[allow(dead_code)]
 impl AppSettingsStore {
     fn new(path: PathBuf) -> Self {
         Self {
             path,
-            lock: Mutex::new(()),
+            lock: Arc::new(Mutex::new(())),
         }
     }
 
     fn load(&self) -> Result<AppSettings, SettingsError> {
         let _guard = self.settings_lock()?;
+        Self::load_from_path(&self.path)
+    }
 
-        if !self.path.exists() {
+    async fn load_async(&self) -> Result<AppSettings, SettingsError> {
+        let path = self.path.clone();
+        let lock = Arc::clone(&self.lock);
+        tokio::task::spawn_blocking(move || {
+            let _guard = lock.lock().map_err(|_| app_settings_error())?;
+            Self::load_from_path(&path)
+        })
+        .await
+        .map_err(|_| app_settings_error())?
+    }
+
+    fn load_from_path(path: &PathBuf) -> Result<AppSettings, SettingsError> {
+        if !path.exists() {
             return Ok(AppSettings::default());
         }
 
-        let raw = fs::read_to_string(&self.path).map_err(|_| app_settings_error())?;
+        let raw = fs::read_to_string(path).map_err(|_| app_settings_error())?;
+
+        match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(value) => {
+                // JSON parsed successfully; validate hotkey content
+                let hotkey = load_hotkey_settings(value.get("hotkey"))?;
+                let settings = AppSettings {
+                    hotkey,
+                    ..Default::default()
+                };
+                validate_app_settings(settings)
+            }
+            Err(_) => {
+                // Primary file failed to parse as valid JSON, try backup
+                let backup = Self::backup_path(path);
+                if backup.exists() {
+                    Self::load_settings_from_file(&backup).or_else(|_| Ok(AppSettings::default()))
+                } else {
+                    Ok(AppSettings::default())
+                }
+            }
+        }
+    }
+
+    fn load_settings_from_file(path: &PathBuf) -> Result<AppSettings, SettingsError> {
+        let raw = fs::read_to_string(path).map_err(|_| app_settings_error())?;
         let value: serde_json::Value =
             serde_json::from_str(&raw).map_err(|_| app_settings_error())?;
 
         let hotkey = load_hotkey_settings(value.get("hotkey"))?;
-        let stt_provider = value
-            .get("sttProvider")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
 
         let settings = AppSettings {
             hotkey,
-            stt_provider,
+            ..Default::default()
         };
         validate_app_settings(settings)
     }
 
     fn save(&self, settings: &AppSettings) -> Result<(), SettingsError> {
         let _guard = self.settings_lock()?;
+        Self::save_to_path(&self.path, settings)
+    }
 
-        if let Some(parent) = self.path.parent() {
+    async fn save_async(&self, settings: &AppSettings) -> Result<(), SettingsError> {
+        let path = self.path.clone();
+        let lock = Arc::clone(&self.lock);
+        let settings = settings.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = lock.lock().map_err(|_| app_settings_error())?;
+            Self::save_to_path(&path, &settings)
+        })
+        .await
+        .map_err(|_| app_settings_error())?
+    }
+
+    fn save_to_path(path: &PathBuf, settings: &AppSettings) -> Result<(), SettingsError> {
+        if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|_| app_settings_error())?;
         }
 
+        // Create backup of existing file before overwriting
+        if path.exists() {
+            let backup = Self::backup_path(path);
+            fs::copy(path, &backup).map_err(|_| app_settings_error())?;
+        }
+
         let raw = serde_json::to_string_pretty(settings).map_err(|_| app_settings_error())?;
-        fs::write(&self.path, raw).map_err(|_| app_settings_error())
+        fs::write(path, raw).map_err(|_| app_settings_error())
+    }
+
+    fn backup_path(path: &Path) -> PathBuf {
+        path.with_extension("json.bak")
+    }
+
+    fn restore_backup_to_path(path: &Path) -> Result<(), SettingsError> {
+        let backup = Self::backup_path(path);
+        if !backup.exists() {
+            return Err(app_settings_error());
+        }
+
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|_| app_settings_error())?;
+        }
+
+        fs::copy(&backup, path).map_err(|_| app_settings_error())?;
+        Ok(())
+    }
+
+    fn restore_from_backup(&self) -> Result<(), SettingsError> {
+        let _guard = self.settings_lock()?;
+        Self::restore_backup_to_path(&self.path)
     }
 
     fn settings_lock(&self) -> Result<std::sync::MutexGuard<'_, ()>, SettingsError> {
@@ -324,17 +436,6 @@ fn validate_api_key(
 
 fn validate_app_settings(settings: AppSettings) -> Result<AppSettings, SettingsError> {
     let settings = crate::system::hotkey::validate_app_hotkey_settings(settings)?;
-
-    // Validate stt_provider is a known value if non-empty
-    if !settings.stt_provider.is_empty()
-        && settings.stt_provider != "groq"
-        && settings.stt_provider != "local_whisper"
-    {
-        return Err(settings_error(
-            SettingsErrorCode::InvalidAppSettings,
-            "Unknown speech-to-text provider.",
-        ));
-    }
 
     Ok(settings)
 }
@@ -411,6 +512,7 @@ fn mask_api_key(api_key: &str) -> Option<String> {
 
 fn settings_error(code: SettingsErrorCode, message: &'static str) -> SettingsError {
     SettingsError {
+        domain: "settings",
         code,
         message: message.to_string(),
     }
@@ -712,17 +814,17 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_app_settings_file_returns_settings_error() {
+    fn corrupt_app_settings_file_returns_defaults_with_backup_fallback() {
         let path = unique_settings_path();
         fs::write(&path, "{not valid json").expect("corrupt settings should write");
         let manager =
             SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
 
-        let error = manager
+        let settings = manager
             .get_app_settings()
-            .expect_err("corrupt settings should fail");
+            .expect("corrupt settings should fall back to defaults");
 
-        assert_eq!(error.code, SettingsErrorCode::AppSettingsUnavailable);
+        assert_eq!(settings, AppSettings::default());
     }
 
     #[test]
@@ -818,6 +920,127 @@ mod tests {
         assert_eq!(manager.get_app_settings().unwrap(), saved);
     }
 
+    #[test]
+    fn save_creates_backup_file() {
+        let path = unique_settings_path();
+        let backup = path.with_extension("json.bak");
+        let manager = SettingsManager::with_secret_store(
+            Box::new(MemorySecretStore::default()),
+            path.clone(),
+        );
+
+        // First save creates the file but no backup (no existing file)
+        manager.save_app_settings(AppSettings::default()).unwrap();
+        assert!(path.exists());
+        assert!(!backup.exists(), "backup should not exist on first save");
+
+        // Second save creates a backup of the first settings
+        manager
+            .save_app_settings(AppSettings {
+                hotkey: HotkeySettings {
+                    accelerator: "Control+Shift+KeyA".to_string(),
+                    label: "Ctrl + Shift + A".to_string(),
+                },
+                ..Default::default()
+            })
+            .unwrap();
+
+        assert!(backup.exists(), "backup should exist after second save");
+
+        // Verify backup contains original settings (defaults)
+        let backed_up: AppSettings =
+            serde_json::from_str(&fs::read_to_string(&backup).unwrap()).unwrap();
+        assert_eq!(backed_up, AppSettings::default());
+    }
+
+    #[test]
+    fn load_falls_back_to_backup_when_primary_corrupt() {
+        let path = unique_settings_path();
+        let backup = path.with_extension("json.bak");
+
+        // Write valid settings to backup
+        let valid = r#"{"hotkey":{"accelerator":"Control+Shift+KeyA","label":"Ctrl + Shift + A"}}"#;
+        fs::write(&backup, valid).unwrap();
+
+        // Write corrupt content to primary
+        fs::write(&path, "{not valid json").unwrap();
+
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let settings = manager.get_app_settings().unwrap();
+        assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
+        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+    }
+
+    #[test]
+    fn load_returns_defaults_when_both_files_corrupt() {
+        let path = unique_settings_path();
+        let backup = path.with_extension("json.bak");
+
+        fs::write(&path, "{corrupt primary").unwrap();
+        fs::write(&backup, "{corrupt backup").unwrap();
+
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let settings = manager.get_app_settings().unwrap();
+        assert_eq!(settings, AppSettings::default());
+    }
+
+    #[test]
+    fn restore_from_backup_works() {
+        let path = unique_settings_path();
+        let backup = path.with_extension("json.bak");
+
+        // Write primary with one set of settings
+        let primary = r#"{"hotkey":{"accelerator":"Control+Space","label":"Ctrl + Space"}}"#;
+        fs::write(&path, primary).unwrap();
+
+        // Write backup with different settings
+        let backup_content =
+            r#"{"hotkey":{"accelerator":"Control+Shift+KeyA","label":"Ctrl + Shift + A"}}"#;
+        fs::write(&backup, backup_content).unwrap();
+
+        let manager = SettingsManager::with_secret_store(
+            Box::new(MemorySecretStore::default()),
+            path.clone(),
+        );
+
+        manager.restore_settings_from_backup().unwrap();
+
+        let settings = manager.get_app_settings().unwrap();
+        assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
+        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+    }
+
+    #[test]
+    fn restore_from_backup_fails_when_no_backup() {
+        let path = unique_settings_path();
+        // No backup file exists
+
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let error = manager
+            .restore_settings_from_backup()
+            .expect_err("restore without backup should fail");
+
+        assert_eq!(error.code, SettingsErrorCode::AppSettingsUnavailable);
+    }
+
+    #[test]
+    fn load_returns_defaults_when_primary_missing_and_no_backup() {
+        let path = unique_settings_path();
+        // Neither path nor backup exists
+
+        let manager =
+            SettingsManager::with_secret_store(Box::new(MemorySecretStore::default()), path);
+
+        let settings = manager.get_app_settings().unwrap();
+        assert_eq!(settings, AppSettings::default());
+    }
+
     fn test_manager() -> SettingsManager {
         SettingsManager::with_secret_store(
             Box::<MemorySecretStore>::default(),
@@ -838,6 +1061,7 @@ mod tests {
 
     fn secret_store_unavailable_error() -> SettingsError {
         SettingsError {
+            domain: "settings",
             code: SettingsErrorCode::SecretStoreUnavailable,
             message: "unavailable".to_string(),
         }

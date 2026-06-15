@@ -30,7 +30,3 @@ export function computeVisibleSetupState(
 
   return base;
 }
-
-export function isReady(state: SetupState): boolean {
-  return state === "ready";
-}

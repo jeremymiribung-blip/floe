@@ -11,7 +11,10 @@
 use crate::asr::error::SessionError;
 use crate::asr::fallback::FallbackStrategy;
 use crate::asr::traits::{AsrProvider, AsrSession, TranscriptionError, TranscriptionErrorCode};
-use crate::asr::types::{AudioChunk, BackendType, HealthStatus, ModelSpec, ProviderCapabilities, SessionConfig, TranscriptResult, AsrDiagnostics};
+use crate::asr::types::{
+    AsrDiagnostics, AudioChunk, BackendType, HealthStatus, ModelSpec, ProviderCapabilities,
+    SessionConfig, TranscriptResult,
+};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -91,10 +94,7 @@ impl AsrProvider for TestProvider {
     fn available_models(&self) -> &[ModelSpec] {
         &[]
     }
-    async fn create_session(
-        &self,
-        _: SessionConfig,
-    ) -> Result<Box<dyn AsrSession>, SessionError> {
+    async fn create_session(&self, _: SessionConfig) -> Result<Box<dyn AsrSession>, SessionError> {
         Ok(Box::new(TestSession {
             succeed: self.succeed,
             retryable: self.retryable,
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn fallback_triggered_on_non_retryable_failure() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn primary_succeeds_no_fallback_used() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn no_fallback_returns_error() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn retryable_error_triggers_retry_then_fallback() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn fallback_preserves_audio_data() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -261,14 +261,10 @@ mod tests {
             };
 
             let audio_data = test_wav();
-            let result = FallbackStrategy::execute(
-                &primary,
-                Some(&fallback),
-                audio_data.clone(),
-                1000,
-            )
-            .await
-            .unwrap();
+            let result =
+                FallbackStrategy::execute(&primary, Some(&fallback), audio_data.clone(), 1000)
+                    .await
+                    .unwrap();
 
             // If we got a result, audio was preserved through fallback
             assert!(result.diagnostics.fallback_used);
@@ -279,7 +275,7 @@ mod tests {
     #[test]
     fn fallback_sets_correct_fallback_provider_name() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -292,9 +288,10 @@ mod tests {
                 retryable: false,
             };
 
-            let result = FallbackStrategy::execute(&primary, Some(&groq_fallback), test_wav(), 1000)
-                .await
-                .unwrap();
+            let result =
+                FallbackStrategy::execute(&primary, Some(&groq_fallback), test_wav(), 1000)
+                    .await
+                    .unwrap();
 
             assert!(result.diagnostics.fallback_used);
             assert_eq!(
@@ -307,7 +304,7 @@ mod tests {
     #[test]
     fn fallback_deterministic_order() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -335,7 +332,7 @@ mod tests {
     #[test]
     fn fallback_error_includes_primary_error_message() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -348,8 +345,8 @@ mod tests {
                 retryable: false,
             };
 
-            let result = FallbackStrategy::execute(&primary, Some(&fallback), test_wav(), 1000)
-                .await;
+            let result =
+                FallbackStrategy::execute(&primary, Some(&fallback), test_wav(), 1000).await;
 
             assert!(result.is_err());
             let err = result.unwrap_err();
@@ -361,7 +358,7 @@ mod tests {
     #[test]
     fn fallback_with_empty_audio_handled() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",
@@ -380,7 +377,7 @@ mod tests {
     #[test]
     fn fallback_retry_count_incremented() {
         let rt = create_runtime();
-        
+
         rt.block_on(async {
             let primary = TestProvider {
                 id: "primary",

@@ -39,7 +39,10 @@
       }
     ],
     "security": {
-      "csp": null
+      // CSP: 'unsafe-inline' on style-src is required by the frontend
+      // framework (React/Vite). All external resource loading is blocked
+      // intentionally for security.
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { StartAtLoginError, StartAtLoginStatus } from "../types/app";
+import { parseFloeError, startAtLoginErrorMessage } from "../lib/errors";
+import type { StartAtLoginStatus } from "../types/app";
 
 interface StartAtLoginRowProps {
   status: StartAtLoginStatus | null;
@@ -25,7 +26,7 @@ export function StartAtLoginRow({
       await onChange(nextEnabled);
       setMessage(null);
     } catch (caught) {
-      setMessage(startAtLoginErrorMessage(caught, nextEnabled));
+      setMessage(startAtLoginErrorMessage(parseFloeError(caught), nextEnabled));
     }
   }
 
@@ -54,24 +55,4 @@ export function StartAtLoginRow({
       ) : null}
     </div>
   );
-}
-
-function startAtLoginErrorMessage(caught: unknown, enabling: boolean): string {
-  const error = caught as Partial<StartAtLoginError>;
-
-  if (
-    error.message === "Could not enable start at login" ||
-    error.message === "Could not disable start at login" ||
-    error.message === "Start at login unavailable"
-  ) {
-    return error.message;
-  }
-
-  if (error.code === "unavailable") {
-    return "Start at login unavailable";
-  }
-
-  return enabling
-    ? "Could not enable start at login"
-    : "Could not disable start at login";
 }

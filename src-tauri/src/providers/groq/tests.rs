@@ -10,7 +10,7 @@ use std::{
 };
 
 use super::cleanup::{GroqCleanupClient, CHAT_COMPLETIONS_PATH, GROQ_CLEANUP_MODEL};
-use super::stt::{GroqTranscriptionClient, TRANSCRIPTIONS_PATH, GROQ_STT_MODEL};
+use super::stt::{GroqTranscriptionClient, GROQ_STT_MODEL, TRANSCRIPTIONS_PATH};
 use super::types::{GroqCleanupErrorCode, GroqTranscriptionErrorCode};
 
 #[tokio::test]
@@ -156,7 +156,9 @@ async fn mapped_error_messages_do_not_expose_api_key_or_response_body() {
 
     assert_eq!(error.code, GroqTranscriptionErrorCode::InvalidApiKey);
     assert!(!error.message.contains(api_key));
-    assert!(!error.message.contains("gsk_super_secret_test_key was rejected"));
+    assert!(!error
+        .message
+        .contains("gsk_super_secret_test_key was rejected"));
     assert_eq!(server.request_count(), 1);
 }
 
@@ -386,11 +388,10 @@ async fn cleanup_successful_request_sends_expected_payload() {
     assert!(request.contains(r#""role":"system""#));
     assert!(request.contains(r#""role":"user""#));
     assert!(request.contains(r#""temperature":0"#));
-    assert!(request.contains(
-        "You are an expert transcript cleanup engine for a push-to-talk dictation app."
-    ));
-    assert!(request.contains("Preserve the original language of the dictation."));
-    assert!(request.contains("Absolute Constraints:"));
+    assert!(request
+        .contains("You are an expert transcript cleanup engine for a push-to-talk dictation app."));
+    assert!(request.contains("Preserve all languages and code-switching exactly as in the input."));
+    assert!(request.contains("Absolute constraints:"));
     assert!(!request.contains("Clean this transcript"));
     assert!(request.contains("<transcript>"));
     assert!(request.contains("raw transcript"));
@@ -430,19 +431,12 @@ async fn cleanup_rate_limit_respects_retry_after_and_tracks_metadata() {
         MockResponse::json(429, r#"{"error":{"message":"slow down"}}"#)
             .with_header("Retry-After", "1")
             .with_header("x-ratelimit-remaining-requests", "0"),
-        MockResponse::json(
-            200,
-            r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#,
-        )
-        .with_header("x-ratelimit-remaining-requests", "8")
-        .with_header("x-ratelimit-reset-requests", "2s"),
+        MockResponse::json(200, r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#)
+            .with_header("x-ratelimit-remaining-requests", "8")
+            .with_header("x-ratelimit-reset-requests", "2s"),
     ]);
-    let client = GroqCleanupClient::for_test(
-        server.base_url(),
-        Duration::from_secs(2),
-        2,
-        Duration::ZERO,
-    );
+    let client =
+        GroqCleanupClient::for_test(server.base_url(), Duration::from_secs(2), 2, Duration::ZERO);
 
     let result = client
         .cleanup_transcript("gsk_test_key", "raw")
@@ -564,10 +558,7 @@ async fn cleanup_rate_limit_retries_with_bounded_attempts() {
 async fn cleanup_rate_limit_retries_until_success() {
     let server = MockServer::start(vec![
         MockResponse::json(429, r#"{"error":{"message":"slow down"}}"#),
-        MockResponse::json(
-            200,
-            r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#,
-        ),
+        MockResponse::json(200, r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#),
     ]);
     let client = test_cleanup_client(server.base_url());
 
@@ -585,10 +576,7 @@ async fn cleanup_rate_limit_retries_until_success() {
 async fn cleanup_server_errors_retry_until_success() {
     let server = MockServer::start(vec![
         MockResponse::json(503, r#"{"error":{"message":"down"}}"#),
-        MockResponse::json(
-            200,
-            r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#,
-        ),
+        MockResponse::json(200, r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#),
     ]);
     let client = test_cleanup_client(server.base_url());
 
@@ -690,22 +678,13 @@ fn cleanup_token_limit_uses_bounded_word_count() {
     assert_eq!(super::cleanup::cleanup_max_tokens_for("short text"), 64);
 
     let medium = "word ".repeat(100);
-    assert_eq!(
-        super::cleanup::cleanup_max_tokens_for(&medium),
-        200
-    );
+    assert_eq!(super::cleanup::cleanup_max_tokens_for(&medium), 200);
 
     let large = "word ".repeat(300);
-    assert_eq!(
-        super::cleanup::cleanup_max_tokens_for(&large),
-        600
-    );
+    assert_eq!(super::cleanup::cleanup_max_tokens_for(&large), 600);
 
     let very_large = "word ".repeat(2_000);
-    assert_eq!(
-        super::cleanup::cleanup_max_tokens_for(&very_large),
-        1024
-    );
+    assert_eq!(super::cleanup::cleanup_max_tokens_for(&very_large), 1024);
 }
 
 #[tokio::test]
@@ -791,12 +770,8 @@ async fn cleanup_rejects_empty_output() {
 #[tokio::test]
 async fn cleanup_unreachable_api_retries_and_reports_unreachable() {
     let server = BrokenServer::start(3);
-    let client = GroqCleanupClient::for_test(
-        server.base_url(),
-        Duration::from_secs(1),
-        3,
-        Duration::ZERO,
-    );
+    let client =
+        GroqCleanupClient::for_test(server.base_url(), Duration::from_secs(1), 3, Duration::ZERO);
 
     let error = client
         .cleanup_transcript("gsk_test_key", "raw")

@@ -11,7 +11,6 @@ pub struct MockProvider {
     pub id: &'static str,
     pub name: &'static str,
     pub fallback_compatible: bool,
-    pub local: bool,
     pub streaming: bool,
     pub healthy: bool,
 }
@@ -26,16 +25,8 @@ impl AsrProvider for MockProvider {
     }
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
-            backend_type: if self.local {
-                super::super::types::BackendType::Native
-            } else {
-                super::super::types::BackendType::Cloud
-            },
-            deployment: if self.local {
-                Deployment::Local
-            } else {
-                Deployment::Cloud
-            },
+            backend_type: super::super::types::BackendType::Cloud,
+            deployment: Deployment::Cloud,
             streaming: if self.streaming {
                 super::super::types::StreamingSupport::Full
             } else {
@@ -86,21 +77,19 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
 
         assert_eq!(registry.default_id(), Some("groq"));
     }
@@ -112,24 +101,22 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
-        registry.set_default("vosk").unwrap();
+        registry.register(other).unwrap();
+        registry.set_default("other").unwrap();
 
-        assert_eq!(registry.default_id(), Some("vosk"));
+        assert_eq!(registry.default_id(), Some("other"));
     }
 
     #[test]
@@ -139,29 +126,27 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
 
         let criteria = SelectionCriteria {
-            preferred: Some("vosk".to_string()),
+            preferred: Some("other".to_string()),
             ..Default::default()
         };
 
         let selected = registry.select(criteria).unwrap();
-        assert_eq!(selected.id(), "vosk");
+        assert_eq!(selected.id(), "other");
     }
 
     #[test]
@@ -171,21 +156,19 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
 
         let criteria = SelectionCriteria::default();
         let selected = registry.select(criteria).unwrap();
@@ -199,21 +182,19 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
 
         let criteria = SelectionCriteria {
             requires_fallback_compatible: true,
@@ -225,59 +206,25 @@ mod tests {
     }
 
     #[test]
-    fn select_local_provider() {
-        let mut registry = ProviderRegistry::new();
-        let groq = Box::new(MockProvider {
-            id: "groq",
-            name: "Groq",
-            fallback_compatible: true,
-            local: false,
-            streaming: true,
-            healthy: true,
-        });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
-            fallback_compatible: false,
-            local: true,
-            streaming: false,
-            healthy: true,
-        });
-
-        registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
-
-        let criteria = SelectionCriteria {
-            requires_local: true,
-            ..Default::default()
-        };
-
-        let selected = registry.select(criteria).unwrap();
-        assert_eq!(selected.id(), "vosk");
-    }
-
-    #[test]
     fn select_streaming_provider() {
         let mut registry = ProviderRegistry::new();
         let groq = Box::new(MockProvider {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
 
         let criteria = SelectionCriteria {
             requires_streaming: true,
@@ -295,26 +242,24 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
         registry.mark_disabled("groq");
 
         let criteria = SelectionCriteria::default();
         let selected = registry.select(criteria).unwrap();
-        assert_eq!(selected.id(), "vosk");
+        assert_eq!(selected.id(), "other");
     }
 
     #[test]
@@ -324,7 +269,6 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
@@ -332,10 +276,7 @@ mod tests {
         registry.register(groq).unwrap();
         registry.mark_disabled("groq");
 
-        let criteria = SelectionCriteria {
-            requires_local: true,
-            ..Default::default()
-        };
+        let criteria = SelectionCriteria::default();
 
         let result = registry.select(criteria);
         assert!(result.is_err());
@@ -352,21 +293,19 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: true,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
 
         let fallback = registry.fallback_provider().unwrap();
         assert_eq!(fallback.id(), "groq");
@@ -379,40 +318,37 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: true,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
         registry.register(groq).unwrap();
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
         registry.mark_disabled("groq");
 
         let fallback = registry.fallback_provider().unwrap();
-        assert_eq!(fallback.id(), "vosk");
+        assert_eq!(fallback.id(), "other");
     }
 
     #[test]
     fn fallback_provider_returns_none_when_no_compatible() {
         let mut registry = ProviderRegistry::new();
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
-        registry.register(vosk).unwrap();
+        registry.register(other).unwrap();
 
         assert!(registry.fallback_provider().is_none());
     }
@@ -424,7 +360,6 @@ mod tests {
             id: "groq",
             name: "Groq",
             fallback_compatible: true,
-            local: false,
             streaming: true,
             healthy: true,
         });
@@ -440,19 +375,18 @@ mod tests {
     #[test]
     fn experimental_flag() {
         let mut registry = ProviderRegistry::new();
-        let vosk = Box::new(MockProvider {
-            id: "vosk",
-            name: "Vosk",
+        let other = Box::new(MockProvider {
+            id: "other",
+            name: "Other",
             fallback_compatible: false,
-            local: true,
             streaming: false,
             healthy: true,
         });
 
-        registry.register(vosk).unwrap();
-        registry.mark_experimental("vosk");
+        registry.register(other).unwrap();
+        registry.mark_experimental("other");
 
-        assert!(registry.is_experimental("vosk"));
+        assert!(registry.is_experimental("other"));
         assert!(!registry.is_experimental("groq"));
     }
 }

@@ -2,12 +2,31 @@ mod asr;
 mod audio;
 mod cleanup;
 mod commands;
+mod contract;
+mod diag;
 mod lifecycle;
 mod prompts;
 mod providers;
 mod recording;
 mod settings;
 mod system;
+
+// ── Public re-exports for serialization contract tests (integration tests in tests/contract_tests.rs) ──
+pub use cleanup::TranscriptCleanupResult;
+pub use commands::clipboard::{ClipboardError, ClipboardErrorCode};
+pub use providers::groq::types::GroqTranscription;
+pub use recording::{
+    RecordingEndReason, RecordingError, RecordingErrorCode, RecordingInfo, RecordingState,
+    RecordingStatePayload, RecordingStatus,
+};
+pub use settings::{ApiKeyStatus, SettingsError, SettingsErrorCode};
+pub use system::autostart::{StartAtLoginError, StartAtLoginErrorCode, StartAtLoginStatus};
+pub use system::hotkey::{HotkeyError, HotkeyErrorCode, HotkeyStatus};
+
+#[cfg(test)]
+mod integration_tests;
+#[cfg(test)]
+mod test_helpers;
 
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -27,16 +46,27 @@ pub fn run() {
         .manage(recording::RecordingManager::with_cpal())
         .manage(system::hotkey::HotkeyManager::default())
         .manage(commands::diag::DiagLog::new())
+        .manage(diag::PipelineContext::new())
+        .manage(diag::PipelineTracer::new(20))
         .setup(|app| {
             use tauri::{Emitter, Manager};
 
             let is_background_launch = system::startup::is_background_launch_from_env();
             let config_dir = app.path().app_config_dir()?;
+            let diag_path = diag::default_diag_path(&config_dir);
+            let _ = diag::init(log::LevelFilter::Info, &diag_path, 2_000_000, 3);
+            log::info!("diagnostic_logger_initialized path={}", diag_path.display());
             let groq_http_client = providers::http::build_shared_http_client()?;
-            settings::migrate_legacy_keyring_entries();
-            let models_dir = config_dir.join("models");
-            app.manage(settings::SettingsManager::new(config_dir));
-            app.manage(providers::groq::GroqCleanupClient::new(groq_http_client.clone()));
+
+            let settings_manager = settings::SettingsManager::new(config_dir);
+            let mut app_settings = settings_manager.get_app_settings().unwrap_or_default();
+            settings::migrate_legacy_keyring_entries(&mut app_settings);
+            let _ = settings_manager.save_app_settings(app_settings);
+
+            app.manage(settings_manager);
+            app.manage(providers::groq::GroqCleanupClient::new(
+                groq_http_client.clone(),
+            ));
 
             let api_key = {
                 if let Some(settings) = app.try_state::<settings::SettingsManager>() {
@@ -55,18 +85,9 @@ pub fn run() {
                 api_key,
             )));
 
-            let session_cache = std::sync::Arc::new(
-                asr::adapters::onnx_runtime::SessionCache::new(models_dir),
-            );
-            let _ = registry.register(Box::new(
-                asr::adapters::onnx::WhisperOnnxProvider::new(session_cache),
-            ));
-            
             let registry = std::sync::Arc::new(registry);
-            let policy = asr::policy::ResourcePolicy::default()
-                .with_local_models(true);
-            let runtime = asr::state::RuntimeState::new("groq".to_string());
-            app.manage(asr::backend::AsrBackend::new(registry, policy, runtime));
+            let policy = asr::policy::ResourcePolicy::default();
+            app.manage(asr::backend::AsrBackend::new(registry, policy));
             system::tray::setup_tray(app)?;
             system::hotkey::register_startup_hotkey(app.handle());
 
@@ -76,6 +97,17 @@ pub fn run() {
                     let _ = emit_app.emit(
                         audio::RECORDING_LEVEL_EVENT,
                         audio::RecordingLevelPayload { level },
+                    );
+                }));
+
+                let state_app = app.handle().clone();
+                manager.set_state_emitter(Box::new(move |state: recording::RecordingState| {
+                    let _ = state_app.emit(
+                        audio::RECORDING_STATE_EVENT,
+                        recording::RecordingStatePayload {
+                            state,
+                            is_recording: state.is_active(),
+                        },
                     );
                 }));
             }
@@ -107,8 +139,6 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::app::get_app_status,
-            commands::app::run_manual_test_stub,
             commands::settings::save_api_key,
             commands::settings::clear_api_key,
             commands::settings::get_api_key_status,
@@ -125,7 +155,6 @@ pub fn run() {
             commands::recording::stop_recording,
             commands::recording::get_recording_status,
             commands::recording::get_latest_recording_info,
-            commands::recording::get_latest_recording_wav_bytes,
             commands::transcription::transcribe_latest_recording,
             commands::cleanup::cleanup_transcript,
             commands::clipboard::copy_text_to_clipboard,
@@ -134,6 +163,9 @@ pub fn run() {
             commands::bubble::bubble_show,
             commands::bubble::bubble_hide,
             commands::diag::diag_log,
+            commands::diag::diag_log_str,
+            commands::diag::get_recent_traces,
+            commands::diag::get_current_trace,
         ]);
 
     match builder.build(tauri::generate_context!()) {

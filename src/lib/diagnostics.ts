@@ -40,14 +40,6 @@ export interface PipelineDiagnostics {
     stt: string;
     cleanup: string;
   };
-  stt_provider: {
-    provider_name: string;
-    audio_duration_ms: number;
-    transcription_ms: number;
-    realtime_factor: number;
-    fallback_used: boolean;
-    error_code: string | null;
-  };
   audio: {
     format: "wav";
     sample_rate: number;
@@ -145,7 +137,6 @@ export function createPipelineDiagnostics(
       stt: input.stt?.model ?? input.sttError?.model ?? "",
       cleanup: input.cleanup?.model ?? "",
     },
-    stt_provider: sttProviderDiagnostics(input),
     audio: {
       format: recordingInfo?.wavFormat ?? "wav",
       sample_rate:
@@ -183,27 +174,6 @@ export function createPipelineDiagnostics(
   };
   assertDiagnosticsSafe(diagnostics);
   return diagnostics;
-}
-
-function sttProviderDiagnostics(
-  input: PipelineDiagnosticsInput,
-): PipelineDiagnostics["stt_provider"] {
-  const provider = input.stt?.sttProvider ?? input.sttError?.sttProvider;
-  const audioDurationMs =
-    provider?.audioDurationMs ?? input.recordingInfo?.durationMs ?? 0;
-  const transcriptionMs = provider?.transcriptionMs ?? input.sttDurationMs;
-
-  return {
-    provider_name: provider?.providerName ?? "",
-    audio_duration_ms: normalizeDuration(audioDurationMs),
-    transcription_ms: normalizeDuration(transcriptionMs),
-    realtime_factor: sanitizeRealtimeFactor(
-      provider?.realtimeFactor ??
-        realtimeFactor(transcriptionMs, audioDurationMs),
-    ),
-    fallback_used: provider?.fallbackUsed === true,
-    error_code: sanitizeDiagnosticCode(provider?.errorCode ?? null),
-  };
 }
 
 function rateLimitDiagnostics(
@@ -372,53 +342,4 @@ function normalizeDuration(value: number): number {
   return Math.round(value);
 }
 
-function realtimeFactor(
-  transcriptionMs: number,
-  audioDurationMs: number,
-): number {
-  if (
-    !Number.isFinite(transcriptionMs) ||
-    !Number.isFinite(audioDurationMs) ||
-    audioDurationMs <= 0
-  ) {
-    return 0;
-  }
 
-  return sanitizeRealtimeFactor(transcriptionMs / audioDurationMs);
-}
-
-function sanitizeRealtimeFactor(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    return 0;
-  }
-
-  return Math.round(value * 1000) / 1000;
-}
-
-function sanitizeDiagnosticCode(
-  value: string | null | undefined,
-): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const sanitized = value
-    .trim()
-    .split("")
-    .map((ch) => (/[a-zA-Z0-9_-]/.test(ch) ? ch.toLowerCase() : "_"))
-    .join("");
-
-  if (
-    sanitized.length === 0 ||
-    sanitized.length > 64 ||
-    sanitized.includes("bearer") ||
-    sanitized.includes("authorization") ||
-    sanitized.includes("api_key") ||
-    sanitized.includes("api-key") ||
-    sanitized.includes("gsk_")
-  ) {
-    return "internal";
-  }
-
-  return sanitized;
-}

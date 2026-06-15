@@ -1,5 +1,3 @@
-use std::future::Future;
-
 use serde::Serialize;
 
 use crate::providers::cleanup::{CleanupError, CleanupProvider, CleanupSuccess, RateLimitMetadata};
@@ -80,9 +78,11 @@ pub async fn cleanup_transcript_with(
     }
 }
 
-// Legacy signature for backward compatibility during migration.
-// Keeps the closure-based test API working.
-pub async fn cleanup_transcript_with_closure<F, Fut>(
+#[cfg(test)]
+use std::future::Future;
+
+#[cfg(test)]
+async fn cleanup_transcript_with_closure<F, Fut>(
     manager: &SettingsManager,
     transcript: String,
     clean_with: F,
@@ -114,7 +114,7 @@ mod tests {
 
     use super::cleanup_transcript_with_closure;
     use crate::{
-        providers::cleanup::{CleanupError, CleanupSuccess, RateLimitMetadata},
+        providers::cleanup::{CleanupError, CleanupSuccess},
         settings::{SecretStore, SettingsError, SettingsManager},
     };
 
@@ -171,12 +171,11 @@ mod tests {
     async fn falls_back_to_raw_transcript_when_key_is_missing() {
         let manager = test_manager();
 
-        let result = cleanup_transcript_with_closure(
-            &manager,
-            "raw transcript".to_string(),
-            |_, _| async { panic!("must not be called without a key") },
-        )
-        .await;
+        let result =
+            cleanup_transcript_with_closure(&manager, "raw transcript".to_string(), |_, _| async {
+                panic!("must not be called without a key")
+            })
+            .await;
 
         assert_eq!(result.text, "raw transcript");
         assert_eq!(result.warning.as_deref(), Some("Cleanup failed"));
@@ -191,10 +190,8 @@ mod tests {
             .save_api_key("gsk_12345678wxyz".to_string())
             .unwrap();
 
-        let result = cleanup_transcript_with_closure(
-            &manager,
-            "fallback text".to_string(),
-            |_, _| async {
+        let result =
+            cleanup_transcript_with_closure(&manager, "fallback text".to_string(), |_, _| async {
                 Err(CleanupError {
                     message: "cleanup failed".to_string(),
                     model: String::new(),
@@ -203,9 +200,8 @@ mod tests {
                     rate_limit: None,
                     error_code: None,
                 })
-            },
-        )
-        .await;
+            })
+            .await;
 
         assert_eq!(result.text, "fallback text");
         assert_eq!(result.warning.as_deref(), Some("Cleanup failed"));
@@ -240,12 +236,11 @@ mod tests {
     async fn fallback_model_defaults_to_empty_string_when_no_error() {
         let manager = test_manager();
 
-        let result = cleanup_transcript_with_closure(
-            &manager,
-            "raw transcript".to_string(),
-            |_, _| async { panic!("must not be called without a key") },
-        )
-        .await;
+        let result =
+            cleanup_transcript_with_closure(&manager, "raw transcript".to_string(), |_, _| async {
+                panic!("must not be called without a key")
+            })
+            .await;
 
         assert_eq!(result.text, "raw transcript");
         assert_eq!(result.model, "");
@@ -284,22 +279,20 @@ mod tests {
     async fn cleanup_only_uses_text_not_audio() {
         // Verify that cleanup only receives text, not audio data
         let manager = test_manager();
-        manager
-            .save_api_key("gsk_test_key".to_string())
-            .unwrap();
+        manager.save_api_key("gsk_test_key".to_string()).unwrap();
 
         let transcript_text = "This is a test transcript";
-        
+
         let result = cleanup_transcript_with_closure(
             &manager,
             transcript_text.to_string(),
-            |api_key, transcript| async move {
+            |_api_key, transcript| async move {
                 // Verify we received text, not audio
                 assert_eq!(transcript, "This is a test transcript");
                 assert!(!transcript.contains("audio"));
                 assert!(!transcript.contains("wav"));
                 assert!(!transcript.contains("bytes"));
-                
+
                 Ok(test_success("Cleaned transcript"))
             },
         )
@@ -313,24 +306,22 @@ mod tests {
     async fn cleanup_does_not_receive_audio_data() {
         // Verify that cleanup never receives audio bytes or WAV data
         let manager = test_manager();
-        manager
-            .save_api_key("gsk_test_key".to_string())
-            .unwrap();
+        manager.save_api_key("gsk_test_key".to_string()).unwrap();
 
         // This is the transcript text - cleanup should only see this, not any audio
         let transcript = "test audio transcript";
-        
+
         let result = cleanup_transcript_with_closure(
             &manager,
             transcript.to_string(),
             |_api_key, received_text| async move {
                 // The received text should be exactly what we sent
                 assert_eq!(received_text, "test audio transcript");
-                
+
                 // It should NOT be audio data
                 // Audio data would be binary or WAV format, not readable text
-                assert!(received_text.chars().all(|c| c.is_ascii()));
-                
+                assert!(received_text.is_ascii());
+
                 Ok(test_success("cleaned"))
             },
         )
@@ -344,9 +335,7 @@ mod tests {
         // Verify that cleanup works with any provider that implements CleanupProvider
         // This test uses a mock provider to show cleanup is not tied to any specific ASR provider
         let manager = test_manager();
-        manager
-            .save_api_key("gsk_test_key".to_string())
-            .unwrap();
+        manager.save_api_key("gsk_test_key".to_string()).unwrap();
 
         // Test with a non-Groq provider
         let result = cleanup_transcript_with_closure(

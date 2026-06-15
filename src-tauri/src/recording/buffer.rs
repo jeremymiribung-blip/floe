@@ -7,8 +7,8 @@ use super::{
     error::{recording_error, RecordingError, RecordingErrorCode},
     sample::AudioSample,
     types::{
-        RecordingEndReason, RecordingInfo, RecordingStatus, OUTPUT_CHANNELS, TARGET_WAV_SAMPLE_RATE,
-        WAV_BITS_PER_SAMPLE, WAV_FORMAT,
+        RecordingEndReason, RecordingInfo, RecordingStatus, OUTPUT_CHANNELS,
+        TARGET_WAV_SAMPLE_RATE, WAV_BITS_PER_SAMPLE, WAV_FORMAT,
     },
     wav::encode_recording_wav,
 };
@@ -129,6 +129,7 @@ impl RecordingBuffer {
             max_duration_seconds: super::MAX_RECORDING_DURATION_SECONDS,
             latest_recording,
             last_error,
+            trace_id: None,
         }
     }
 
@@ -259,7 +260,10 @@ mod tests {
         assert_eq!(completed.info.input_channels, 2);
         assert_eq!(completed.info.output_channels, 1);
         assert_eq!(completed.info.wav_format, "wav");
-        assert_eq!(completed.info.wav_sample_rate, super::TARGET_WAV_SAMPLE_RATE);
+        assert_eq!(
+            completed.info.wav_sample_rate,
+            super::TARGET_WAV_SAMPLE_RATE
+        );
         assert_eq!(completed.info.wav_channels, 1);
         assert_eq!(completed.info.sample_count, 3);
         assert_eq!(completed.info.duration_ms, 3);
@@ -312,13 +316,8 @@ mod tests {
 
     #[test]
     fn device_disconnect_finalizes_status_without_microphone() {
-        let mut buffer = RecordingBuffer::new(
-            48_000,
-            1,
-            Duration::from_secs(120),
-            1000,
-        );
-        let meter = LevelMeter::new();
+        let mut buffer = RecordingBuffer::new(48_000, 1, Duration::from_secs(120), 1000);
+        let _meter = LevelMeter::new();
 
         buffer.append_interleaved(&[0.25_f32, 0.25], &LevelMeter::new());
         buffer.mark_device_disconnected();
@@ -326,6 +325,9 @@ mod tests {
         let completed = buffer
             .into_completed(RecordingEndReason::DeviceDisconnected)
             .expect("buffer should complete with device disconnected");
-        assert_eq!(completed.info.ended_reason, RecordingEndReason::DeviceDisconnected);
+        assert_eq!(
+            completed.info.ended_reason,
+            RecordingEndReason::DeviceDisconnected
+        );
     }
 }

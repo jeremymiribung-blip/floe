@@ -137,7 +137,10 @@ mod tests {
     fn sanitize_error_code_redacts_bearer_tokens() {
         assert_eq!(sanitize_error_code("Bearer abc123"), "internal");
         assert_eq!(sanitize_error_code("bearer xyz"), "internal");
-        assert_eq!(sanitize_error_code("Authorization: Bearer token"), "internal");
+        assert_eq!(
+            sanitize_error_code("Authorization: Bearer token"),
+            "internal"
+        );
     }
 
     #[test]
@@ -182,17 +185,7 @@ mod tests {
     fn diag_log_does_not_write_without_path() {
         let diag = DiagLog::new();
         let entry = DiagEntry::new(
-            "groq",
-            "whisper",
-            "cloud",
-            1000,
-            500,
-            0,
-            0.5,
-            false,
-            None,
-            0,
-            None,
+            "groq", "whisper", "cloud", 1000, 500, 0, 0.5, false, None, 0, None,
         );
 
         // Should not panic or write anywhere
@@ -283,17 +276,7 @@ mod tests {
         // DiagEntry intentionally does NOT have a text field
         // This is enforced at compile time
         let entry = DiagEntry::new(
-            "groq",
-            "whisper",
-            "cloud",
-            1000,
-            500,
-            0,
-            0.5,
-            false,
-            None,
-            0,
-            None,
+            "groq", "whisper", "cloud", 1000, 500, 0, 0.5, false, None, 0, None,
         );
 
         // We cannot access entry.text because it doesn't exist
@@ -305,17 +288,7 @@ mod tests {
     fn diag_entry_struct_has_no_audio_field() {
         // DiagEntry intentionally does NOT have an audio field
         let entry = DiagEntry::new(
-            "groq",
-            "whisper",
-            "cloud",
-            1000,
-            500,
-            0,
-            0.5,
-            false,
-            None,
-            0,
-            None,
+            "groq", "whisper", "cloud", 1000, 500, 0, 0.5, false, None, 0, None,
         );
 
         let _ = entry;

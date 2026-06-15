@@ -6,11 +6,12 @@ use async_trait::async_trait;
 use crate::asr::error::SessionError;
 use crate::asr::traits::{AsrProvider, AsrSession, TranscriptionError, TranscriptionErrorCode};
 use crate::asr::types::{
-    AudioChunk, BackendType, Deployment, HealthStatus, ModelSpec, ProviderCapabilities,
-    SessionConfig, StreamingSupport, TranscriptResult, AsrDiagnostics,
+    AsrDiagnostics, AudioChunk, BackendType, Deployment, HealthStatus, ModelSpec,
+    ProviderCapabilities, SessionConfig, StreamingSupport, TranscriptResult,
 };
 use crate::providers::groq::stt::GroqTranscriptionClient;
 use crate::providers::groq::{GroqTranscriptionError, GroqTranscriptionErrorCode, GROQ_STT_MODEL};
+use crate::recording::encode_pcm16_wav;
 
 #[derive(Debug)]
 pub struct GroqAdapter {
@@ -155,11 +156,11 @@ impl AsrSession for GroqSession {
     async fn finalize(self: Box<Self>) -> Result<TranscriptResult, TranscriptionError> {
         let samples = {
             let mut data = self.audio_data.lock().map_err(|_| {
-                return TranscriptionError::new(
+                TranscriptionError::new(
                     TranscriptionErrorCode::Internal,
                     "failed to lock audio buffer",
                     false,
-                );
+                )
             })?;
             std::mem::take(&mut *data)
         };
@@ -173,7 +174,13 @@ impl AsrSession for GroqSession {
         }
 
         let sample_rate = self.sample_rate.load(Ordering::SeqCst).max(16000);
-        let wav_bytes = encode_f32_to_wav(&samples, sample_rate);
+        let wav_bytes = encode_pcm16_wav(&samples, sample_rate, 1).map_err(|_| {
+            TranscriptionError::new(
+                TranscriptionErrorCode::Internal,
+                "failed to encode WAV audio",
+                false,
+            )
+        })?;
         let started = std::time::Instant::now();
 
         match self.client.transcribe_wav(&self.api_key, wav_bytes).await {
@@ -214,8 +221,9 @@ impl From<GroqTranscriptionError> for TranscriptionError {
             GroqTranscriptionErrorCode::UnsupportedAudio => {
                 TranscriptionErrorCode::UnsupportedAudio
             }
-            GroqTranscriptionErrorCode::InvalidRequest
-            | GroqTranscriptionErrorCode::EmptyAudio => TranscriptionErrorCode::InvalidRequest,
+            GroqTranscriptionErrorCode::InvalidRequest | GroqTranscriptionErrorCode::EmptyAudio => {
+                TranscriptionErrorCode::InvalidRequest
+            }
             GroqTranscriptionErrorCode::ServerError => TranscriptionErrorCode::ServerError,
         };
         let retryable = matches!(
@@ -227,46 +235,6 @@ impl From<GroqTranscriptionError> for TranscriptionError {
         );
         TranscriptionError::new(code, err.message, retryable)
     }
-}
-
-fn encode_f32_to_wav(samples: &[f32], sample_rate: u32) -> Vec<u8> {
-    let channels: u16 = 1;
-    let bits_per_sample: u16 = 16;
-    let bytes_per_sample = (bits_per_sample / 8) as u32;
-    let block_align = channels as u32 * bytes_per_sample;
-    let byte_rate = sample_rate * block_align;
-    let data_size = samples.len() as u32 * bytes_per_sample;
-    let file_size = 36 + data_size;
-
-    let mut wav = Vec::with_capacity(44 + data_size as usize);
-
-    wav.extend_from_slice(b"RIFF");
-    wav.extend_from_slice(&file_size.to_le_bytes());
-    wav.extend_from_slice(b"WAVE");
-
-    wav.extend_from_slice(b"fmt ");
-    wav.extend_from_slice(&16u32.to_le_bytes());
-    wav.extend_from_slice(&1u16.to_le_bytes());
-    wav.extend_from_slice(&channels.to_le_bytes());
-    wav.extend_from_slice(&sample_rate.to_le_bytes());
-    wav.extend_from_slice(&byte_rate.to_le_bytes());
-    wav.extend_from_slice(&(block_align as u16).to_le_bytes());
-    wav.extend_from_slice(&bits_per_sample.to_le_bytes());
-
-    wav.extend_from_slice(b"data");
-    wav.extend_from_slice(&data_size.to_le_bytes());
-
-    for &sample in samples {
-        let clamped = sample.clamp(-1.0, 1.0);
-        let int_sample = if clamped >= 0.0 {
-            (clamped * i16::MAX as f32) as i16
-        } else {
-            (clamped * (i16::MIN as f32 * -1.0)) as i16
-        };
-        wav.extend_from_slice(&int_sample.to_le_bytes());
-    }
-
-    wav
 }
 
 #[cfg(test)]
@@ -310,9 +278,9 @@ mod tests {
     }
 
     #[test]
-    fn encode_f32_to_wav_produces_valid_header() {
+    fn pcm16_wav_via_encode_pcm16_has_correct_header() {
         let samples = vec![0.0f32, 0.5, -0.5, 1.0, -1.0];
-        let wav = encode_f32_to_wav(&samples, 16000);
+        let wav = encode_pcm16_wav(&samples, 16000, 1).expect("wav encoding should succeed");
 
         assert_eq!(&wav[0..4], b"RIFF");
         assert_eq!(&wav[8..12], b"WAVE");
@@ -336,9 +304,9 @@ mod tests {
     }
 
     #[test]
-    fn encode_f32_to_wav_sample_values() {
+    fn pcm16_wav_via_encode_pcm16_has_correct_sample_values() {
         let samples = vec![0.0f32, 1.0, -1.0];
-        let wav = encode_f32_to_wav(&samples, 16000);
+        let wav = encode_pcm16_wav(&samples, 16000, 1).expect("wav encoding should succeed");
 
         let first = i16::from_le_bytes([wav[44], wav[45]]);
         assert_eq!(first, 0);

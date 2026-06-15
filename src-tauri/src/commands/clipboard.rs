@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use enigo::{
     Direction::{Click, Press, Release},
@@ -8,6 +8,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+use crate::diag::{DiagEvent, PipelineContext};
 use crate::lifecycle::{log_lifecycle, LifecycleLevel};
 
 const CLIPBOARD_SETTLE_DELAY: Duration = Duration::from_millis(50);
@@ -15,6 +16,7 @@ const CLIPBOARD_SETTLE_DELAY: Duration = Duration::from_millis(50);
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardError {
+    pub domain: &'static str,
     pub code: ClipboardErrorCode,
     pub message: String,
 }
@@ -26,21 +28,21 @@ pub enum ClipboardErrorCode {
     PasteUnavailable,
 }
 
-trait TextClipboard {
+pub(crate) trait TextClipboard {
     fn write_text(&self, text: &str) -> Result<(), ClipboardError>;
 }
 
-trait PasteSimulator {
+pub(crate) trait PasteSimulator {
     fn paste_shortcut(&self, shortcut: PasteShortcut) -> Result<(), ClipboardError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct PasteShortcut {
-    modifier: PasteModifier,
+pub(crate) struct PasteShortcut {
+    pub(crate) modifier: PasteModifier,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PasteModifier {
+pub(crate) enum PasteModifier {
     Control,
     Meta,
 }
@@ -87,35 +89,124 @@ impl PasteSimulator for EnigoPasteSimulator {
 }
 
 #[tauri::command]
-pub fn copy_text_to_clipboard(app: AppHandle, text: String) -> Result<(), ClipboardError> {
+pub fn copy_text_to_clipboard(
+    app: AppHandle,
+    diag_ctx: tauri::State<'_, PipelineContext>,
+    text: String,
+) -> Result<(), ClipboardError> {
+    let trace_id = diag_ctx.current_trace_id().unwrap_or_default();
     let clipboard = TauriTextClipboard { app };
+    let start = Instant::now();
 
-    copy_text_to_clipboard_with(&clipboard, &text, log_clipboard_failure)
+    let result = copy_text_to_clipboard_with(&clipboard, &text, log_clipboard_failure);
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok(()) => {
+            log::info!(
+                "{}",
+                DiagEvent::ClipboardWritten {
+                    trace_id,
+                    duration_ms
+                }
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "{}",
+                DiagEvent::ClipboardFailed {
+                    trace_id,
+                    duration_ms,
+                    error_code: format!("{:?}", e.code),
+                }
+            );
+        }
+    }
+
+    result
 }
 
 #[tauri::command]
-pub fn paste_text(app: AppHandle, text: String) -> Result<(), ClipboardError> {
+pub fn paste_text(
+    app: AppHandle,
+    diag_ctx: tauri::State<'_, PipelineContext>,
+    text: String,
+) -> Result<(), ClipboardError> {
+    let trace_id = diag_ctx.current_trace_id().unwrap_or_default();
     let clipboard = TauriTextClipboard { app };
     let paste_simulator = EnigoPasteSimulator;
 
-    paste_text_with(
+    let start = Instant::now();
+    let result = paste_text_with(
         &clipboard,
         &paste_simulator,
         &text,
         std::thread::sleep,
         log_clipboard_failure,
         log_paste_failure,
-    )
+    );
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok(()) => {
+            log::info!(
+                "{}",
+                DiagEvent::PasteDone {
+                    trace_id,
+                    duration_ms
+                }
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "{}",
+                DiagEvent::PasteFailed {
+                    trace_id,
+                    duration_ms,
+                    error_code: format!("{:?}", e.code),
+                }
+            );
+        }
+    }
+
+    result
 }
 
 #[tauri::command]
-pub fn paste_clipboard() -> Result<(), ClipboardError> {
+pub fn paste_clipboard(diag_ctx: tauri::State<'_, PipelineContext>) -> Result<(), ClipboardError> {
+    let trace_id = diag_ctx.current_trace_id().unwrap_or_default();
     let paste_simulator = EnigoPasteSimulator;
 
-    paste_clipboard_with(&paste_simulator, log_paste_failure)
+    let start = Instant::now();
+    let result = paste_clipboard_with(&paste_simulator, log_paste_failure);
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    match &result {
+        Ok(()) => {
+            log::info!(
+                "{}",
+                DiagEvent::PasteDone {
+                    trace_id,
+                    duration_ms
+                }
+            );
+        }
+        Err(e) => {
+            log::error!(
+                "{}",
+                DiagEvent::PasteFailed {
+                    trace_id,
+                    duration_ms,
+                    error_code: format!("{:?}", e.code),
+                }
+            );
+        }
+    }
+
+    result
 }
 
-fn copy_text_to_clipboard_with(
+pub(crate) fn copy_text_to_clipboard_with(
     clipboard: &impl TextClipboard,
     text: &str,
     log_failure: impl FnOnce(),
@@ -151,7 +242,7 @@ fn paste_text_with(
     }
 }
 
-fn paste_clipboard_with(
+pub(crate) fn paste_clipboard_with(
     paste_simulator: &impl PasteSimulator,
     log_paste_failure: impl FnOnce(),
 ) -> Result<(), ClipboardError> {
@@ -201,6 +292,7 @@ fn paste_unavailable_error() -> ClipboardError {
 
 fn clipboard_error(code: ClipboardErrorCode, message: &'static str) -> ClipboardError {
     ClipboardError {
+        domain: "clipboard",
         code,
         message: message.to_string(),
     }

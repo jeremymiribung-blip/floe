@@ -1,23 +1,30 @@
 import type {
   AppState,
+  RecordingState,
   SttResult,
-  SttError,
   RecordingInfo,
   RecordingStatus,
   TranscriptCleanupResult,
+  FloeError,
 } from "../types/app";
+import { parseFloeError, floeErrorCode } from "./errors";
 import {
   createPipelineDiagnostics,
   diagnosticsToJson,
   type PipelineStage,
 } from "./diagnostics";
 import { diagLog } from "./tauri";
+import { MAX_RECORDING_DURATION_SECS, WATCHDOG_GRACE_SECS } from "./contract";
 
 export type ShortcutState = "Pressed" | "Released";
 
-const MAX_RECORDING_DURATION_MS = 120_000;
-const WATCHDOG_GRACE_MS = 5_000;
-const WATCHDOG_TIMEOUT_MS = MAX_RECORDING_DURATION_MS + WATCHDOG_GRACE_MS;
+/**
+ * Frontend safety watchdog timeout.
+ * Must equal (MAX_RECORDING_DURATION_SECS + WATCHDOG_GRACE_SECS) * 1000.
+ * This is the same formula as the backend's watchdog in RecordingManager.
+ */
+const WATCHDOG_TIMEOUT_MS =
+  (MAX_RECORDING_DURATION_SECS + WATCHDOG_GRACE_SECS) * 1000;
 
 export interface PushToTalkDependencies {
   startRecording: () => Promise<RecordingStatus>;
@@ -36,14 +43,12 @@ export interface PushToTalkCallbacks {
   onLatestRecordingChange: (recording: RecordingInfo) => void;
   onTranscriptChange: (transcript: string | null) => void;
   onDiagnosticsChange?: (json: string | null) => void;
-  errorMessage: (caught: unknown) => string;
+  errorMessage: (error: FloeError) => string;
 }
 
 export class PushToTalkController {
-  private hotkeyDown = false;
-  private startInFlight = false;
+  private recordingState: RecordingState = "idle";
   private releaseAfterStart = false;
-  private recording = false;
   private finishing = false;
   private activeTraceStartedAt = 0;
   private hotkeyToRecordingStartMs = 0;
@@ -62,9 +67,20 @@ export class PushToTalkController {
     return this.latestDiagnosticsJson;
   }
 
+  syncRecordingState(state: RecordingState): void {
+    this.recordingState = state;
+    if (state === "idle" || state === "stopping") {
+      this.finishing = false;
+      this.clearWatchdog();
+    }
+    if (state === "idle" && !this.finishing) {
+      this.releaseAfterStart = false;
+    }
+  }
+
   async handleShortcutState(state: ShortcutState): Promise<void> {
     diagLog(
-      `[FE] handleShortcutState: ${state} hotkeyDown=${this.hotkeyDown} recording=${this.recording} startInFlight=${this.startInFlight} finishing=${this.finishing} releaseAfterStart=${this.releaseAfterStart}`,
+      `[FE] handleShortcutState: ${state} recordingState=${this.recordingState} finishing=${this.finishing} releaseAfterStart=${this.releaseAfterStart}`,
     );
     if (state === "Pressed") {
       await this.handlePressed();
@@ -75,71 +91,74 @@ export class PushToTalkController {
   }
 
   private async handlePressed(): Promise<void> {
-    if (this.hotkeyDown) {
+    if (this.recordingState !== "idle") {
       return;
     }
 
-    this.hotkeyDown = true;
-    if (this.startInFlight || this.recording || this.finishing) {
-      return;
-    }
-
+    this.recordingState = "starting";
+    this.callbacks.onStateChange("starting");
     this.activeTraceStartedAt = this.nowMs();
     await this.startRecording();
   }
 
   private async handleReleased(): Promise<void> {
     diagLog(
-      `[FE] handleReleased: hotkeyDown=${this.hotkeyDown} startInFlight=${this.startInFlight} recording=${this.recording} finishing=${this.finishing}`,
+      `[FE] handleReleased: recordingState=${this.recordingState} finishing=${this.finishing}`,
     );
-    this.hotkeyDown = false;
 
-    if (this.startInFlight) {
+    if (this.recordingState === "starting") {
       diagLog(`[FE] handleReleased: setting releaseAfterStart=true`);
       this.releaseAfterStart = true;
       return;
     }
 
-    if (!this.recording || this.finishing) {
+    if (this.recordingState !== "recording" || this.finishing) {
       diagLog(
-        `[FE] handleReleased: early return - recording=${this.recording} finishing=${this.finishing}`,
+        `[FE] handleReleased: early return - recordingState=${this.recordingState} finishing=${this.finishing}`,
       );
       return;
     }
 
+    this.recordingState = "stopping";
+    this.callbacks.onStateChange("stopping");
     diagLog(`[FE] handleReleased: calling finishRecording`);
     await this.finishRecording();
   }
 
   private async startRecording(): Promise<void> {
-    this.startInFlight = true;
     this.releaseAfterStart = false;
     this.callbacks.onErrorChange(null);
     this.callbacks.onTranscriptChange(null);
 
     try {
       const status = await this.dependencies.startRecording();
-      this.recording = true;
+      this.recordingState = "recording";
       this.hotkeyToRecordingStartMs = this.nowMs() - this.activeTraceStartedAt;
       this.callbacks.onRecordingStatusChange(status);
       this.callbacks.onStateChange("recording");
       this.scheduleWatchdog();
     } catch (caught) {
-      this.recording = false;
+      this.recordingState = "idle";
       this.releaseAfterStart = false;
-      this.callbacks.onErrorChange(this.callbacks.errorMessage(caught));
+      this.callbacks.onErrorChange(
+        this.callbacks.errorMessage(parseFloeError(caught)),
+      );
       this.callbacks.onStateChange("error");
-    } finally {
-      this.startInFlight = false;
     }
 
     const shouldFinishAfterStart = this.releaseAfterStart;
     this.releaseAfterStart = false;
     diagLog(
-      `[FE] startRecording done: shouldFinishAfterStart=${shouldFinishAfterStart} recording=${this.recording} finishing=${this.finishing}`,
+      `[FE] startRecording done: shouldFinishAfterStart=${shouldFinishAfterStart} recordingState=${this.recordingState} finishing=${this.finishing}`,
     );
 
-    if (shouldFinishAfterStart && this.recording && !this.finishing) {
+    if (
+      shouldFinishAfterStart &&
+      this.recordingState === "recording" &&
+      !this.finishing
+    ) {
+      this.recordingState = "stopping";
+      this.callbacks.onStateChange("stopping");
       await this.finishRecording();
     }
   }
@@ -161,11 +180,11 @@ export class PushToTalkController {
 
   private async forceStopRecording(): Promise<void> {
     this.clearWatchdog();
-    if (!this.recording || this.finishing) {
+    if (this.recordingState !== "recording" || this.finishing) {
       return;
     }
 
-    this.recording = false;
+    this.recordingState = "idle";
     try {
       await this.dependencies.stopRecording();
     } catch {
@@ -183,14 +202,17 @@ export class PushToTalkController {
     this.finishing = true;
     this.clearWatchdog();
     this.callbacks.onErrorChange(null);
-    if (this.recording) {
-      this.recording = false;
+    if (
+      this.recordingState === "recording" ||
+      this.recordingState === "stopping"
+    ) {
+      this.recordingState = "idle";
       this.callbacks.onStateChange("ready");
     }
     const totalStartedAt = this.activeTraceStartedAt || this.nowMs();
     let latestRecording: RecordingInfo | null = null;
     let transcription: SttResult | null = null;
-    let transcriptionError: Partial<SttError> | null = null;
+    let transcriptionError: FloeError | null = null;
     let cleanup: TranscriptCleanupResult | null = null;
     let cleanupFallbackUsed = false;
     let cleanupValidationMs = 0;
@@ -215,10 +237,10 @@ export class PushToTalkController {
         transcription = await this.dependencies.transcribeLatestRecording();
       } catch (caught) {
         sttDurationMs = this.nowMs() - sttStartedAt;
-        transcriptionError = caught as Partial<SttError>;
+        transcriptionError = parseFloeError(caught);
         errorStage = "stt";
-        sanitizedErrorCode = sanitizedCode(caught);
-        throw caught;
+        sanitizedErrorCode = floeErrorCode(transcriptionError);
+        throw transcriptionError;
       }
       sttDurationMs = this.nowMs() - sttStartedAt;
 
@@ -259,7 +281,8 @@ export class PushToTalkController {
         pasteSuccess = true;
         this.callbacks.onStateChange("pasted");
       } catch (caught) {
-        sanitizedErrorCode = sanitizedCode(caught);
+        const error = parseFloeError(caught);
+        sanitizedErrorCode = floeErrorCode(error);
         if (clipboardSuccess) {
           pasteAttemptMs = this.nowMs() - pasteStartedAt;
           errorStage = "paste";
@@ -270,14 +293,15 @@ export class PushToTalkController {
         }
         clipboardWriteMs = this.nowMs() - clipboardStartedAt;
         errorStage = "clipboard";
-        throw caught;
+        throw error;
       }
     } catch (caught) {
+      const error = parseFloeError(caught);
       if (errorStage === null) {
         errorStage = "recording";
-        sanitizedErrorCode = sanitizedCode(caught);
+        sanitizedErrorCode = floeErrorCode(error);
       }
-      this.callbacks.onErrorChange(this.callbacks.errorMessage(caught));
+      this.callbacks.onErrorChange(this.callbacks.errorMessage(error));
       this.callbacks.onStateChange("error");
     } finally {
       this.storeDiagnostics({
@@ -302,7 +326,7 @@ export class PushToTalkController {
         errorStage,
         sanitizedErrorCode,
       });
-      this.recording = false;
+      this.recordingState = "idle";
       this.finishing = false;
     }
   }
@@ -313,6 +337,7 @@ export class PushToTalkController {
     try {
       return await this.dependencies.cleanupTranscript(transcript);
     } catch (caught) {
+      const error = parseFloeError(caught);
       return {
         text: transcript,
         warning: "Cleanup failed",
@@ -320,7 +345,7 @@ export class PushToTalkController {
         retryCount: 0,
         validationMs: 0,
         fallbackUsed: true,
-        errorCode: sanitizedCode(caught) ?? undefined,
+        errorCode: floeErrorCode(error),
       };
     }
   }
@@ -350,19 +375,6 @@ export class PushToTalkController {
       this.callbacks.onDiagnosticsChange?.(null);
     }
   }
-}
-
-function sanitizedCode(caught: unknown): string | null {
-  const maybeCode = caught as Partial<{ code: string; errorCode: string }>;
-
-  if (typeof maybeCode.code === "string") {
-    return maybeCode.code;
-  }
-  if (typeof maybeCode.errorCode === "string") {
-    return maybeCode.errorCode;
-  }
-
-  return null;
 }
 
 function defaultNowMs(): number {

@@ -7,11 +7,11 @@ use tauri_plugin_global_shortcut::{
 };
 
 use crate::{
-    lifecycle::{log_lifecycle, LifecycleLevel},
+    lifecycle::{can_accept_commands, log_lifecycle, LifecycleLevel},
     settings::{AppSettings, HotkeySettings, SettingsError, SettingsManager},
 };
 
-pub const HOTKEY_EVENT: &str = "floe-global-hotkey-state";
+pub use crate::contract::EVENT_HOTKEY_STATE as HOTKEY_EVENT;
 const HOTKEY_UNAVAILABLE: &str = "Hotkey unavailable";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -27,6 +27,7 @@ pub struct HotkeyStatus {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyError {
+    pub domain: &'static str,
     pub code: HotkeyErrorCode,
     pub message: String,
 }
@@ -58,6 +59,7 @@ pub struct HotkeyManager {
     state: Mutex<HotkeyRuntimeState>,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for HotkeyManager {
     fn default() -> Self {
         Self {
@@ -360,24 +362,27 @@ pub fn normalize_hotkey_settings_for_os(
 }
 
 fn emit_hotkey_event<R: Runtime>(app: &AppHandle<R>, event: ShortcutEvent) {
+    if !can_accept_commands() {
+        return;
+    }
+
     let state = match event.state {
         ShortcutState::Pressed => HotkeyEventState::Pressed,
         ShortcutState::Released => HotkeyEventState::Released,
     };
 
-    eprintln!(
-        "[DIAG] emit_hotkey_event: state={:?} thread={:?}",
+    log::debug!(
+        "event=emit_hotkey_event state={:?} thread={:?}",
         state,
         std::thread::current().id(),
     );
 
     let app2 = app.clone();
     let result = app.run_on_main_thread(move || {
-        eprintln!("[DIAG] run_on_main_thread closure executing on thread={:?}", std::thread::current().id());
         let emit_result = app2.emit(HOTKEY_EVENT, HotkeyEventPayload { state });
-        eprintln!("[DIAG] emit result={:?}", emit_result);
+        log::debug!("event=hotkey_emit_result result={:?}", emit_result);
     });
-    eprintln!("[DIAG] run_on_main_thread returned: {:?}", result);
+    log::debug!("event=run_on_main_thread returned={:?}", result);
 }
 
 fn parse_shortcut(accelerator: &str) -> Result<Shortcut, HotkeyError> {
@@ -482,12 +487,14 @@ fn map_registration_error(error: tauri_plugin_global_shortcut::Error) -> HotkeyE
 
     if lower.contains("already") || lower.contains("taken") || lower.contains("register hotkey") {
         return HotkeyError {
+            domain: "hotkey",
             code: HotkeyErrorCode::AlreadyInUse,
             message: "This shortcut is already in use.".to_string(),
         };
     }
 
     HotkeyError {
+        domain: "hotkey",
         code: HotkeyErrorCode::RegistrationFailed,
         message: "Hotkey could not be registered.".to_string(),
     }
@@ -495,6 +502,7 @@ fn map_registration_error(error: tauri_plugin_global_shortcut::Error) -> HotkeyE
 
 fn map_unregister_error(_error: tauri_plugin_global_shortcut::Error) -> HotkeyError {
     HotkeyError {
+        domain: "hotkey",
         code: HotkeyErrorCode::UnregisterFailed,
         message: "Hotkey could not be unregistered.".to_string(),
     }
@@ -502,6 +510,7 @@ fn map_unregister_error(_error: tauri_plugin_global_shortcut::Error) -> HotkeyEr
 
 fn invalid_hotkey_error() -> HotkeyError {
     HotkeyError {
+        domain: "hotkey",
         code: HotkeyErrorCode::InvalidHotkey,
         message: "Enter a valid shortcut.".to_string(),
     }
@@ -509,6 +518,7 @@ fn invalid_hotkey_error() -> HotkeyError {
 
 fn unsupported_hotkey_error() -> HotkeyError {
     HotkeyError {
+        domain: "hotkey",
         code: HotkeyErrorCode::UnsupportedHotkey,
         message: "This shortcut is not supported.".to_string(),
     }
@@ -517,6 +527,7 @@ fn unsupported_hotkey_error() -> HotkeyError {
 impl HotkeyError {
     pub fn from_settings(_error: SettingsError) -> Self {
         Self {
+            domain: "hotkey",
             code: HotkeyErrorCode::SettingsUnavailable,
             message: "App settings could not be loaded or saved.".to_string(),
         }
@@ -526,6 +537,7 @@ impl HotkeyError {
 impl From<HotkeyError> for SettingsError {
     fn from(_error: HotkeyError) -> Self {
         SettingsError {
+            domain: "settings",
             code: crate::settings::SettingsErrorCode::InvalidAppSettings,
             message: "Enter a valid hotkey.".to_string(),
         }
@@ -535,10 +547,7 @@ impl From<HotkeyError> for SettingsError {
 pub fn validate_app_hotkey_settings(settings: AppSettings) -> Result<AppSettings, SettingsError> {
     let hotkey = normalize_hotkey_settings(settings.hotkey).map_err(SettingsError::from)?;
 
-    Ok(AppSettings {
-        hotkey,
-        stt_provider: settings.stt_provider,
-    })
+    Ok(AppSettings { hotkey, ..settings })
 }
 
 #[cfg(test)]
@@ -561,6 +570,7 @@ mod tests {
         fn register(&mut self, hotkey: &HotkeySettings) -> Result<(), HotkeyError> {
             if self.failed.contains(&hotkey.accelerator) {
                 return Err(HotkeyError {
+                    domain: "hotkey",
                     code: HotkeyErrorCode::AlreadyInUse,
                     message: "This shortcut is already in use.".to_string(),
                 });
@@ -568,6 +578,7 @@ mod tests {
 
             if self.registered.contains(&hotkey.accelerator) {
                 return Err(HotkeyError {
+                    domain: "hotkey",
                     code: HotkeyErrorCode::AlreadyInUse,
                     message: "This shortcut is already in use.".to_string(),
                 });

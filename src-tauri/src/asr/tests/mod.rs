@@ -2,14 +2,13 @@
 //!
 //! These tests verify:
 //! - Generic provider selection and registration
-//! - Fallback to Groq behavior
+//! - Fallback behavior
 //! - Diagnostics privacy (no transcript/audio/key leakage)
 //! - Resource policy enforcement
 //! - No regressions in bubble, recording, clipboard
 
-pub mod provider_selection;
+pub mod diagnostics_tests;
 pub mod fallback_tests;
 pub mod policy_tests;
-pub mod diagnostics_tests;
 pub mod privacy_tests;
-pub mod onnx_tests;
+pub mod provider_selection;

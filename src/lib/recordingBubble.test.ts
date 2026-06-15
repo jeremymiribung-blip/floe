@@ -6,7 +6,9 @@ describe("shouldShowBubble", () => {
   const allStates: AppState[] = [
     "idle",
     "ready",
+    "starting",
     "recording",
+    "stopping",
     "transcribing",
     "cleaning",
     "pasting",
@@ -15,9 +17,14 @@ describe("shouldShowBubble", () => {
     "error",
   ];
 
-  it.each(allStates)("is true only for recording (%s)", (state) => {
-    expect(shouldShowBubble(state)).toBe(state === "recording");
-  });
+  it.each(allStates)(
+    "is true for starting, recording, stopping (%s)",
+    (state) => {
+      expect(shouldShowBubble(state)).toBe(
+        state === "starting" || state === "recording" || state === "stopping",
+      );
+    },
+  );
 
   it("hides for transcribing", () => {
     expect(shouldShowBubble("transcribing")).toBe(false);
@@ -41,6 +48,18 @@ describe("shouldShowBubble", () => {
 
   it("hides for error", () => {
     expect(shouldShowBubble("error")).toBe(false);
+  });
+
+  it("shows for starting", () => {
+    expect(shouldShowBubble("starting")).toBe(true);
+  });
+
+  it("shows for recording", () => {
+    expect(shouldShowBubble("recording")).toBe(true);
+  });
+
+  it("shows for stopping", () => {
+    expect(shouldShowBubble("stopping")).toBe(true);
   });
 
   it("hides for idle and ready", () => {

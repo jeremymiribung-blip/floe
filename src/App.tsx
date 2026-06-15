@@ -1,10 +1,22 @@
 import { listen } from "@tauri-apps/api/event";
+import {
+  EVENT_SHOW_SETTINGS,
+  EVENT_SHUTTING_DOWN,
+  listenHotkeyState,
+  listenRecordingStateChanged,
+} from "./lib/contract";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppShell } from "./components/AppShell";
 import { OnboardingView } from "./components/OnboardingView";
 import { OverviewView } from "./components/OverviewView";
 import { SettingsView } from "./components/SettingsView";
 import { clipboardErrorMessage } from "./lib/clipboardErrors";
+import {
+  isFloeErrorDomain,
+  floeErrorMessage,
+  parseFloeError,
+  startAtLoginErrorMessage,
+} from "./lib/errors";
 import { isMacLikePlatform } from "./lib/hotkeyCapture";
 import { PushToTalkController } from "./lib/pushToTalk";
 import { recordingErrorMessage } from "./lib/recordingErrors";
@@ -33,13 +45,9 @@ import {
 import { getStartAtLoginStatus as loadStartAtLoginStatus } from "./lib/tauri";
 import type {
   AppState,
-  ClipboardError,
   ApiKeyStatus,
-  SttError,
-  HotkeyError,
+  FloeError,
   HotkeyStatus,
-  SettingsError,
-  StartAtLoginError,
   StartAtLoginStatus,
 } from "./types/app";
 
@@ -74,6 +82,7 @@ export default function App() {
   >(null);
   const [showHotkeyStepAfterSave, setShowHotkeyStepAfterSave] = useState(false);
   const controllerRef = useRef<PushToTalkController | null>(null);
+  const shuttingDownRef = useRef(false);
 
   if (controllerRef.current === null) {
     controllerRef.current = new PushToTalkController(
@@ -133,6 +142,12 @@ export default function App() {
 
   const handleHotkeyEvent = useCallback(
     async (state: "Pressed" | "Released") => {
+      if (shuttingDownRef.current) {
+        diagLog("[FE] handleHotkeyEvent: ignored during shutdown");
+        void bubbleHide();
+        return;
+      }
+
       diagLog(`[FE] handleHotkeyEvent: state=${state}`);
       if (state === "Released") {
         void bubbleHide();
@@ -140,9 +155,9 @@ export default function App() {
 
       try {
         await controllerRef.current?.handleShortcutState(state);
-      } catch {
+      } catch (caught) {
         setAppState("error");
-        setError("Recording failed");
+        setError(floeErrorMessage(parseFloeError(caught)));
         void bubbleHide();
       }
     },
@@ -157,13 +172,11 @@ export default function App() {
     let isActive = true;
     let unlisten: (() => void) | null = null;
 
-    listen<{ state: "Pressed" | "Released" }>(
-      "floe-global-hotkey-state",
-      (event) => {
-        diagLog(`[FE] listen callback: state=${event.payload.state}`);
-        void handleHotkeyEvent(event.payload.state);
-      },
-    )
+    listenHotkeyState((payload) => {
+      if (!isActive) return;
+      diagLog(`[FE] listenHotkeyState: state=${payload.state}`);
+      void handleHotkeyEvent(payload.state);
+    })
       .then((nextUnlisten) => {
         if (isActive) {
           unlisten = nextUnlisten;
@@ -192,7 +205,7 @@ export default function App() {
     let isActive = true;
     let unlisten: (() => void) | null = null;
 
-    listen("floe-show-settings", () => {
+    listen(EVENT_SHOW_SETTINGS, () => {
       setView("settings");
     })
       .then((nextUnlisten) => {
@@ -212,6 +225,64 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    let isActive = true;
+    let unlisten: (() => void) | null = null;
+
+    listen(EVENT_SHUTTING_DOWN, () => {
+      shuttingDownRef.current = true;
+      void bubbleHide();
+    })
+      .then((nextUnlisten) => {
+        if (isActive) {
+          unlisten = nextUnlisten;
+        } else {
+          nextUnlisten();
+        }
+      })
+      .catch(() => {
+        // Shutdown notification is best-effort; the backend terminates regardless.
+      });
+
+    return () => {
+      isActive = false;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    let isActive = true;
+    let unlisten: (() => void) | null = null;
+
+    listenRecordingStateChanged((payload) => {
+      if (!isActive) return;
+      controllerRef.current?.syncRecordingState(payload.state);
+    })
+      .then((nextUnlisten) => {
+        if (isActive) {
+          unlisten = nextUnlisten;
+        } else {
+          nextUnlisten();
+        }
+      })
+      .catch(() => {
+        // State sync is best-effort; the frontend self-heals on next invoke.
+      });
+
+    return () => {
+      isActive = false;
+      unlisten?.();
+    };
+  }, []);
+
   const handleSaveApiKey = useCallback(
     async (value: string) => {
       const wasConfigured = apiKeyStatus?.configured === true;
@@ -222,7 +293,7 @@ export default function App() {
         setShowHotkeyStepAfterSave(!wasConfigured);
         setError(null);
       } catch (caught) {
-        throw settingsErrorForOnboarding(caught);
+        throw settingsErrorForOnboarding(parseFloeError(caught));
       }
     },
     [apiKeyStatus],
@@ -235,7 +306,7 @@ export default function App() {
       setShowHotkeyStepAfterSave(false);
       setError(null);
     } catch (caught) {
-      setError(settingsErrorMessage(caught));
+      setError(settingsErrorMessage(parseFloeError(caught)));
       throw caught;
     }
   }, []);
@@ -246,7 +317,7 @@ export default function App() {
       setHotkeyStatus(next);
       setError(null);
     } catch (caught) {
-      throw hotkeyErrorForOnboarding(caught);
+      throw hotkeyErrorForOnboarding(parseFloeError(caught));
     }
   }, []);
 
@@ -256,7 +327,7 @@ export default function App() {
       setHotkeyStatus(next);
       setError(null);
     } catch (caught) {
-      setError(hotkeyErrorMessage(caught));
+      setError(hotkeyErrorMessage(parseFloeError(caught)));
     }
   }, []);
 
@@ -266,7 +337,7 @@ export default function App() {
       setStartAtLoginStatus(next);
       setError(null);
     } catch (caught) {
-      setError(startAtLoginErrorMessage(caught, enabled));
+      setError(startAtLoginErrorMessage(parseFloeError(caught), enabled));
       throw caught;
     }
   }, []);
@@ -293,11 +364,17 @@ export default function App() {
     appState === "transcribing" ||
     appState === "cleaning" ||
     appState === "pasting" ||
-    appState === "recording";
+    appState === "starting" ||
+    appState === "recording" ||
+    appState === "stopping";
   const dynamicStatus = error ?? statusLabel(appState);
 
   useEffect(() => {
-    if (appState === "recording") {
+    if (
+      appState === "recording" ||
+      appState === "starting" ||
+      appState === "stopping"
+    ) {
       void bubbleShow();
     } else {
       void bubbleHide();
@@ -355,96 +432,45 @@ export default function App() {
   );
 }
 
-function settingsErrorForOnboarding(caught: unknown): Error {
-  const settingsError = caught as Partial<SettingsError>;
-
-  if (typeof settingsError.message === "string") {
-    return new Error(settingsError.message);
-  }
-
-  return new Error("Could not save key");
+function settingsErrorForOnboarding(error: FloeError): Error {
+  return new Error(floeErrorMessage(error));
 }
 
-function settingsErrorMessage(caught: unknown): string {
-  const settingsError = caught as Partial<SettingsError>;
-
-  if (typeof settingsError.message === "string") {
-    return settingsError.message;
-  }
-
-  return "Settings could not be saved.";
+function settingsErrorMessage(error: FloeError): string {
+  return floeErrorMessage(error) || "Settings could not be saved.";
 }
 
-function hotkeyErrorForOnboarding(caught: unknown): Error {
-  const message = hotkeyErrorMessage(caught);
-
-  if (message === "Hotkey unavailable") {
-    return new Error(message);
-  }
-
-  return new Error(message);
+function hotkeyErrorForOnboarding(error: FloeError): Error {
+  return new Error(hotkeyErrorMessage(error));
 }
 
-function hotkeyErrorMessage(caught: unknown): string {
-  const hotkeyError = caught as Partial<HotkeyError>;
-
-  if (hotkeyError.code === "alreadyInUse") {
-    return "Hotkey unavailable";
+function hotkeyErrorMessage(error: FloeError): string {
+  if (isFloeErrorDomain(error, "hotkey")) {
+    if (
+      error.code === "alreadyInUse" ||
+      error.code === "unsupportedHotkey" ||
+      error.code === "registrationFailed"
+    ) {
+      return "Hotkey unavailable";
+    }
+    return error.message;
   }
-  if (hotkeyError.code === "unsupportedHotkey") {
-    return "Hotkey unavailable";
-  }
-  if (hotkeyError.code === "registrationFailed") {
-    return "Hotkey unavailable";
-  }
-  if (typeof hotkeyError.message === "string") {
-    return hotkeyError.message;
-  }
-
   return "Hotkey unavailable";
 }
 
-function startAtLoginErrorMessage(caught: unknown, enabling: boolean): string {
-  const startAtLoginError = caught as Partial<StartAtLoginError>;
-
-  if (
-    startAtLoginError.message === "Could not enable start at login" ||
-    startAtLoginError.message === "Could not disable start at login" ||
-    startAtLoginError.message === "Start at login unavailable"
-  ) {
-    return startAtLoginError.message;
+function pushToTalkErrorMessage(error: FloeError): string {
+  if (isFloeErrorDomain(error, "clipboard")) {
+    return clipboardErrorMessage(error);
   }
-
-  if (startAtLoginError.code === "unavailable") {
-    return "Start at login unavailable";
+  if (isFloeErrorDomain(error, "stt")) {
+    return transcriptionErrorMessage(error);
   }
-
-  return enabling
-    ? "Could not enable start at login"
-    : "Could not disable start at login";
+  if (isFloeErrorDomain(error, "recording")) {
+    return recordingErrorMessage(error);
+  }
+  return error.message;
 }
 
-function pushToTalkErrorMessage(caught: unknown): string {
-  const maybeClipboardError = caught as Partial<ClipboardError>;
-  if (
-    maybeClipboardError.code === "clipboardUnavailable" ||
-    maybeClipboardError.code === "pasteUnavailable"
-  ) {
-    return clipboardErrorMessage(caught);
-  }
-
-  const maybeTranscriptionError = caught as Partial<SttError>;
-  if (typeof maybeTranscriptionError.code === "string") {
-    return transcriptionErrorMessage(caught);
-  }
-
-  return recordingErrorMessage(caught);
-}
-
-function transcriptionErrorMessage(caught: unknown): string {
-  const transcriptionError = caught as Partial<SttError>;
-  if (typeof transcriptionError.message === "string") {
-    return transcriptionError.message;
-  }
-  return "Transcription failed";
+function transcriptionErrorMessage(error: FloeError): string {
+  return floeErrorMessage(error) || "Transcription failed";
 }

@@ -51,12 +51,7 @@ pub struct SessionError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionErrorCode {
-    ProviderNotFound,
-    ModelUnavailable,
-    SessionLimitReached,
-    GpuMemoryExhausted,
     InvalidConfig,
-    AlreadyFinalized,
     Internal,
 }
 
@@ -79,7 +74,6 @@ pub struct RegistryError {
 pub enum RegistryErrorCode {
     DuplicateProvider,
     ProviderNotFound,
-    DefaultProviderNotRegistered,
 }
 
 impl RegistryError {
@@ -101,8 +95,6 @@ pub struct SelectionError {
 pub enum SelectionErrorCode {
     NoSuitableProvider,
     PreferredProviderUnavailable,
-    PreferredProviderUnhealthy,
-    AllProvidersDisabled,
 }
 
 impl SelectionError {
@@ -136,8 +128,8 @@ mod tests {
 
     #[test]
     fn session_error_constructs() {
-        let err = SessionError::new(SessionErrorCode::SessionLimitReached, "too many sessions");
-        assert_eq!(err.code, SessionErrorCode::SessionLimitReached);
+        let err = SessionError::new(SessionErrorCode::Internal, "internal error");
+        assert_eq!(err.code, SessionErrorCode::Internal);
     }
 
     #[test]

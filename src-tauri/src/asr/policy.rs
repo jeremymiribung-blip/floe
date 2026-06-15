@@ -2,9 +2,6 @@
 pub struct ResourcePolicy {
     pub max_concurrent_sessions: usize,
     pub session_timeout_secs: u64,
-    pub gpu_memory_limit_mb: Option<u64>,
-    pub allow_local_models: bool,
-    pub allow_streaming: bool,
     pub max_audio_duration_secs: u64,
     pub max_audio_bytes: u64,
 }
@@ -14,9 +11,6 @@ impl Default for ResourcePolicy {
         Self {
             max_concurrent_sessions: 1,
             session_timeout_secs: 60,
-            gpu_memory_limit_mb: None,
-            allow_local_models: false,
-            allow_streaming: false,
             max_audio_duration_secs: 120,
             max_audio_bytes: 25_000_000,
         }
@@ -24,16 +18,6 @@ impl Default for ResourcePolicy {
 }
 
 impl ResourcePolicy {
-    pub fn with_local_models(mut self, allow: bool) -> Self {
-        self.allow_local_models = allow;
-        self
-    }
-
-    pub fn with_streaming(mut self, allow: bool) -> Self {
-        self.allow_streaming = allow;
-        self
-    }
-
     pub fn validate_audio(&self, duration_secs: u64, bytes: u64) -> Result<(), PolicyViolation> {
         if duration_secs > self.max_audio_duration_secs {
             return Err(PolicyViolation::AudioTooLong {
@@ -65,17 +49,8 @@ mod tests {
     fn default_policy_values() {
         let p = ResourcePolicy::default();
         assert_eq!(p.max_concurrent_sessions, 1);
-        assert!(!p.allow_local_models);
-        assert!(!p.allow_streaming);
-    }
-
-    #[test]
-    fn builder_methods() {
-        let p = ResourcePolicy::default()
-            .with_local_models(true)
-            .with_streaming(true);
-        assert!(p.allow_local_models);
-        assert!(p.allow_streaming);
+        assert_eq!(p.max_audio_duration_secs, 120);
+        assert_eq!(p.max_audio_bytes, 25_000_000);
     }
 
     #[test]

@@ -7,11 +7,35 @@ use super::{
     },
 };
 
+fn apply_agc(samples: &mut [f32]) {
+    const TARGET_RMS: f32 = 0.158;
+    const MAX_GAIN: f32 = 10.0;
+    const NOISE_FLOOR: f32 = 0.001;
+
+    if samples.is_empty() {
+        return;
+    }
+
+    let sum_sq: f64 = samples.iter().map(|s| (*s as f64).powi(2)).sum();
+    let rms = ((sum_sq / samples.len() as f64).sqrt()) as f32;
+
+    if rms <= NOISE_FLOOR || !rms.is_finite() {
+        return;
+    }
+
+    let gain = (TARGET_RMS / rms).min(MAX_GAIN);
+
+    for sample in samples.iter_mut() {
+        *sample = (*sample * gain).clamp(-1.0, 1.0);
+    }
+}
+
 pub fn encode_recording_wav(
     samples: &[f32],
     input_sample_rate: u32,
 ) -> Result<Vec<u8>, RecordingError> {
-    let output_samples = resample_mono_linear(samples, input_sample_rate, TARGET_WAV_SAMPLE_RATE)?;
+    let mut output_samples = resample_mono_linear(samples, input_sample_rate, TARGET_WAV_SAMPLE_RATE)?;
+    apply_agc(&mut output_samples);
     encode_pcm16_wav(&output_samples, TARGET_WAV_SAMPLE_RATE, OUTPUT_CHANNELS)
 }
 
@@ -70,23 +94,18 @@ pub fn encode_pcm16_wav(
         ));
     }
 
-    let data_len = samples
-        .len()
-        .checked_mul(2)
-        .ok_or_else(|| {
-            recording_error(
-                RecordingErrorCode::WavEncodingFailed,
-                "Recording WAV bytes could not be encoded.",
-            )
-        })?;
-    let riff_chunk_size = 36usize
-        .checked_add(data_len)
-        .ok_or_else(|| {
-            recording_error(
-                RecordingErrorCode::WavEncodingFailed,
-                "Recording WAV bytes could not be encoded.",
-            )
-        })?;
+    let data_len = samples.len().checked_mul(2).ok_or_else(|| {
+        recording_error(
+            RecordingErrorCode::WavEncodingFailed,
+            "Recording WAV bytes could not be encoded.",
+        )
+    })?;
+    let riff_chunk_size = 36usize.checked_add(data_len).ok_or_else(|| {
+        recording_error(
+            RecordingErrorCode::WavEncodingFailed,
+            "Recording WAV bytes could not be encoded.",
+        )
+    })?;
     if riff_chunk_size > u32::MAX as usize || data_len > u32::MAX as usize {
         return Err(recording_error(
             RecordingErrorCode::WavEncodingFailed,
@@ -102,14 +121,12 @@ pub fn encode_pcm16_wav(
                 "Recording WAV bytes could not be encoded.",
             )
         })?;
-    let byte_rate = sample_rate
-        .checked_mul(block_align as u32)
-        .ok_or_else(|| {
-            recording_error(
-                RecordingErrorCode::WavEncodingFailed,
-                "Recording WAV bytes could not be encoded.",
-            )
-        })?;
+    let byte_rate = sample_rate.checked_mul(block_align as u32).ok_or_else(|| {
+        recording_error(
+            RecordingErrorCode::WavEncodingFailed,
+            "Recording WAV bytes could not be encoded.",
+        )
+    })?;
 
     let mut wav = Vec::with_capacity(WAV_HEADER_LEN + data_len);
     wav.extend_from_slice(b"RIFF");
@@ -163,14 +180,12 @@ fn validate_pcm16_wav_header(
                 "Recording WAV bytes could not be encoded.",
             )
         })?;
-    let expected_riff_size = 36usize
-        .checked_add(expected_data_len)
-        .ok_or_else(|| {
-            recording_error(
-                RecordingErrorCode::WavEncodingFailed,
-                "Recording WAV bytes could not be encoded.",
-            )
-        })?;
+    let expected_riff_size = 36usize.checked_add(expected_data_len).ok_or_else(|| {
+        recording_error(
+            RecordingErrorCode::WavEncodingFailed,
+            "Recording WAV bytes could not be encoded.",
+        )
+    })?;
 
     let is_valid = wav.len() == expected_len
         && wav.get(0..4) == Some(b"RIFF")
@@ -212,10 +227,10 @@ pub fn read_u32_le(bytes: &[u8], offset: usize) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-use super::{
-    encode_pcm16_wav, encode_recording_wav, float_to_pcm16, read_u16_le, read_u32_le,
-    resample_mono_linear, RecordingErrorCode, TARGET_WAV_SAMPLE_RATE, WAV_HEADER_LEN,
-};
+    use super::{
+        apply_agc, encode_pcm16_wav, encode_recording_wav, float_to_pcm16, read_u16_le,
+        read_u32_le, resample_mono_linear, RecordingErrorCode, WAV_HEADER_LEN,
+    };
 
     #[test]
     fn wav_header_matches_pcm16_mono_recording() {
@@ -294,6 +309,50 @@ use super::{
         assert_eq!(pcm, vec![-32768, -16384, 0, 16384, 32767]);
         assert_eq!(float_to_pcm16(f32::NAN), 0);
         assert_eq!(float_to_pcm16(f32::INFINITY), 0);
+    }
+
+    #[test]
+    fn agc_boosts_quiet_signal() {
+        let mut samples = vec![0.01_f32; 1000];
+        apply_agc(&mut samples);
+
+        let rms = (samples.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / samples.len() as f64).sqrt() as f32;
+        assert!(rms > 0.01, "AGC should boost quiet signal, rms={rms}");
+        assert!(rms <= 0.2, "AGC should not over-boost, rms={rms}");
+    }
+
+    #[test]
+    fn agc_reduces_loud_signal() {
+        let mut samples = vec![0.8_f32; 1000];
+        apply_agc(&mut samples);
+
+        let rms = (samples.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / samples.len() as f64).sqrt() as f32;
+        assert!(rms < 0.8, "AGC should reduce loud signal, rms={rms}");
+        assert!(rms > 0.05, "AGC should not silence signal, rms={rms}");
+    }
+
+    #[test]
+    fn agc_skips_silence() {
+        let mut samples = vec![0.0_f32; 100];
+        apply_agc(&mut samples);
+
+        assert!(samples.iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn agc_clamps_output() {
+        let mut samples = vec![-0.5_f32, 0.5];
+        apply_agc(&mut samples);
+
+        for s in &samples {
+            assert!((-1.0..=1.0).contains(s), "sample {s} out of range");
+        }
+    }
+
+    #[test]
+    fn agc_handles_empty_slice() {
+        let mut samples: Vec<f32> = vec![];
+        apply_agc(&mut samples);
     }
 
     #[test]

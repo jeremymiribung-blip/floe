@@ -1,8 +1,7 @@
 use std::time::{Duration, Instant};
 
+use crate::providers::cleanup::RateLimitMetadata;
 use reqwest::header::HeaderMap;
-
-use super::types::GroqRateLimitMetadata;
 
 pub const MAX_ATTEMPTS: usize = 3;
 pub const INITIAL_RETRY_BACKOFF: Duration = Duration::from_millis(250);
@@ -16,8 +15,8 @@ pub fn retry_after(headers: &HeaderMap) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
-pub fn rate_limit_metadata(headers: &HeaderMap) -> Option<GroqRateLimitMetadata> {
-    let metadata = GroqRateLimitMetadata {
+pub fn rate_limit_metadata(headers: &HeaderMap) -> Option<RateLimitMetadata> {
+    let metadata = RateLimitMetadata {
         remaining_requests: header_value(headers, "x-ratelimit-remaining-requests"),
         remaining_tokens: header_value(headers, "x-ratelimit-remaining-tokens"),
         reset_requests: header_value(headers, "x-ratelimit-reset-requests"),
@@ -25,7 +24,7 @@ pub fn rate_limit_metadata(headers: &HeaderMap) -> Option<GroqRateLimitMetadata>
         retry_after_seconds: retry_after(headers).map(|duration| duration.as_secs()),
     };
 
-    if metadata == GroqRateLimitMetadata::default() {
+    if metadata == RateLimitMetadata::default() {
         None
     } else {
         Some(metadata)

@@ -3,8 +3,8 @@ use tauri::{AppHandle, Emitter, LogicalPosition, Manager, Monitor, Runtime, Wind
 
 use crate::lifecycle::{log_lifecycle, LifecycleLevel};
 
-pub const OVERLAY_WINDOW_LABEL: &str = "recording-bubble";
-const OVERLAY_STATE_EVENT: &str = "recording-bubble-state";
+pub use crate::contract::BUBBLE_WINDOW_LABEL as OVERLAY_WINDOW_LABEL;
+pub use crate::contract::EVENT_BUBBLE_STATE as OVERLAY_STATE_EVENT;
 const OVERLAY_WIDTH: f64 = 170.0;
 const OVERLAY_HEIGHT: f64 = 48.0;
 const OVERLAY_BOTTOM_MARGIN: f64 = 64.0;

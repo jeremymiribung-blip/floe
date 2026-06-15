@@ -21,19 +21,17 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 cpal = "0.17.3"
 async-trait = "0.1"
-rustfft = "6"
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+log = { version = "0.4", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "config-json5"] }
 tauri-plugin-clipboard-manager = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 enigo = "0.6"
 tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-autostart = "2"
-ort = { version = "2.0.0-rc.12", features = ["load-dynamic"] }
-tokenizers = "0.23.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
@@ -42,5 +40,5 @@ windows = { version = "0.58", features = ["Win32_UI_Input_KeyboardAndMouse", "Wi
 tauri-plugin-single-instance = "2"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }
 tempfile = "3"

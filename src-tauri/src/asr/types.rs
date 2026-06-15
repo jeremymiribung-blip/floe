@@ -3,15 +3,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BackendType {
-    Native,
-    Onnx,
     Cloud,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Deployment {
-    Local,
     Cloud,
 }
 
@@ -99,7 +96,6 @@ pub struct SelectionCriteria {
     pub preferred: Option<String>,
     pub audio_duration_ms: u64,
     pub requires_fallback_compatible: bool,
-    pub requires_local: bool,
     pub requires_streaming: bool,
 }
 
@@ -171,10 +167,6 @@ impl AsrDiagnostics {
 }
 
 impl HealthStatus {
-    pub fn is_healthy(&self) -> bool {
-        matches!(self, Self::Healthy)
-    }
-
     pub fn is_eligible_for_fallback(&self) -> bool {
         matches!(self, Self::Healthy | Self::Degraded(_))
     }
@@ -233,10 +225,6 @@ pub fn sanitize_error_code(code: &str) -> String {
     }
 }
 
-pub fn elapsed_ms(started: std::time::Instant) -> u64 {
-    started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,7 +259,7 @@ mod tests {
         let d = AsrDiagnostics::new(
             "whisper_local",
             "base",
-            BackendType::Native,
+            BackendType::Cloud,
             1000,
             200,
             "macos",

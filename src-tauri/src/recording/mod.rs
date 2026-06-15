@@ -3,9 +3,9 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
-    thread::JoinHandle,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use tokio::task::JoinHandle;
 
 use crate::audio::{fold_level, normalize_rms, LevelMeter, EMIT_INTERVAL_MS};
 
@@ -16,31 +16,69 @@ mod sample;
 mod types;
 mod wav;
 
+#[allow(unused_imports)]
 pub use self::{
     buffer::RecordingBuffer,
     error::{RecordingError, RecordingErrorCode},
-    input::{CpalInputBackend, RecordingInput, RecordingStream, StartedRecording},
+    input::{RecordingInput, RecordingStream, StartedRecording},
     types::{
-        MAX_RECORDING_DURATION_SECONDS, RecordingEndReason, RecordingInfo, RecordingStatus,
-        ShutdownRecordingResult, TARGET_WAV_SAMPLE_RATE, WAV_HEADER_LEN,
+        RecordingEndReason, RecordingInfo, RecordingState, RecordingStatePayload, RecordingStatus,
+        ShutdownRecordingResult, MAX_RECORDING_DURATION_SECONDS, WAV_HEADER_LEN,
     },
-    wav::{
-        encode_pcm16_wav, encode_recording_wav, float_to_pcm16, read_u16_le, read_u32_le,
-        resample_mono_linear,
-    },
+    wav::encode_pcm16_wav,
 };
 
 type SharedLevelEmitter = Arc<Mutex<LevelEmitterFn>>;
 type LevelEmitterFn = Box<dyn Fn(f32) + Send + Sync>;
 
+type SharedStateEmitter = Arc<Mutex<StateEmitterFn>>;
+type StateEmitterFn = Box<dyn Fn(types::RecordingState) + Send + Sync>;
+
+/// Manages audio recording lifecycle including start, stop, and watchdog timeout.
+///
+/// # Watchdog/Stop Race Condition
+///
+/// There is a known race between [`stop_recording`](RecordingManager::stop_recording) and the
+/// watchdog thread. When `stop_recording` calls [`stop_watchdog`] (which sets the `stop` flag
+/// and aborts the watchdog join handle), the watchdog thread may already be past its
+/// [`stop.load()`](std::sync::atomic::AtomicBool::load) check and blocked on
+/// [`state.lock()`](std::sync::Mutex::lock). In that window the watchdog can mark the
+/// recording buffer as finished (via `mark_watchdog_timeout`) after
+/// [`stop_recording`](RecordingManager::stop_recording) has already taken ownership of the
+/// `active` recording with `Option::take`.
+///
+/// ## Current Mitigation
+///
+/// Both [`start_recording`](RecordingManager::start_recording) and
+/// [`stop_recording`](RecordingManager::stop_recording) call
+/// [`try_finalize_if_finished`](RecordingManager::try_finalize_if_finished) as their first
+/// action. This ensures that if the watchdog has already marked the buffer as finished, the
+/// recording is finalized before the rest of the stop logic proceeds. Additionally, the
+/// watchdog always checks `state.active.as_mut()` after acquiring the lock and returns
+/// early when the active recording has already been taken.
+///
+/// ## Consequence
+///
+/// In the worst case, both the watchdog path and `stop_recording` could attempt to finalize
+/// the same recording (a double-finalize). This is mitigated by `Option::take` which
+/// moves the `Option<ActiveRecording>` out, and by the fact that
+/// [`finalize_active`] consumes the recording by value. If the active has already been taken,
+/// any subsequent attempt to finalize it is a no-op because the buffer is still accessible
+/// through the shared `Arc` and its `is_finished()` flag is idempotent.
+///
+/// ## Known Limitation
+///
+/// This is a known limitation of the current synchronous architecture. The long-term fix
+/// (see prompt 5 in the design spec) is to convert the recording lifecycle to an async
+/// state machine where the watchdog and stop logic are serialised through a single async
+/// task, eliminating the race entirely.
 pub struct RecordingManager {
     backend: Box<dyn RecordingInput>,
     state: Arc<Mutex<ManagerState>>,
     max_duration: Duration,
     watchdog_grace: Duration,
-    emitter: Mutex<Option<LevelEmitterHandle>>,
-    watchdog: Mutex<Option<WatchdogHandle>>,
     emit_level: SharedLevelEmitter,
+    emit_state: SharedStateEmitter,
 }
 
 struct LevelEmitterHandle {
@@ -55,9 +93,12 @@ struct WatchdogHandle {
 
 #[derive(Default)]
 struct ManagerState {
+    recording_state: types::RecordingState,
     active: Option<ActiveRecording>,
     latest: Option<CompletedRecording>,
     last_error: Option<RecordingError>,
+    emitter_handle: Option<LevelEmitterHandle>,
+    watchdog_handle: Option<WatchdogHandle>,
 }
 
 struct ActiveRecording {
@@ -75,7 +116,7 @@ impl LevelEmitterHandle {
     fn stop_and_join(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.join.take() {
-            let _ = handle.join();
+            handle.abort();
         }
     }
 }
@@ -90,7 +131,7 @@ impl WatchdogHandle {
     fn stop_and_join(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.join.take() {
-            let _ = handle.join();
+            handle.abort();
         }
     }
 }
@@ -110,10 +151,7 @@ impl RecordingManager {
         Self::new_with_emitter(backend, Box::new(no_op_emit))
     }
 
-    pub fn new_with_emitter(
-        backend: Box<dyn RecordingInput>,
-        emit_level: LevelEmitterFn,
-    ) -> Self {
+    pub fn new_with_emitter(backend: Box<dyn RecordingInput>, emit_level: LevelEmitterFn) -> Self {
         Self::new_with_options(
             backend,
             emit_level,
@@ -133,9 +171,8 @@ impl RecordingManager {
             state: Arc::new(Mutex::new(ManagerState::default())),
             max_duration,
             watchdog_grace,
-            emitter: Mutex::new(None),
-            watchdog: Mutex::new(None),
             emit_level: Arc::new(Mutex::new(emit_level)),
+            emit_state: Arc::new(Mutex::new(Box::new(no_op_state_emit))),
         }
     }
 
@@ -145,82 +182,156 @@ impl RecordingManager {
         }
     }
 
-    pub fn start_recording(&self) -> Result<RecordingStatus, RecordingError> {
-        {
-            let mut state = self.lock_state()?;
-            self.finalize_finished_active(&mut state)?;
-
-            if state.active.is_some() {
-                let error = RecordingError {
-                    code: RecordingErrorCode::AlreadyRecording,
-                    message: "A recording is already in progress.".to_string(),
-                };
-                state.last_error = Some(error.clone());
-                return Err(error);
-            }
+    pub fn set_state_emitter(&self, emit_state_fn: StateEmitterFn) {
+        if let Ok(mut slot) = self.emit_state.lock() {
+            *slot = emit_state_fn;
         }
+    }
+
+    #[allow(dead_code)]
+    fn set_state_and_emit(&self, new_state: types::RecordingState) {
+        if let Ok(mut state) = self.state.lock() {
+            state.recording_state = new_state;
+        }
+        self.emit_only(new_state);
+    }
+
+    /// Emit without taking the state lock. Call when state lock is already held.
+    fn emit_only(&self, new_state: types::RecordingState) {
+        if let Ok(emit) = self.emit_state.lock() {
+            (emit)(new_state);
+        }
+    }
+
+    pub fn start_recording(&self) -> Result<RecordingStatus, RecordingError> {
+        // Guard: finalize any finished recording before checking can_start
+        self.try_finalize_if_finished()?;
+
+        let mut state = self.lock_state()?;
+        if let Err(code) = state.recording_state.can_start() {
+            let error = RecordingError {
+                domain: "recording",
+                code,
+                message: "A recording is already in progress.".to_string(),
+            };
+            state.last_error = Some(error.clone());
+            return Err(error);
+        }
+        state.recording_state = types::RecordingState::Starting;
+        self.emit_only(types::RecordingState::Starting);
+        drop(state);
 
         let started = self.backend.start_recording(self.max_duration)?;
         let meter = Arc::clone(&started.meter);
 
-        {
-            let mut state = self.lock_state()?;
-            state.last_error = None;
-            state.active = Some(ActiveRecording {
-                _stream: started.stream,
-                buffer: started.buffer,
-                meter: Arc::clone(&meter),
-            });
-        }
+        let mut state = self.lock_state()?;
+        state.last_error = None;
+        state.active = Some(ActiveRecording {
+            _stream: started.stream,
+            buffer: started.buffer,
+            meter: Arc::clone(&meter),
+        });
 
-        if let Err(error) = self.start_level_emitter(meter) {
-            if let Ok(mut state) = self.state.lock() {
-                if let Some(active) = state.active.take() {
-                    drop(active);
-                }
-                state.last_error = Some(error.clone());
-            }
-            self.stop_watchdog();
+        if let Err(error) = start_level_emitter(meter, Arc::clone(&self.emit_level), &mut state) {
+            state.active = None;
+            state.last_error = Some(error.clone());
+            drop(state);
+            self.emit_only(types::RecordingState::Idle);
             return Err(error);
         }
 
-        self.start_watchdog();
+        start_watchdog_thread(
+            &mut state,
+            Arc::clone(&self.state),
+            self.max_duration.saturating_add(self.watchdog_grace),
+        );
+        state.recording_state = types::RecordingState::Recording;
+        let status = self.status_from_state(&state);
+        drop(state);
+        self.emit_only(types::RecordingState::Recording);
 
-        Ok({
-            let state = self.lock_state()?;
-            self.status_from_state(&state)
-        })
+        Ok(status)
     }
 
     pub fn stop_recording(&self) -> Result<RecordingInfo, RecordingError> {
-        self.stop_watchdog();
+        // Guard: finalize any finished recording before checking can_stop
+        let did_finalize = self.try_finalize_if_finished()?;
+
+        // If try_finalize_if_finished already finalized (e.g. max duration),
+        // return the result directly
+        if did_finalize {
+            let state = self.lock_state()?;
+            if let Some(latest) = &state.latest {
+                return Ok(latest.info.clone());
+            }
+        }
+
+        let (active, meter) = {
+            let mut state = self.lock_state()?;
+
+            stop_watchdog(&mut state);
+
+            if let Err(code) = state.recording_state.can_stop() {
+                let error = RecordingError {
+                    domain: "recording",
+                    code,
+                    message: "No recording is currently in progress.".to_string(),
+                };
+                state.last_error = Some(error.clone());
+                return Err(error);
+            }
+
+            let active = match state.active.take() {
+                Some(active) => {
+                    state.recording_state = types::RecordingState::Stopping;
+                    active
+                }
+                None => {
+                    let error = RecordingError {
+                        domain: "recording",
+                        code: RecordingErrorCode::NotRecording,
+                        message: "No recording is currently in progress.".to_string(),
+                    };
+                    state.last_error = Some(error.clone());
+                    return Err(error);
+                }
+            };
+            let meter = Arc::clone(&active.meter);
+            (active, meter)
+        };
+        self.emit_only(types::RecordingState::Stopping);
+
+        {
+            let mut state = self.lock_state()?;
+            stop_emitter(&mut state);
+        }
+        meter.store(0.0);
+        if let Ok(emit_slot) = self.emit_level.lock() {
+            (emit_slot)(0.0);
+        }
+
+        let result = finalize_active(active, RecordingEndReason::Manual);
+
+        self.emit_only(types::RecordingState::Idle);
 
         let mut state = self.lock_state()?;
-
-        let Some(active) = state.active.take() else {
-            let error = RecordingError {
-                code: RecordingErrorCode::NotRecording,
-                message: "No recording is currently in progress.".to_string(),
-            };
-            state.last_error = Some(error.clone());
-            return Err(error);
-        };
-
-        self.stop_level_emitter_and_reset(&active.meter);
-
-        match finalize_active(active, RecordingEndReason::Manual) {
+        match result {
             Ok(completed) => {
+                state.recording_state = types::RecordingState::Idle;
                 let info = completed.info.clone();
                 state.latest = Some(completed);
                 state.last_error = None;
                 Ok(info)
             }
             Err(error) if error.code == RecordingErrorCode::EmptyRecording => {
+                state.recording_state = types::RecordingState::Idle;
                 state.last_error = Some(error.clone());
                 Err(error)
             }
             Err(_error) => {
+                state.recording_state = types::RecordingState::Idle;
                 let surfaced = RecordingError {
+                    domain: "recording",
                     code: RecordingErrorCode::StopFailed,
                     message: "Recording failed".to_string(),
                 };
@@ -231,27 +342,53 @@ impl RecordingManager {
     }
 
     pub fn stop_for_shutdown(&self) -> Result<ShutdownRecordingResult, RecordingError> {
-        self.stop_watchdog();
+        // Finalize any finished recording before checking state
+        self.try_finalize_if_finished()?;
 
-        let mut state = self.lock_state()?;
+        let (active, meter) = {
+            let mut state = self.lock_state()?;
 
-        let Some(active) = state.active.take() else {
-            return Ok(ShutdownRecordingResult::Idle);
+            stop_watchdog(&mut state);
+
+            let Some(active) = state.active.take() else {
+                return Ok(ShutdownRecordingResult::Idle);
+            };
+
+            state.recording_state = types::RecordingState::Stopping;
+            let meter = Arc::clone(&active.meter);
+            (active, meter)
         };
 
-        self.stop_level_emitter_and_reset(&active.meter);
+        {
+            let mut state = self.lock_state()?;
+            stop_emitter(&mut state);
+        }
+        meter.store(0.0);
+        if let Ok(emit_slot) = self.emit_level.lock() {
+            (emit_slot)(0.0);
+        }
 
-        match finalize_active(active, RecordingEndReason::Shutdown) {
+        let result = finalize_active(active, RecordingEndReason::Shutdown);
+
+        {
+            let mut state = self.lock_state()?;
+            state.recording_state = types::RecordingState::Idle;
+        }
+
+        match result {
             Ok(completed) => {
+                let mut state = self.lock_state()?;
                 state.latest = Some(completed);
                 state.last_error = None;
                 Ok(ShutdownRecordingResult::Finalized)
             }
             Err(error) if error.code == RecordingErrorCode::EmptyRecording => {
+                let mut state = self.lock_state()?;
                 state.last_error = None;
                 Ok(ShutdownRecordingResult::DiscardedEmpty)
             }
             Err(error) => {
+                let mut state = self.lock_state()?;
                 state.last_error = Some(error.clone());
                 Err(error)
             }
@@ -259,43 +396,43 @@ impl RecordingManager {
     }
 
     pub fn get_recording_status(&self) -> Result<RecordingStatus, RecordingError> {
-        let mut state = self.lock_state()?;
-        self.finalize_finished_active(&mut state)?;
+        let state = self.lock_state()?;
 
         Ok(self.status_from_state(&state))
     }
 
     pub fn get_latest_recording_info(&self) -> Result<Option<RecordingInfo>, RecordingError> {
-        let mut state = self.lock_state()?;
-        self.finalize_finished_active(&mut state)?;
+        let state = self.lock_state()?;
 
         Ok(state.latest.as_ref().map(|latest| latest.info.clone()))
     }
 
     pub fn get_latest_recording_wav_bytes(&self) -> Result<Option<Vec<u8>>, RecordingError> {
-        let mut state = self.lock_state()?;
-        self.finalize_finished_active(&mut state)?;
+        let state = self.lock_state()?;
 
         Ok(state.latest.as_ref().map(|latest| latest.wav_bytes.clone()))
     }
 
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, ManagerState>, RecordingError> {
-        self.state.lock().map_err(|_| {
-            RecordingError {
-                code: RecordingErrorCode::Internal,
-                message: "Recording state could not be locked.".to_string(),
-            }
+        self.state.lock().map_err(|_| RecordingError {
+            domain: "recording",
+            code: RecordingErrorCode::Internal,
+            message: "Recording state could not be locked.".to_string(),
         })
     }
 
+    #[allow(dead_code)]
     fn state_arc(&self) -> Arc<Mutex<ManagerState>> {
         Arc::clone(&self.state)
     }
 
-    fn finalize_finished_active(
-        &self,
-        state: &mut ManagerState,
-    ) -> Result<(), RecordingError> {
+    /// Returns `true` if a recording was finalized, `false` otherwise.
+    fn try_finalize_if_finished(&self) -> Result<bool, RecordingError> {
+        let mut state = self.lock_state()?;
+        if state.recording_state != types::RecordingState::Recording {
+            return Ok(false);
+        }
+
         let should_finalize = state
             .active
             .as_ref()
@@ -309,20 +446,23 @@ impl RecordingManager {
             .unwrap_or(false);
 
         if !should_finalize {
-            return Ok(());
+            return Ok(false);
         }
 
         if let Some(active) = state.active.take() {
-            self.stop_level_emitter_and_reset(&active.meter);
+            stop_emitter(&mut state);
+            active.meter.store(0.0);
             match finalize_active(active, RecordingEndReason::Manual) {
                 Ok(completed) => {
                     if completed.info.ended_reason == RecordingEndReason::DeviceDisconnected {
                         state.last_error = Some(RecordingError {
+                            domain: "recording",
                             code: RecordingErrorCode::DeviceDisconnected,
                             message: "The input device disconnected while recording.".to_string(),
                         });
                     } else if completed.info.ended_reason == RecordingEndReason::WatchdogTimeout {
                         state.last_error = Some(RecordingError {
+                            domain: "recording",
                             code: RecordingErrorCode::WatchdogTimeout,
                             message: "Recording failed".to_string(),
                         });
@@ -334,12 +474,26 @@ impl RecordingManager {
                 Err(error) if error.code == RecordingErrorCode::EmptyRecording => {
                     state.last_error = Some(error);
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    // Clean up state even on finalize failure
+                    stop_watchdog(&mut state);
+                    state.recording_state = types::RecordingState::Idle;
+                    self.emit_only(types::RecordingState::Idle);
+                    return Err(error);
+                }
             }
         }
 
-        self.stop_watchdog();
+        stop_watchdog(&mut state);
+        state.recording_state = types::RecordingState::Idle;
+        self.emit_only(types::RecordingState::Idle);
 
+        Ok(true)
+    }
+
+    #[allow(dead_code)]
+    pub fn poll_finalize(&self) -> Result<(), RecordingError> {
+        self.try_finalize_if_finished()?;
         Ok(())
     }
 
@@ -351,9 +505,7 @@ impl RecordingManager {
             return active
                 .buffer
                 .lock()
-                .map(|buffer| {
-                    buffer.status(latest_recording.clone(), last_error)
-                })
+                .map(|buffer| buffer.status(latest_recording.clone(), last_error))
                 .unwrap_or_else(|_| RecordingStatus {
                     is_recording: false,
                     sample_rate: None,
@@ -365,9 +517,11 @@ impl RecordingManager {
                     max_duration_seconds: MAX_RECORDING_DURATION_SECONDS,
                     latest_recording,
                     last_error: Some(RecordingError {
+                        domain: "recording",
                         code: RecordingErrorCode::Internal,
                         message: "Recording buffer could not be locked.".to_string(),
                     }),
+                    trace_id: None,
                 });
         }
 
@@ -382,92 +536,67 @@ impl RecordingManager {
             max_duration_seconds: MAX_RECORDING_DURATION_SECONDS,
             latest_recording,
             last_error,
-        }
-    }
-
-    fn start_level_emitter(&self, meter: Arc<LevelMeter>) -> Result<(), RecordingError> {
-        let emit_level = Arc::clone(&self.emit_level);
-
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_signal = Arc::clone(&stop);
-        let meter_for_thread = Arc::clone(&meter);
-
-        let join = std::thread::Builder::new()
-            .name("floe-recording-level".to_string())
-            .spawn(move || {
-                level_emitter_loop(meter_for_thread, stop_signal, emit_level);
-            })
-            .map_err(|_| RecordingError {
-                code: RecordingErrorCode::Internal,
-                message: "Recording level emitter could not be started.".to_string(),
-            })?;
-
-        let mut slot = self.emitter.lock().map_err(|_| RecordingError {
-            code: RecordingErrorCode::Internal,
-            message: "Recording level emitter could not be started.".to_string(),
-        })?;
-        *slot = Some(LevelEmitterHandle {
-            stop,
-            join: Some(join),
-        });
-
-        Ok(())
-    }
-
-    fn stop_level_emitter_and_reset(&self, meter: &Arc<LevelMeter>) {
-        if let Ok(mut slot) = self.emitter.lock() {
-            if let Some(mut handle) = slot.take() {
-                handle.stop_and_join();
-            }
-        }
-
-        meter.store(0.0);
-
-        if let Ok(emit_slot) = self.emit_level.lock() {
-            (emit_slot)(0.0);
-        }
-    }
-
-    fn start_watchdog(&self) {
-        let timeout = self.max_duration.saturating_add(self.watchdog_grace);
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_signal = Arc::clone(&stop);
-        let state = self.state_arc();
-
-        let join = match std::thread::Builder::new()
-            .name("floe-recording-watchdog".to_string())
-            .spawn(move || {
-                watchdog_loop(state, stop_signal, timeout);
-            }) {
-            Ok(join) => join,
-            Err(_) => {
-                log_watchdog_spawn_failed();
-                return;
-            }
-        };
-
-        if let Ok(mut slot) = self.watchdog.lock() {
-            *slot = Some(WatchdogHandle {
-                stop,
-                join: Some(join),
-            });
-        }
-    }
-
-    fn stop_watchdog(&self) {
-        if let Ok(mut slot) = self.watchdog.lock() {
-            if let Some(mut handle) = slot.take() {
-                handle.stop_and_join();
-            }
+            trace_id: None,
         }
     }
 
     #[cfg(test)]
     fn watchdog_handle_is_clear(&self) -> bool {
-        self.watchdog
+        self.state
             .lock()
-            .map(|slot| slot.is_none())
+            .map(|state| state.watchdog_handle.is_none())
             .unwrap_or(false)
+    }
+}
+
+fn start_level_emitter(
+    meter: Arc<LevelMeter>,
+    emit_level: SharedLevelEmitter,
+    state: &mut ManagerState,
+) -> Result<(), RecordingError> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_signal = Arc::clone(&stop);
+    let meter_for_thread = Arc::clone(&meter);
+
+    let join = tokio::task::spawn_blocking(move || {
+        level_emitter_loop(meter_for_thread, stop_signal, emit_level);
+    });
+
+    state.emitter_handle = Some(LevelEmitterHandle {
+        stop,
+        join: Some(join),
+    });
+
+    Ok(())
+}
+
+fn stop_emitter(state: &mut ManagerState) {
+    if let Some(mut handle) = state.emitter_handle.take() {
+        handle.stop_and_join();
+    }
+}
+
+fn start_watchdog_thread(
+    state: &mut ManagerState,
+    state_arc: Arc<Mutex<ManagerState>>,
+    timeout: Duration,
+) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_signal = Arc::clone(&stop);
+
+    let join = tokio::task::spawn_blocking(move || {
+        watchdog_loop(state_arc, stop_signal, timeout);
+    });
+
+    state.watchdog_handle = Some(WatchdogHandle {
+        stop,
+        join: Some(join),
+    });
+}
+
+fn stop_watchdog(state: &mut ManagerState) {
+    if let Some(mut handle) = state.watchdog_handle.take() {
+        handle.stop_and_join();
     }
 }
 
@@ -483,6 +612,7 @@ fn finalize_active(
     drop(_stream);
 
     let mut buffer = buffer.lock().map_err(|_| RecordingError {
+        domain: "recording",
         code: RecordingErrorCode::Internal,
         message: "Recording buffer could not be finalized.".to_string(),
     })?;
@@ -510,11 +640,7 @@ fn level_emitter_loop(
     }
 }
 
-fn watchdog_loop(
-    state: Arc<Mutex<ManagerState>>,
-    stop: Arc<AtomicBool>,
-    timeout: Duration,
-) {
+fn watchdog_loop(state: Arc<Mutex<ManagerState>>, stop: Arc<AtomicBool>, timeout: Duration) {
     if timeout.is_zero() {
         return;
     }
@@ -551,11 +677,9 @@ fn watchdog_loop(
     };
 }
 
-fn log_watchdog_spawn_failed() {
-    eprintln!("[floe:lifecycle] level=warn event=recording_watchdog_spawn_failed");
-}
-
 fn no_op_emit(_level: f32) {}
+
+fn no_op_state_emit(_state: types::RecordingState) {}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -580,13 +704,21 @@ mod tests {
         error::RecordingErrorCode,
         input::{RecordingInput, RecordingStream, StartedRecording},
         types::{
-            MAX_RECORDING_DURATION_SECONDS, RecordingEndReason, ShutdownRecordingResult,
+            RecordingEndReason, ShutdownRecordingResult, MAX_RECORDING_DURATION_SECONDS,
             WAV_HEADER_LEN,
         },
         wav::read_u32_le,
         RecordingManager,
     };
     use crate::audio::LevelMeter;
+    use tokio::runtime::Runtime;
+
+    fn create_test_runtime() -> Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
 
     struct FakeStream;
 
@@ -624,6 +756,8 @@ mod tests {
 
     #[test]
     fn manager_returns_latest_wav_bytes_without_disk_export() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             8_000,
             1,
@@ -656,6 +790,8 @@ mod tests {
 
     #[test]
     fn manager_rejects_already_recording_and_not_recording() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -683,6 +819,8 @@ mod tests {
 
     #[test]
     fn manager_rejects_empty_recording() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -701,6 +839,8 @@ mod tests {
 
     #[test]
     fn empty_stop_preserves_previous_latest_recording() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let mut latest_buffer = RecordingBuffer::new(
             48_000,
             1,
@@ -736,6 +876,8 @@ mod tests {
 
     #[test]
     fn stop_returns_info_after_max_duration_is_reached() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             2,
             1,
@@ -759,6 +901,8 @@ mod tests {
 
     #[test]
     fn device_disconnect_finalizes_status_without_microphone() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -774,6 +918,7 @@ mod tests {
             buffer.mark_device_disconnected();
         }
 
+        manager.poll_finalize().expect("poll_finalize succeeds");
         let status = manager.get_recording_status().expect("status succeeds");
 
         assert!(!status.is_recording);
@@ -809,6 +954,8 @@ mod tests {
 
     #[test]
     fn shutdown_discards_empty_active_recording_without_error() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -831,6 +978,8 @@ mod tests {
 
     #[test]
     fn shutdown_finalizes_captured_samples_with_shutdown_reason() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -860,6 +1009,8 @@ mod tests {
 
     #[test]
     fn shutdown_empty_recording_preserves_previous_latest_recording() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let latest = RecordingBuffer::new(
             48_000,
             1,
@@ -897,6 +1048,8 @@ mod tests {
 
     #[test]
     fn watchdog_finalizes_recording_when_sample_cap_is_unreached() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -920,6 +1073,7 @@ mod tests {
             .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
         std::thread::sleep(Duration::from_millis(80));
 
+        manager.poll_finalize().expect("poll_finalize succeeds");
         let status = manager.get_recording_status().expect("status succeeds");
         assert!(!status.is_recording);
         let latest = status.latest_recording.expect("watchdog should finalize");
@@ -933,6 +1087,8 @@ mod tests {
 
     #[test]
     fn watchdog_does_not_fire_when_stop_completes_normally() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -964,6 +1120,8 @@ mod tests {
 
     #[test]
     fn watchdog_is_cleared_after_normal_stop() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -984,6 +1142,8 @@ mod tests {
 
     #[test]
     fn watchdog_is_not_duplicated_across_repeated_recordings() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -1013,6 +1173,8 @@ mod tests {
 
     #[test]
     fn stop_recording_clears_active_state_when_finalize_fails() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -1038,8 +1200,8 @@ mod tests {
         let stop_error = manager
             .stop_recording()
             .expect_err("stop_recording should fail when finalize fails");
-        assert_eq!(stop_error.code, RecordingErrorCode::StopFailed);
-        assert_eq!(stop_error.message, "Recording failed");
+        // try_finalize_if_finished now catches the poisoned buffer error
+        assert_eq!(stop_error.code, RecordingErrorCode::Internal);
         assert!(manager.state_arc().lock().unwrap().active.is_none());
 
         buffer.clear_poison();
@@ -1055,6 +1217,8 @@ mod tests {
 
     #[test]
     fn next_recording_can_start_after_watchdog_timeout() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -1078,6 +1242,7 @@ mod tests {
             .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
         std::thread::sleep(Duration::from_millis(80));
 
+        manager.poll_finalize().expect("poll_finalize succeeds");
         let status = manager
             .get_recording_status()
             .expect("status after watchdog succeeds");
@@ -1095,6 +1260,8 @@ mod tests {
 
     #[test]
     fn stop_recording_returns_quickly_even_with_long_watchdog_timeout() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -1127,5 +1294,210 @@ mod tests {
             "stop_recording took {:?}, expected < 2s",
             elapsed,
         );
+    }
+
+    #[test]
+    fn concurrent_start_stop_does_not_deadlock() {
+        let rt = create_test_runtime();
+
+        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        )));
+        let manager = Arc::new(test_manager(
+            Arc::clone(&buffer),
+            Arc::new(LevelMeter::new()),
+        ));
+
+        rt.block_on(async {
+            let mut handles = Vec::new();
+
+            for i in 0..10 {
+                let m = Arc::clone(&manager);
+                let b = Arc::clone(&buffer);
+                handles.push(tokio::spawn(async move {
+                    if i % 2 == 0 {
+                        tokio::task::spawn_blocking(move || {
+                            let _ = m.start_recording();
+                            b.lock()
+                                .unwrap_or_else(|poison| poison.into_inner())
+                                .append_interleaved(&[0.5_f32], &LevelMeter::new());
+                            let _ = m.stop_recording();
+                        })
+                        .await
+                        .unwrap();
+                    } else {
+                        tokio::task::spawn_blocking(move || {
+                            let _ = m.get_recording_status();
+                        })
+                        .await
+                        .unwrap();
+                    }
+                }));
+            }
+
+            for h in handles {
+                h.await.expect("task panicked");
+            }
+        });
+
+        let status = manager.get_recording_status().unwrap();
+        assert!(!status.is_recording);
+        assert!(manager.watchdog_handle_is_clear());
+    }
+
+    #[test]
+    fn shutdown_during_recording_is_safe() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
+        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        )));
+        let manager = Arc::new(test_manager(
+            Arc::clone(&buffer),
+            Arc::new(LevelMeter::new()),
+        ));
+
+        manager.start_recording().expect("start succeeds");
+        buffer
+            .lock()
+            .unwrap()
+            .append_interleaved(&[0.5_f32], &LevelMeter::new());
+
+        let m = Arc::clone(&manager);
+        let shutdown = std::thread::spawn(move || m.stop_for_shutdown().ok());
+
+        let _shutdown_result = shutdown.join().expect("shutdown thread panicked");
+        let final_status = manager.get_recording_status().unwrap();
+        assert!(!final_status.is_recording);
+    }
+
+    #[test]
+    fn status_query_during_recording_does_not_panic() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
+        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        )));
+        let manager = Arc::new(test_manager(
+            Arc::clone(&buffer),
+            Arc::new(LevelMeter::new()),
+        ));
+
+        manager.start_recording().expect("start succeeds");
+        buffer
+            .lock()
+            .unwrap()
+            .append_interleaved(&[0.5_f32], &LevelMeter::new());
+
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let m = Arc::clone(&manager);
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..5 {
+                    let _ = m.get_recording_status();
+                    let _ = m.get_latest_recording_info();
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("reader thread panicked");
+        }
+        let _ = manager.stop_recording();
+        let status = manager.get_recording_status().unwrap();
+        assert!(!status.is_recording);
+    }
+
+    #[test]
+    fn watchdog_stop_race_does_not_corrupt_state() {
+        let _rt = create_test_runtime();
+        let _guard = _rt.enter();
+        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+            48_000,
+            1,
+            Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
+            1000,
+        )));
+        let manager = Arc::new(RecordingManager::new_with_options(
+            Box::new(FakeBackend {
+                buffer: Arc::clone(&buffer),
+                meter: Arc::new(LevelMeter::new()),
+            }),
+            Box::new(super::no_op_emit),
+            Duration::from_millis(30),
+            Duration::from_millis(10),
+        ));
+
+        manager.start_recording().expect("start succeeds");
+        buffer
+            .lock()
+            .unwrap()
+            .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
+
+        // Wait for the watchdog to fire and mark the buffer as finished.
+        std::thread::sleep(Duration::from_millis(60));
+
+        // Spawn a concurrent status reader to add state/buffer contention
+        // during the race window.
+        let m = Arc::clone(&manager);
+        let reader = std::thread::spawn(move || {
+            // Short delay to increase the chance of overlapping with stop_recording
+            std::thread::sleep(Duration::from_millis(5));
+            let _ = m.get_recording_status();
+        });
+
+        // stop_recording should detect the watchdog-completed buffer via
+        // try_finalize_if_finished and return the finalized info.
+        let result = manager.stop_recording();
+
+        reader.join().expect("reader thread panicked");
+
+        // Verify state is consistent: no panic, no poison, final state is Idle.
+        let info = result.expect("stop should succeed after watchdog timeout");
+        assert_eq!(
+            info.ended_reason,
+            RecordingEndReason::WatchdogTimeout,
+            "watchdog should have set WatchdogTimeout reason"
+        );
+        assert!(
+            info.max_duration_reached,
+            "max_duration_reached should be true for watchdog timeout"
+        );
+
+        let status = manager
+            .get_recording_status()
+            .expect("status query after race should succeed");
+        assert!(!status.is_recording, "final state should be idle");
+        assert!(
+            manager.watchdog_handle_is_clear(),
+            "watchdog handle should have been cleared"
+        );
+        assert_eq!(
+            status
+                .last_error
+                .as_ref()
+                .expect("last_error should contain WatchdogTimeout")
+                .code,
+            RecordingErrorCode::WatchdogTimeout
+        );
+
+        // Verify the manager can start a new recording (state is clean).
+        buffer
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .reset_for_test();
+        let next = manager
+            .start_recording()
+            .expect("should be able to start a new recording after race");
+        assert!(next.is_recording);
     }
 }

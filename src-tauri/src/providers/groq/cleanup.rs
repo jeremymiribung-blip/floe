@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::prompts::cleanup::CLEANUP_SYSTEM_PROMPT;
 use crate::providers::cleanup::{CleanupError, CleanupProvider, CleanupSuccess, RateLimitMetadata};
 
-pub use super::types::{
-    GroqCleanup, GroqCleanupError, GroqCleanupErrorCode, GroqRateLimitMetadata, GROQ_CLEANUP_MODEL,
-};
+pub use super::types::{GroqCleanup, GroqCleanupError, GroqCleanupErrorCode, GROQ_CLEANUP_MODEL};
 use super::util::{elapsed_ms, rate_limit_metadata, retry_after, retry_count_for_attempt};
 
 pub const CHAT_COMPLETIONS_PATH: &str = "/openai/v1/chat/completions";
@@ -93,8 +91,7 @@ impl GroqCleanupClient {
         retry_backoff: Duration,
     ) -> Self {
         Self::with_config(
-            crate::providers::http::build_shared_http_client()
-                .expect("test client should build"),
+            crate::providers::http::build_shared_http_client().expect("test client should build"),
             base_url,
             timeout,
             max_attempts,
@@ -129,9 +126,7 @@ impl GroqCleanupClient {
                     cleaned.retry_count = retry_count_for_attempt(attempt);
                     return Ok(cleaned);
                 }
-                Err(attempt_error)
-                    if attempt_error.retryable && attempt < self.max_attempts =>
-                {
+                Err(attempt_error) if attempt_error.retryable && attempt < self.max_attempts => {
                     let delay = attempt_error
                         .retry_after
                         .unwrap_or_else(|| super::util::retry_delay(self.retry_backoff, attempt))
@@ -172,11 +167,7 @@ impl GroqCleanupClient {
                 .map_err(cleanup_non_retryable);
         }
 
-        Err(classify_cleanup_http_error(
-            status,
-            retry_after,
-            rate_limit,
-        ))
+        Err(classify_cleanup_http_error(status, retry_after, rate_limit))
     }
 
     fn chat_completions_url(&self) -> String {
@@ -188,16 +179,8 @@ impl GroqCleanupClient {
     }
 }
 
-fn map_rate_limit(
-    rl: Box<GroqRateLimitMetadata>,
-) -> Box<RateLimitMetadata> {
-    Box::new(RateLimitMetadata {
-        remaining_requests: rl.remaining_requests,
-        remaining_tokens: rl.remaining_tokens,
-        reset_requests: rl.reset_requests,
-        reset_tokens: rl.reset_tokens,
-        retry_after_seconds: rl.retry_after_seconds,
-    })
+fn map_rate_limit(rl: Box<RateLimitMetadata>) -> Box<RateLimitMetadata> {
+    rl
 }
 
 #[async_trait]
@@ -263,7 +246,7 @@ pub(crate) fn cleanup_max_tokens_for(transcript: &str) -> u32 {
 fn parse_cleanup_response(
     body: &str,
     input: &str,
-    rate_limit: Option<GroqRateLimitMetadata>,
+    rate_limit: Option<RateLimitMetadata>,
 ) -> Result<GroqCleanup, GroqCleanupError> {
     let response: ChatCompletionResponse = serde_json::from_str(body).map_err(|_| {
         groq_cleanup_error(
@@ -298,10 +281,7 @@ fn parse_cleanup_response(
     })
 }
 
-pub fn validate_cleanup_output(
-    input: &str,
-    output: &str,
-) -> Result<String, GroqCleanupError> {
+pub fn validate_cleanup_output(input: &str, output: &str) -> Result<String, GroqCleanupError> {
     let trimmed = output.trim();
 
     if trimmed.is_empty() {
@@ -393,23 +373,21 @@ fn classify_cleanup_request_error(error: reqwest::Error) -> CleanupAttemptError 
 fn classify_cleanup_http_error(
     status: StatusCode,
     retry_after: Option<Duration>,
-    rate_limit: Option<GroqRateLimitMetadata>,
+    rate_limit: Option<RateLimitMetadata>,
 ) -> CleanupAttemptError {
     match status {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => cleanup_non_retryable(
-            groq_cleanup_error_with_rate_limit(
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            cleanup_non_retryable(groq_cleanup_error_with_rate_limit(
                 GroqCleanupErrorCode::InvalidApiKey,
                 "The configured Groq API key was rejected.",
                 rate_limit,
-            ),
-        ),
-        StatusCode::BAD_REQUEST => cleanup_non_retryable(
-            groq_cleanup_error_with_rate_limit(
-                GroqCleanupErrorCode::InvalidRequest,
-                "Groq rejected the cleanup request.",
-                rate_limit,
-            ),
-        ),
+            ))
+        }
+        StatusCode::BAD_REQUEST => cleanup_non_retryable(groq_cleanup_error_with_rate_limit(
+            GroqCleanupErrorCode::InvalidRequest,
+            "Groq rejected the cleanup request.",
+            rate_limit,
+        )),
         StatusCode::REQUEST_TIMEOUT => cleanup_retryable_with_retry_after(
             groq_cleanup_error_with_rate_limit(
                 GroqCleanupErrorCode::Timeout,
@@ -483,19 +461,17 @@ fn cleanup_validation_error() -> GroqCleanupError {
     )
 }
 
-fn groq_cleanup_error(
-    code: GroqCleanupErrorCode,
-    message: &'static str,
-) -> GroqCleanupError {
+fn groq_cleanup_error(code: GroqCleanupErrorCode, message: &'static str) -> GroqCleanupError {
     groq_cleanup_error_with_rate_limit(code, message, None)
 }
 
 fn groq_cleanup_error_with_rate_limit(
     code: GroqCleanupErrorCode,
     message: &'static str,
-    rate_limit: Option<GroqRateLimitMetadata>,
+    rate_limit: Option<RateLimitMetadata>,
 ) -> GroqCleanupError {
     GroqCleanupError {
+        domain: "cleanup",
         code,
         message: message.to_string(),
         model: GROQ_CLEANUP_MODEL.to_string(),

@@ -114,8 +114,6 @@ impl ProviderRegistry {
                     let caps = provider.capabilities();
                     let matches = (!criteria.requires_fallback_compatible
                         || caps.fallback_compatible)
-                        && (!criteria.requires_local
-                            || matches!(caps.deployment, super::types::Deployment::Local))
                         && (!criteria.requires_streaming
                             || matches!(caps.streaming, super::types::StreamingSupport::Full));
                     if matches {
@@ -132,11 +130,6 @@ impl ProviderRegistry {
             }
             let caps = provider.capabilities();
             if criteria.requires_fallback_compatible && !caps.fallback_compatible {
-                continue;
-            }
-            if criteria.requires_local
-                && !matches!(caps.deployment, super::types::Deployment::Local)
-            {
                 continue;
             }
             if criteria.requires_streaming
@@ -162,56 +155,18 @@ impl ProviderRegistry {
 
     /// Returns a fallback provider excluding the given primary provider id.
     /// If `excluding` is `None`, no provider is excluded.
-    pub fn fallback_provider_excluding(
-        &self,
-        excluding: Option<&str>,
-    ) -> Option<&dyn AsrProvider> {
-        if let Some(exclude_id) = excluding {
-            // When Groq is excluded, look for other compatible providers
-            if exclude_id == "groq" {
-                for provider in self.providers.values() {
-                    let id = provider.id();
-                    if self.disabled.contains(id) || id == exclude_id {
-                        continue;
-                    }
-                    if provider.capabilities().fallback_compatible {
-                        return Some(provider.as_ref());
-                    }
-                }
-                return None;
-            }
-
-            // When a non-Groq provider is excluded, try Groq first
-            if let Some(provider) = self.providers.get("groq") {
-                if !self.disabled.contains("groq") {
-                    return Some(provider.as_ref());
-                }
-            }
-
-            // Fall back to any compatible provider that isn't the excluded one
-            for provider in self.providers.values() {
-                let id = provider.id();
-                if self.disabled.contains(id) || id == exclude_id {
-                    continue;
-                }
-                if provider.capabilities().fallback_compatible {
-                    return Some(provider.as_ref());
-                }
-            }
-            return None;
-        }
-
-        // No exclusion, try Groq first
+    pub fn fallback_provider_excluding(&self, excluding: Option<&str>) -> Option<&dyn AsrProvider> {
+        // Try Groq first as the preferred fallback
         if let Some(provider) = self.providers.get("groq") {
-            if !self.disabled.contains("groq") {
+            if !self.disabled.contains("groq") && excluding != Some("groq") {
                 return Some(provider.as_ref());
             }
         }
-        
-        // Fall back to the first available fallback-compatible provider
+
+        // Fall back to any compatible provider that isn't the excluded one
         for provider in self.providers.values() {
             let id = provider.id();
-            if self.disabled.contains(id) {
+            if self.disabled.contains(id) || excluding == Some(id) {
                 continue;
             }
             if provider.capabilities().fallback_compatible {
@@ -248,7 +203,6 @@ mod tests {
     struct MockProvider {
         id: &'static str,
         fallback: bool,
-        local: bool,
     }
 
     #[async_trait]
@@ -262,11 +216,6 @@ mod tests {
         fn capabilities(&self) -> ProviderCapabilities {
             ProviderCapabilities {
                 fallback_compatible: self.fallback,
-                deployment: if self.local {
-                    Deployment::Local
-                } else {
-                    Deployment::Cloud
-                },
                 ..Default::default()
             }
         }
@@ -296,7 +245,6 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "groq",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         assert!(reg.get("groq").is_some());
@@ -309,14 +257,12 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "groq",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         let err = reg
             .register(Box::new(MockProvider {
                 id: "groq",
                 fallback: true,
-                local: false,
             }))
             .unwrap_err();
         assert_eq!(err.code, RegistryErrorCode::DuplicateProvider);
@@ -328,13 +274,11 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "a",
             fallback: false,
-            local: false,
         }))
         .unwrap();
         reg.register(Box::new(MockProvider {
             id: "b",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         assert_eq!(reg.default_id(), Some("a"));
@@ -346,7 +290,6 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "groq",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         assert!(reg.set_default("groq").is_ok());
@@ -359,13 +302,11 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "a",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.register(Box::new(MockProvider {
             id: "b",
             fallback: false,
-            local: false,
         }))
         .unwrap();
         let selected = reg
@@ -383,13 +324,11 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "a",
             fallback: false,
-            local: false,
         }))
         .unwrap();
         reg.register(Box::new(MockProvider {
             id: "b",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         let selected = reg
@@ -407,14 +346,12 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "a",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.mark_disabled("a");
         reg.register(Box::new(MockProvider {
             id: "b",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         let selected = reg.select(SelectionCriteria::default()).unwrap();
@@ -427,7 +364,6 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "a",
             fallback: false,
-            local: false,
         }))
         .unwrap();
         reg.mark_disabled("a");
@@ -441,13 +377,11 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "a",
             fallback: false,
-            local: false,
         }))
         .unwrap();
         reg.register(Box::new(MockProvider {
             id: "b",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         let fb = reg.fallback_provider().unwrap();
@@ -460,7 +394,6 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "a",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.mark_disabled("a");
@@ -473,13 +406,11 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "other_fallback",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.register(Box::new(MockProvider {
             id: "groq",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         let fb = reg.fallback_provider().unwrap();
@@ -492,19 +423,16 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "first_non_fallback",
             fallback: false,
-            local: false,
         }))
         .unwrap();
         reg.register(Box::new(MockProvider {
             id: "groq",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.register(Box::new(MockProvider {
             id: "another_fallback",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         let fb = reg.fallback_provider().unwrap();
@@ -517,13 +445,11 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "groq",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.register(Box::new(MockProvider {
             id: "other_fallback",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.mark_disabled("groq");
@@ -537,7 +463,6 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "non_fallback",
             fallback: false,
-            local: false,
         }))
         .unwrap();
         assert!(reg.fallback_provider().is_none());
@@ -549,7 +474,6 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "new",
             fallback: false,
-            local: true,
         }))
         .unwrap();
         reg.mark_experimental("new");
@@ -563,7 +487,6 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "a",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.mark_disabled("a");
@@ -578,7 +501,6 @@ mod tests {
         reg.register(Box::new(MockProvider {
             id: "groq",
             fallback: true,
-            local: false,
         }))
         .unwrap();
         reg.update_health("groq", HealthStatus::Degraded("slow".into()))

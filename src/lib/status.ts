@@ -3,7 +3,9 @@ import type { AppState } from "../types/app";
 const statusLabels: Record<AppState, string> = {
   idle: "Ready",
   ready: "Ready",
+  starting: "Starting…",
   recording: "Recording",
+  stopping: "Stopping…",
   transcribing: "Transcribing",
   cleaning: "Cleaning",
   pasting: "Pasting",

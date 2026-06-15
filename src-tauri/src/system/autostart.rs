@@ -12,6 +12,7 @@ pub struct StartAtLoginStatus {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartAtLoginError {
+    pub domain: &'static str,
     pub code: StartAtLoginErrorCode,
     pub message: String,
 }
@@ -89,6 +90,7 @@ pub fn set_start_at_login_enabled_with(
 
 fn start_at_login_enable_error() -> StartAtLoginError {
     StartAtLoginError {
+        domain: "startAtLogin",
         code: StartAtLoginErrorCode::EnableFailed,
         message: "Could not enable start at login".to_string(),
     }
@@ -96,6 +98,7 @@ fn start_at_login_enable_error() -> StartAtLoginError {
 
 fn start_at_login_disable_error() -> StartAtLoginError {
     StartAtLoginError {
+        domain: "startAtLogin",
         code: StartAtLoginErrorCode::DisableFailed,
         message: "Could not disable start at login".to_string(),
     }
@@ -103,6 +106,7 @@ fn start_at_login_disable_error() -> StartAtLoginError {
 
 fn start_at_login_unavailable_error() -> StartAtLoginError {
     StartAtLoginError {
+        domain: "startAtLogin",
         code: StartAtLoginErrorCode::Unavailable,
         message: "Start at login unavailable".to_string(),
     }

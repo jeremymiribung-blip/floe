@@ -1,19 +1,13 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use async_trait::async_trait;
 use reqwest::{multipart, StatusCode};
 use serde::Deserialize;
 
-use crate::providers::stt::{
-    SttProviderDiagnostics, SttProviderFailure, SttProviderTranscription,
-    SttTranscriptionClient, GROQ_WHISPER_PROVIDER_NAME,
-};
-
 pub use super::types::{
-    GroqRateLimitMetadata, GroqTranscription, GroqTranscriptionError, GroqTranscriptionErrorCode,
-    GROQ_STT_MODEL,
+    GroqTranscription, GroqTranscriptionError, GroqTranscriptionErrorCode, GROQ_STT_MODEL,
 };
-use super::util::{elapsed_ms, rate_limit_metadata, retry_after, retry_count_for_attempt};
+use super::util::{rate_limit_metadata, retry_after, retry_count_for_attempt};
+use crate::providers::cleanup::RateLimitMetadata;
 
 pub const GROQ_BASE_URL: &str = "https://api.groq.com";
 pub const TRANSCRIPTIONS_PATH: &str = "/openai/v1/audio/transcriptions";
@@ -82,8 +76,7 @@ impl GroqTranscriptionClient {
         retry_backoff: Duration,
     ) -> Self {
         Self::with_config(
-            crate::providers::http::build_shared_http_client()
-                .expect("test client should build"),
+            crate::providers::http::build_shared_http_client().expect("test client should build"),
             base_url,
             timeout,
             max_attempts,
@@ -116,9 +109,7 @@ impl GroqTranscriptionClient {
                     transcription.retry_count = retry_count_for_attempt(attempt);
                     return Ok(transcription);
                 }
-                Err(attempt_error)
-                    if attempt_error.retryable && attempt < self.max_attempts =>
-                {
+                Err(attempt_error) if attempt_error.retryable && attempt < self.max_attempts => {
                     tokio::time::sleep(attempt_error.delay(self.retry_backoff, attempt)).await;
                 }
                 Err(mut attempt_error) => {
@@ -174,64 +165,9 @@ impl GroqTranscriptionClient {
     }
 }
 
-#[async_trait]
-#[allow(dead_code)]
-impl SttTranscriptionClient for GroqTranscriptionClient {
-    fn provider_name(&self) -> &'static str {
-        GROQ_WHISPER_PROVIDER_NAME
-    }
-
-    async fn transcribe(
-        &self,
-        api_key: &str,
-        wav_bytes: Vec<u8>,
-        audio_duration_ms: u64,
-    ) -> Result<SttProviderTranscription, SttProviderFailure> {
-        let started = Instant::now();
-
-        match self.transcribe_wav(api_key, wav_bytes).await {
-            Ok(transcription) => {
-                let transcription_ms = elapsed_ms(started);
-                Ok(SttProviderTranscription {
-                    text: transcription.text,
-                    model: transcription.model,
-                    diagnostics: SttProviderDiagnostics::success(
-                        GROQ_WHISPER_PROVIDER_NAME,
-                        audio_duration_ms,
-                        transcription_ms,
-                    ),
-                })
-            }
-            Err(error) => {
-                let transcription_ms = elapsed_ms(started);
-                let code = match error.code {
-                    GroqTranscriptionErrorCode::MissingApiKey => "missing_api_key",
-                    GroqTranscriptionErrorCode::InvalidApiKey => "invalid_api_key",
-                    GroqTranscriptionErrorCode::RateLimit => "rate_limit",
-                    GroqTranscriptionErrorCode::Timeout => "timeout",
-                    GroqTranscriptionErrorCode::ApiUnreachable => "api_unreachable",
-                    GroqTranscriptionErrorCode::MalformedResponse => "malformed_response",
-                    GroqTranscriptionErrorCode::UnsupportedAudio => "unsupported_audio",
-                    GroqTranscriptionErrorCode::InvalidRequest => "invalid_request",
-                    GroqTranscriptionErrorCode::EmptyAudio => "empty_audio",
-                    GroqTranscriptionErrorCode::ServerError => "server_error",
-                };
-                Err(SttProviderFailure {
-                    diagnostics: SttProviderDiagnostics::failure(
-                        GROQ_WHISPER_PROVIDER_NAME,
-                        audio_duration_ms,
-                        transcription_ms,
-                        code,
-                    ),
-                })
-            }
-        }
-    }
-}
-
 fn parse_transcription_response(
     body: &str,
-    rate_limit: Option<GroqRateLimitMetadata>,
+    rate_limit: Option<RateLimitMetadata>,
 ) -> Result<GroqTranscription, GroqTranscriptionError> {
     let response: TranscriptionResponse = serde_json::from_str(body).map_err(|_| {
         groq_error(
@@ -252,7 +188,6 @@ fn parse_transcription_response(
         model: GROQ_STT_MODEL.to_string(),
         retry_count: 0,
         rate_limit: rate_limit.map(Box::new),
-        stt_provider: None,
     })
 }
 
@@ -274,7 +209,7 @@ fn classify_http_error(
     status: StatusCode,
     body: &str,
     retry_after: Option<Duration>,
-    rate_limit: Option<GroqRateLimitMetadata>,
+    rate_limit: Option<RateLimitMetadata>,
 ) -> AttemptError {
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
@@ -394,14 +329,14 @@ pub fn groq_error(
 fn groq_error_with_rate_limit(
     code: GroqTranscriptionErrorCode,
     message: &'static str,
-    rate_limit: Option<GroqRateLimitMetadata>,
+    rate_limit: Option<RateLimitMetadata>,
 ) -> GroqTranscriptionError {
     GroqTranscriptionError {
+        domain: "stt",
         code,
         message: message.to_string(),
         model: GROQ_STT_MODEL.to_string(),
         retry_count: 0,
         rate_limit: rate_limit.map(Box::new),
-        stt_provider: None,
     }
 }

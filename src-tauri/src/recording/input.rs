@@ -11,8 +11,10 @@ use super::{
 };
 
 pub trait RecordingInput: Send + Sync + 'static {
-    fn start_recording(&self, max_duration: std::time::Duration)
-        -> Result<StartedRecording, RecordingError>;
+    fn start_recording(
+        &self,
+        max_duration: std::time::Duration,
+    ) -> Result<StartedRecording, RecordingError>;
 }
 
 pub trait RecordingStream: Send + 'static {}
@@ -159,7 +161,7 @@ where
         .build_input_stream(
             config,
             move |data: &[T], _info: &cpal::InputCallbackInfo| {
-                if let Ok(mut buffer) = data_buffer.lock() {
+                if let Ok(mut buffer) = data_buffer.try_lock() {
                     buffer.append_interleaved(data, &data_meter);
                 }
             },

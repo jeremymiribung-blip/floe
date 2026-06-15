@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "../lib/tauri";
-import type { RecordingLevelPayload } from "../lib/tauri";
+import type { RecordingLevelPayload } from "../lib/contract";
 import {
   appendWaveformSample,
   clamp01,

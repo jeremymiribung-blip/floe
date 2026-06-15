@@ -1,18 +1,18 @@
-import type { ClipboardError } from "../types/app";
+import type { FloeError } from "../types/app";
+import { isFloeErrorDomain } from "./errors";
 
 export const CLIPBOARD_UNAVAILABLE = "Clipboard unavailable";
 export const PASTE_FAILED = "Paste failed";
 
-export function clipboardErrorMessage(caught: unknown): string {
-  const clipboardError = caught as Partial<ClipboardError>;
-  if (clipboardError.code === "clipboardUnavailable") {
-    return CLIPBOARD_UNAVAILABLE;
-  }
-  if (clipboardError.code === "pasteUnavailable") {
-    return PASTE_FAILED;
-  }
-  if (typeof clipboardError.message === "string") {
-    return clipboardError.message;
+export function clipboardErrorMessage(error: FloeError): string {
+  if (isFloeErrorDomain(error, "clipboard")) {
+    if (error.code === "clipboardUnavailable") {
+      return CLIPBOARD_UNAVAILABLE;
+    }
+    if (error.code === "pasteUnavailable") {
+      return PASTE_FAILED;
+    }
+    return error.message;
   }
   return CLIPBOARD_UNAVAILABLE;
 }

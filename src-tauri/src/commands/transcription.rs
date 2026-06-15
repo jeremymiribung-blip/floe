@@ -1,50 +1,94 @@
+use std::time::Instant;
+
 use tauri::State;
 
 use crate::{
     asr::backend::AsrBackend,
-    providers::groq::{
-        GroqTranscription, GroqTranscriptionError, GroqTranscriptionErrorCode,
-    },
+    diag::{DiagEvent, PipelineContext},
+    providers::groq::{GroqTranscription, GroqTranscriptionError, GroqTranscriptionErrorCode},
     recording::{RecordingError, RecordingErrorCode, RecordingManager},
-    settings::{SettingsError, SettingsErrorCode, SettingsManager},
 };
 
 #[tauri::command]
 pub async fn transcribe_latest_recording(
     recording_manager: State<'_, RecordingManager>,
     asr_backend: State<'_, AsrBackend>,
-    settings_manager: State<'_, SettingsManager>,
+    diag_ctx: State<'_, PipelineContext>,
 ) -> Result<GroqTranscription, GroqTranscriptionError> {
+    let trace_id = diag_ctx.current_trace_id().unwrap_or_default();
+
     let wav_bytes = latest_wav_bytes(recording_manager.get_latest_recording_wav_bytes()?)?;
     let audio_duration_ms = recording_manager
         .get_latest_recording_info()?
         .map(|info| info.duration_ms)
         .unwrap_or(0);
 
-    let preferred_provider = settings_manager
-        .get_app_settings()
-        .ok()
-        .map(|s| s.stt_provider)
-        .filter(|s| !s.is_empty());
+    log::info!(
+        "{}",
+        DiagEvent::SttAttempt {
+            trace_id: trace_id.clone(),
+            attempt: 1,
+            audio_duration_ms,
+        }
+    );
 
-    let preferred = preferred_provider.as_deref();
+    let start = Instant::now();
 
-    match asr_backend.transcribe(wav_bytes, audio_duration_ms, preferred).await {
-        Ok(result) => Ok(GroqTranscription {
-            text: result.text,
-            model: result.model,
-            retry_count: result.diagnostics.retry_count,
-            rate_limit: None,
-            stt_provider: None,
-        }),
-        Err(asr_error) => Err(GroqTranscriptionError {
-            code: map_asr_error_code(asr_error.code),
-            message: asr_error.message,
-            model: String::new(),
-            retry_count: asr_error.retry_count,
-            rate_limit: None,
-            stt_provider: None,
-        }),
+    match asr_backend
+        .transcribe(wav_bytes, audio_duration_ms, None)
+        .await
+    {
+        Ok(result) => {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let realtime = if audio_duration_ms > 0 {
+                duration_ms as f64 / audio_duration_ms as f64
+            } else {
+                0.0
+            };
+
+            log::info!(
+                "{}",
+                DiagEvent::SttCompleted {
+                    trace_id,
+                    duration_ms,
+                    model: result.model.clone(),
+                    retry_count: result.diagnostics.retry_count,
+                    audio_duration_ms,
+                    realtime_factor: realtime,
+                }
+            );
+
+            Ok(GroqTranscription {
+                text: result.text,
+                model: result.model,
+                retry_count: result.diagnostics.retry_count,
+                rate_limit: None,
+            })
+        }
+        Err(asr_error) => {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let error_code = format!("{:?}", asr_error.code);
+
+            log::error!(
+                "{}",
+                DiagEvent::SttFailed {
+                    trace_id,
+                    duration_ms,
+                    attempt: asr_error.retry_count + 1,
+                    retry_count: asr_error.retry_count,
+                    error_code: error_code.clone(),
+                }
+            );
+
+            Err(GroqTranscriptionError {
+                domain: "stt",
+                code: map_asr_error_code(asr_error.code),
+                message: asr_error.message,
+                model: String::new(),
+                retry_count: asr_error.retry_count,
+                rate_limit: None,
+            })
+        }
     }
 }
 
@@ -78,20 +122,6 @@ fn latest_wav_bytes(wav_bytes: Option<Vec<u8>>) -> Result<Vec<u8>, GroqTranscrip
     Ok(wav_bytes)
 }
 
-#[allow(dead_code)]
-fn map_settings_error(error: SettingsError) -> GroqTranscriptionError {
-    match error.code {
-        SettingsErrorCode::SecretStoreUnavailable => GroqTranscriptionError::new(
-            GroqTranscriptionErrorCode::MissingApiKey,
-            "The Groq API key could not be read from secure storage.",
-        ),
-        _ => GroqTranscriptionError::new(
-            GroqTranscriptionErrorCode::ServerError,
-            "Transcription settings could not be loaded.",
-        ),
-    }
-}
-
 impl From<RecordingError> for GroqTranscriptionError {
     fn from(error: RecordingError) -> Self {
         match error.code {
@@ -104,14 +134,6 @@ impl From<RecordingError> for GroqTranscriptionError {
     }
 }
 
-#[allow(dead_code)]
-fn missing_api_key_error() -> GroqTranscriptionError {
-    GroqTranscriptionError::new(
-        GroqTranscriptionErrorCode::MissingApiKey,
-        "Configure a Groq API key before transcribing.",
-    )
-}
-
 fn empty_audio_error() -> GroqTranscriptionError {
     GroqTranscriptionError::new(
         GroqTranscriptionErrorCode::EmptyAudio,
@@ -121,11 +143,10 @@ fn empty_audio_error() -> GroqTranscriptionError {
 
 #[cfg(test)]
 mod tests {
-    use super::{latest_wav_bytes, map_settings_error};
+    use super::latest_wav_bytes;
     use crate::{
         providers::groq::{GroqTranscriptionError, GroqTranscriptionErrorCode},
         recording::{RecordingError, RecordingErrorCode},
-        settings::{SettingsError, SettingsErrorCode},
     };
 
     #[test]
@@ -143,34 +164,15 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_secret_store_maps_to_missing_key() {
-        let error = map_settings_error(SettingsError {
-            code: SettingsErrorCode::SecretStoreUnavailable,
-            message: "unavailable".to_string(),
-        });
-
-        assert_eq!(error.code, GroqTranscriptionErrorCode::MissingApiKey);
-    }
-
-    #[test]
-    fn non_secret_settings_errors_map_to_server_error() {
-        let error = map_settings_error(SettingsError {
-            code: SettingsErrorCode::AppSettingsUnavailable,
-            message: "settings failed".to_string(),
-        });
-
-        assert_eq!(error.code, GroqTranscriptionErrorCode::ServerError);
-        assert!(!error.message.contains("settings failed"));
-    }
-
-    #[test]
     fn recording_errors_map_to_transcription_errors_without_details() {
         let empty: GroqTranscriptionError = RecordingError {
+            domain: "recording",
             code: RecordingErrorCode::EmptyRecording,
             message: "raw recording detail".to_string(),
         }
         .into();
         let internal: GroqTranscriptionError = RecordingError {
+            domain: "recording",
             code: RecordingErrorCode::Internal,
             message: "raw recording detail".to_string(),
         }

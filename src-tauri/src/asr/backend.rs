@@ -4,27 +4,16 @@ use super::error::AsrError;
 use super::fallback::FallbackStrategy;
 use super::policy::ResourcePolicy;
 use super::registry::ProviderRegistry;
-use super::state::RuntimeState;
-use super::traits::AsrSession;
-use super::types::{SessionConfig, TranscriptResult};
+use super::types::TranscriptResult;
 
 pub struct AsrBackend {
     pub registry: Arc<ProviderRegistry>,
     pub policy: ResourcePolicy,
-    pub runtime: RuntimeState,
 }
 
 impl AsrBackend {
-    pub fn new(
-        registry: Arc<ProviderRegistry>,
-        policy: ResourcePolicy,
-        runtime: RuntimeState,
-    ) -> Self {
-        Self {
-            registry,
-            policy,
-            runtime,
-        }
+    pub fn new(registry: Arc<ProviderRegistry>, policy: ResourcePolicy) -> Self {
+        Self { registry, policy }
     }
 
     pub async fn transcribe(
@@ -54,7 +43,6 @@ impl AsrBackend {
             preferred: preferred_provider.map(|s| s.to_string()),
             audio_duration_ms,
             requires_fallback_compatible: false,
-            requires_local: false,
             requires_streaming: false,
         };
 
@@ -65,62 +53,21 @@ impl AsrBackend {
             )
         })?;
 
-        // Enforce local model policy
-        let primary_caps = primary.capabilities();
-        if matches!(
-            primary_caps.deployment,
-            super::types::Deployment::Local
-        ) && !self.policy.allow_local_models
-        {
-            return Err(AsrError::new(
-                super::error::AsrErrorCode::ProviderRejected,
-                "local models are not enabled in the resource policy",
-            ));
-        }
-
-        let fallback = self.registry.fallback_provider_excluding(Some(primary.id()));
+        let fallback = self
+            .registry
+            .fallback_provider_excluding(Some(primary.id()));
 
         FallbackStrategy::execute(primary, fallback, audio, audio_duration_ms).await
-    }
-
-    pub async fn start_session(
-        &self,
-        provider_id: &str,
-        model_id: Option<&str>,
-    ) -> Result<Box<dyn AsrSession>, AsrError> {
-        let provider = self.registry.get(provider_id).ok_or_else(|| {
-            AsrError::new(
-                super::error::AsrErrorCode::NoProvider,
-                format!("Provider '{}' not found.", provider_id),
-            )
-        })?;
-
-        let model = model_id.unwrap_or(provider.default_model());
-
-        let config = SessionConfig {
-            model: Some(model.to_string()),
-            sample_rate: 16_000,
-            max_duration_secs: self.policy.max_audio_duration_secs,
-        };
-
-        provider
-            .create_session(config)
-            .await
-            .map_err(|session_err| {
-                AsrError::new(
-                    super::error::AsrErrorCode::TranscriptionFailed,
-                    format!("Session creation failed: {}", session_err.message),
-                )
-            })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::asr::error::SessionError;
     use crate::asr::error::*;
     use crate::asr::traits::AsrProvider;
-    use crate::asr::error::SessionError;
+    use crate::asr::traits::AsrSession;
     use crate::asr::traits::{TranscriptionError, TranscriptionErrorCode};
     use crate::asr::types::*;
     use async_trait::async_trait;
@@ -277,22 +224,14 @@ mod tests {
     fn test_backend() -> AsrBackend {
         let mut registry = ProviderRegistry::new();
         registry.register(Box::new(OkProvider)).unwrap();
-        AsrBackend::new(
-            Arc::new(registry),
-            ResourcePolicy::default(),
-            RuntimeState::new("ok".into()),
-        )
+        AsrBackend::new(Arc::new(registry), ResourcePolicy::default())
     }
 
     fn test_backend_with_fallback() -> AsrBackend {
         let mut registry = ProviderRegistry::new();
         registry.register(Box::new(FailProvider)).unwrap();
         registry.register(Box::new(OkProvider)).unwrap();
-        AsrBackend::new(
-            Arc::new(registry),
-            ResourcePolicy::default(),
-            RuntimeState::new("fail".into()),
-        )
+        AsrBackend::new(Arc::new(registry), ResourcePolicy::default())
     }
 
     #[tokio::test]
@@ -323,22 +262,10 @@ mod tests {
     #[tokio::test]
     async fn backend_fallback_to_ok_provider() {
         let backend = test_backend_with_fallback();
-        let result = backend
-            .transcribe(test_wav(), 1000, Some("fail"))
-            .await;
+        let result = backend.transcribe(test_wav(), 1000, Some("fail")).await;
         assert!(result.is_ok());
         let r = result.unwrap();
         assert!(r.diagnostics.fallback_used);
         assert_eq!(r.text, "hello");
-    }
-
-    #[tokio::test]
-    async fn backend_start_session_unknown_provider() {
-        let backend = test_backend();
-        let err = backend
-            .start_session("nonexistent", None)
-            .await
-            .unwrap_err();
-        assert_eq!(err.code, AsrErrorCode::NoProvider);
     }
 }

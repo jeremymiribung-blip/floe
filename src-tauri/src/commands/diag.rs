@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
@@ -38,16 +40,24 @@ impl DiagLog {
         }
     }
 
+    /// Append a raw string line to the log file.
+    /// Privacy responsibility lies with the caller — the line is written as-is.
+    pub fn append_str(&self, line: &str) {
+        if let Ok(guard) = self.path.lock() {
+            if let Some(path) = guard.as_ref() {
+                if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = writeln!(file, "{}", line);
+                }
+            }
+        }
+    }
+
     /// Append a privacy-safe diagnostic entry.
     /// Only the specified safe fields are allowed.
     pub fn append(&self, entry: DiagEntry) {
         if let Ok(guard) = self.path.lock() {
             if let Some(path) = guard.as_ref() {
-                if let Ok(mut file) = OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                {
+                if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
                     let _ = writeln!(file, "{}", entry.to_log_string());
                 }
             }
@@ -75,6 +85,7 @@ pub struct DiagEntry {
 
 impl DiagEntry {
     /// Create a new privacy-safe diagnostic entry.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider_name: impl Into<String>,
         model_name: impl Into<String>,
@@ -141,7 +152,7 @@ impl DiagEntry {
 /// Sanitize error codes for logging to ensure no sensitive data leaks.
 fn sanitize_error_for_log(code: &str) -> String {
     let lower = code.trim().to_ascii_lowercase();
-    
+
     // Redact any error codes that might contain secrets
     if lower.contains("bearer")
         || lower.contains("authorization")
@@ -152,7 +163,7 @@ fn sanitize_error_for_log(code: &str) -> String {
     {
         return "redacted".to_string();
     }
-    
+
     // Only allow alphanumeric, underscore, hyphen, and dot
     let sanitized: String = code
         .trim()
@@ -165,7 +176,7 @@ fn sanitize_error_for_log(code: &str) -> String {
             }
         })
         .collect();
-    
+
     if sanitized.is_empty() || sanitized.len() > 64 {
         "redacted".to_string()
     } else {
@@ -184,10 +195,7 @@ fn chrono_now_iso() -> String {
     let hours = secs / 3600;
     let minutes = (secs % 3600) / 60;
     let seconds = secs % 60;
-    format!(
-        "{:02}:{:02}:{:02}.{:03}",
-        hours, minutes, seconds, millis
-    )
+    format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
 }
 
 #[tauri::command]
@@ -195,26 +203,25 @@ pub fn diag_log(diag: tauri::State<'_, DiagLog>, entry: DiagEntry) {
     diag.append(entry);
 }
 
-// Legacy command for backward compatibility - accepts a string but sanitizes it
-// This should be migrated to use DiagEntry
+/// Append a raw string line to the diagnostics log file.
+/// This is privacy-safe: the frontend sends a plain string, not a DiagEntry.
 #[tauri::command]
-pub fn diag_log_legacy(diag: tauri::State<'_, DiagLog>, line: String) {
-    // For backward compatibility, we create a minimal entry
-    // In the future, this should be removed in favor of diag_log with DiagEntry
-    let entry = DiagEntry::new(
-        "unknown",
-        "unknown", 
-        "unknown",
-        0,
-        0,
-        0,
-        0.0,
-        false,
-        None,
-        0,
-        Some(sanitize_error_for_log(&line)),
-    );
-    diag.append(entry);
+pub fn diag_log_str(diag: tauri::State<'_, DiagLog>, line: String) {
+    diag.append_str(&line);
+}
+
+#[tauri::command]
+pub fn get_recent_traces(
+    tracer: tauri::State<'_, crate::diag::PipelineTracer>,
+    count: Option<u32>,
+) -> Vec<crate::diag::PipelineTrace> {
+    let count = count.unwrap_or(5).clamp(1, 20) as usize;
+    tracer.recent(count)
+}
+
+#[tauri::command]
+pub fn get_current_trace(ctx: tauri::State<'_, crate::diag::PipelineContext>) -> Option<String> {
+    ctx.current_trace_id()
 }
 
 #[cfg(test)]
@@ -239,7 +246,7 @@ mod tests {
             None,
         );
         let log = entry.to_log_string();
-        
+
         // Verify all required fields are present
         assert!(log.contains("provider_name=groq"));
         assert!(log.contains("model_name=whisper-large-v3-turbo"));
@@ -249,7 +256,7 @@ mod tests {
         assert!(log.contains("cleanup_ms=300"));
         assert!(log.contains("realtime_factor=0.240"));
         assert!(log.contains("fallback_used=false"));
-        
+
         // Verify no sensitive fields are present
         assert!(!log.contains("text="));
         assert!(!log.contains("audio="));
@@ -273,7 +280,7 @@ mod tests {
             None,
         );
         let log = entry.to_log_string();
-        
+
         assert!(log.contains("fallback_used=true"));
         assert!(log.contains("fallback_provider=groq"));
         assert!(log.contains("retry_count=1"));
@@ -295,7 +302,7 @@ mod tests {
             Some("timeout_error".to_string()),
         );
         let log = entry.to_log_string();
-        
+
         assert!(log.contains("error_code=timeout_error"));
     }
 
@@ -326,50 +333,45 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test_diag.log");
         let path_str = path.to_str().unwrap().to_string();
-        
+
         let diag = DiagLog::new();
         diag.set_path(path_str);
-        
+
         let entry = DiagEntry::new(
-            "groq",
-            "whisper",
-            "cloud",
-            1000,
-            500,
-            0,
-            0.5,
-            false,
-            None,
-            0,
-            None,
+            "groq", "whisper", "cloud", 1000, 500, 0, 0.5, false, None, 0, None,
         );
-        
+
         diag.append(entry);
-        
+
         let content = fs::read_to_string(&path).unwrap();
         assert!(content.contains("provider_name=groq"));
         assert!(content.contains("model_name=whisper"));
     }
 
     #[test]
+    fn diag_log_str_writes_to_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test_diag_str.log");
+        let path_str = path.to_str().unwrap().to_string();
+
+        let diag = DiagLog::new();
+        diag.set_path(path_str);
+
+        diag.append_str("[FE] test message from frontend");
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[FE] test message from frontend"));
+    }
+
+    #[test]
     fn diag_log_ignores_empty_path() {
         let diag = DiagLog::new();
         diag.set_path("".to_string());
-        
+
         let entry = DiagEntry::new(
-            "groq",
-            "whisper",
-            "cloud",
-            1000,
-            500,
-            0,
-            0.5,
-            false,
-            None,
-            0,
-            None,
+            "groq", "whisper", "cloud", 1000, 500, 0, 0.5, false, None, 0, None,
         );
-        
+
         // Should not panic or write to default location
         diag.append(entry);
     }
