@@ -752,7 +752,10 @@ mod tests {
         let settings = manager.get_app_settings().unwrap();
 
         assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
+        assert_eq!(
+            settings.hotkey.label,
+            format!("{} + Shift + A", ctrl_label())
+        );
     }
 
     #[test]
@@ -766,7 +769,10 @@ mod tests {
         let settings = manager.get_app_settings().unwrap();
 
         assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
+        assert_eq!(
+            settings.hotkey.label,
+            format!("{} + Shift + A", ctrl_label())
+        );
     }
 
     #[test]
@@ -795,7 +801,10 @@ mod tests {
 
         let settings = manager.get_app_settings().unwrap();
 
-        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
+        assert_eq!(
+            settings.hotkey.label,
+            format!("{} + Shift + A", ctrl_label())
+        );
     }
 
     #[test]
@@ -975,7 +984,10 @@ mod tests {
 
         let settings = manager.get_app_settings().unwrap();
         assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
+        assert_eq!(
+            settings.hotkey.label,
+            format!("{} + Shift + A", ctrl_label())
+        );
     }
 
     #[test]
@@ -1016,7 +1028,10 @@ mod tests {
 
         let settings = manager.get_app_settings().unwrap();
         assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
+        assert_eq!(
+            settings.hotkey.label,
+            format!("{} + Shift + A", ctrl_label())
+        );
     }
 
     #[test]
