@@ -572,6 +572,14 @@ mod tests {
             "Ctrl"
         }
     }
+
+    fn alt_label() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "Option"
+        } else {
+            "Alt"
+        }
+    }
     use crate::settings::{AppSettings, SecretStore, SettingsError, SettingsManager};
 
     #[derive(Default)]
@@ -771,12 +779,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(status.accelerator, "Control+Alt+KeyA");
-        assert_eq!(status.label, format!("{} + Alt + A", ctrl_label()));
+        assert_eq!(
+            status.label,
+            format!("{} + {} + A", ctrl_label(), alt_label())
+        );
         assert!(!status.is_default);
         assert!(status.is_registered);
         assert_eq!(
             settings.get_app_settings().unwrap().hotkey.label,
-            format!("{} + Alt + A", ctrl_label())
+            format!("{} + {} + A", ctrl_label(), alt_label())
         );
     }
 

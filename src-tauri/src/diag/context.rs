@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicU32;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -42,8 +43,14 @@ fn generate_trace_id() -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    // Use lower 32 bits of nanosecond timestamp as hex
-    format!("{:08x}", (nanos & 0xFFFF_FFFF) as u32)
+    // Use lower 32 bits of nanosecond timestamp as hex, with a counter
+    // tiebreaker to guarantee uniqueness on systems with coarse clocks (macOS CI).
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!(
+        "{:08x}",
+        ((nanos.wrapping_add(counter as u128)) & 0xFFFF_FFFF) as u32
+    )
 }
 
 #[cfg(test)]
