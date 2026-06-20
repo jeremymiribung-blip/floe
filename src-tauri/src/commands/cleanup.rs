@@ -93,13 +93,12 @@ pub async fn cleanup_transcript(
             snapshot.retries.cleanup = result.retry_count;
             // Merge cleanup rate-limit data with any existing STT rate-limit data.
             if let Some(cl_map) = rate_limit_map {
-                let rl =
-                    snapshot
-                        .rate_limit
-                        .get_or_insert(crate::diag::RateLimitSnapshot {
-                            stt: None,
-                            cleanup: None,
-                        });
+                let rl = snapshot
+                    .rate_limit
+                    .get_or_insert(crate::diag::RateLimitSnapshot {
+                        stt: None,
+                        cleanup: None,
+                    });
                 rl.cleanup = Some(cl_map);
             }
         });
