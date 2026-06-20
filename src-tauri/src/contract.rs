@@ -9,7 +9,7 @@
 //! - All event names appear in emitted events
 //! - Constants match between Rust and TypeScript (via snapshot)
 
-#![allow(dead_code)]
+#![allow(dead_code)] // All CMD_* constants serve as the TypeScript contract mirror; Rust consumes none directly.
 
 // ── Event names ─────────────────────────────────────────────────────────────
 
@@ -24,6 +24,9 @@ pub const EVENT_HOTKEY_STATE: &str = "floe-global-hotkey-state";
 
 /// Emitted to the overlay (bubble) window when recording state toggles.
 pub const EVENT_BUBBLE_STATE: &str = "recording-bubble-state";
+
+/// Emitted to the main window when the user cancels recording from the bubble overlay.
+pub const EVENT_BUBBLE_CANCEL: &str = "recording-bubble-cancelled";
 
 /// Emitted from tray "Settings" menu item to switch frontend to settings view.
 pub const EVENT_SHOW_SETTINGS: &str = "floe-show-settings";
@@ -73,24 +76,34 @@ pub const CMD_CLEANUP_TRANSCRIPT: &str = "cleanup_transcript";
 pub const CMD_COPY_TEXT_TO_CLIPBOARD: &str = "copy_text_to_clipboard";
 pub const CMD_PASTE_TEXT: &str = "paste_text";
 pub const CMD_PASTE_CLIPBOARD: &str = "paste_clipboard";
-pub const CMD_BUBBLE_SHOW: &str = "bubble_show";
+pub const CMD_BUBBLE_CANCEL_RECORDING: &str = "bubble_cancel_recording";
 pub const CMD_BUBBLE_HIDE: &str = "bubble_hide";
+pub const CMD_BUBBLE_SET_STATE: &str = "bubble_set_state";
+pub const CMD_BUBBLE_SHOW: &str = "bubble_show";
 pub const CMD_DIAG_LOG: &str = "diag_log";
 pub const CMD_DIAG_LOG_STR: &str = "diag_log_str";
+pub const CMD_GET_DIAGNOSTICS_REPORT: &str = "get_diagnostics_report";
 pub const CMD_GET_RECENT_TRACES: &str = "get_recent_traces";
 pub const CMD_GET_CURRENT_TRACE: &str = "get_current_trace";
+pub const CMD_LOG_FRONTEND_EVENT: &str = "log_frontend_event";
+pub const CMD_UPDATE_SESSION_HOTKEY_LATENCY: &str = "update_session_hotkey_latency";
 
+#[cfg(test)]
 pub const ALL_COMMANDS: &[&str] = &[
+    CMD_BUBBLE_CANCEL_RECORDING,
     CMD_BUBBLE_HIDE,
+    CMD_BUBBLE_SET_STATE,
     CMD_BUBBLE_SHOW,
-    CMD_CLEANUP_TRANSCRIPT,
     CMD_CLEAR_API_KEY,
+    CMD_CLEANUP_TRANSCRIPT,
     CMD_COPY_TEXT_TO_CLIPBOARD,
     CMD_DIAG_LOG,
     CMD_DIAG_LOG_STR,
     CMD_GET_API_KEY_STATUS,
+    CMD_LOG_FRONTEND_EVENT,
     CMD_GET_APP_SETTINGS,
     CMD_GET_CURRENT_TRACE,
+    CMD_GET_DIAGNOSTICS_REPORT,
     CMD_GET_HOTKEY_SETTINGS,
     CMD_GET_LATEST_RECORDING_INFO,
     CMD_GET_RECENT_TRACES,
@@ -108,6 +121,7 @@ pub const ALL_COMMANDS: &[&str] = &[
     CMD_STOP_RECORDING,
     CMD_TRANSCRIBE_LATEST_RECORDING,
     CMD_UNREGISTER_GLOBAL_HOTKEY,
+    CMD_UPDATE_SESSION_HOTKEY_LATENCY,
 ];
 
 #[cfg(test)]
@@ -147,6 +161,7 @@ mod tests {
             EVENT_RECORDING_STATE_CHANGED,
             EVENT_HOTKEY_STATE,
             EVENT_BUBBLE_STATE,
+            EVENT_BUBBLE_CANCEL,
             EVENT_SHOW_SETTINGS,
             EVENT_SHUTTING_DOWN,
         ] {
@@ -178,5 +193,6 @@ mod tests {
         assert!(ALL_COMMANDS.contains(&CMD_SAVE_API_KEY));
         assert!(ALL_COMMANDS.contains(&CMD_START_RECORDING));
         assert!(ALL_COMMANDS.contains(&CMD_BUBBLE_SHOW));
+        assert!(ALL_COMMANDS.contains(&CMD_BUBBLE_CANCEL_RECORDING));
     }
 }

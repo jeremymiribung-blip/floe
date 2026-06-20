@@ -13,7 +13,7 @@ import {
   diagnosticsToJson,
   type PipelineStage,
 } from "./diagnostics";
-import { diagLog } from "./tauri";
+import { diagLog, logFrontendEvent, updateSessionHotkeyLatency } from "./tauri";
 import { MAX_RECORDING_DURATION_SECS, WATCHDOG_GRACE_SECS } from "./contract";
 
 export type ShortcutState = "Pressed" | "Released";
@@ -50,6 +50,7 @@ export class PushToTalkController {
   private recordingState: RecordingState = "idle";
   private releaseAfterStart = false;
   private finishing = false;
+  private activeTraceId: string | null = null;
   private activeTraceStartedAt = 0;
   private hotkeyToRecordingStartMs = 0;
   private latestDiagnosticsJson: string | null = null;
@@ -61,10 +62,18 @@ export class PushToTalkController {
     private readonly nowMs: () => number = defaultNowMs,
     private readonly createdAt: () => Date = () => new Date(),
     private readonly platform: string = defaultPlatform(),
+    private readonly appVersion: string = "0.0.0",
   ) {}
 
   getLatestDiagnosticsJson(): string | null {
     return this.latestDiagnosticsJson;
+  }
+
+  /** Returns true when a recording is active or starting (for detecting unexpected backend transitions). */
+  isRecording(): boolean {
+    return (
+      this.recordingState === "recording" || this.recordingState === "starting"
+    );
   }
 
   syncRecordingState(state: RecordingState): void {
@@ -133,10 +142,21 @@ export class PushToTalkController {
     try {
       const status = await this.dependencies.startRecording();
       this.recordingState = "recording";
+      this.activeTraceId = status.traceId ?? null;
       this.hotkeyToRecordingStartMs = this.nowMs() - this.activeTraceStartedAt;
       this.callbacks.onRecordingStatusChange(status);
       this.callbacks.onStateChange("recording");
       this.scheduleWatchdog();
+
+      // Send hotkey-to-recording-start latency to backend for diagnostics
+      if (status.traceId) {
+        void updateSessionHotkeyLatency(
+          status.traceId,
+          this.hotkeyToRecordingStartMs,
+        ).catch((e) => {
+          diagLog(`[FE] updateSessionHotkeyLatency failed: ${e}`);
+        });
+      }
     } catch (caught) {
       this.recordingState = "idle";
       this.releaseAfterStart = false;
@@ -231,23 +251,36 @@ export class PushToTalkController {
       this.callbacks.onLatestRecordingChange(latestRecording);
       await this.refreshRecordingStatus();
 
+      this.pushEvent("stt", "started", 0);
+
       this.callbacks.onStateChange("transcribing");
       const sttStartedAt = this.nowMs();
       try {
         transcription = await this.dependencies.transcribeLatestRecording();
+        sttDurationMs = this.nowMs() - sttStartedAt;
+        this.pushEvent("stt", "completed", sttDurationMs);
       } catch (caught) {
         sttDurationMs = this.nowMs() - sttStartedAt;
         transcriptionError = parseFloeError(caught);
         errorStage = "stt";
         sanitizedErrorCode = floeErrorCode(transcriptionError);
+        this.pushEvent("stt", "failed", sttDurationMs, sanitizedErrorCode);
         throw transcriptionError;
       }
-      sttDurationMs = this.nowMs() - sttStartedAt;
+
+      this.pushEvent("cleanup", "started", 0);
 
       this.callbacks.onStateChange("cleaning");
       const cleanupStartedAt = this.nowMs();
       cleanup = await this.cleanTranscriptOrUseRaw(transcription.text);
       cleanupDurationMs = this.nowMs() - cleanupStartedAt;
+
+      this.pushEvent(
+        "cleanup",
+        cleanupFallbackUsed ? "fallback" : "completed",
+        cleanupDurationMs,
+        cleanup?.errorCode ?? null,
+      );
       cleanupFallbackUsed =
         cleanup.fallbackUsed === true || cleanup.warning === "Cleanup failed";
       cleanupValidationMs = cleanup.validationMs ?? 0;
@@ -275,17 +308,26 @@ export class PushToTalkController {
         await this.dependencies.copyTextToClipboard(finalText);
         clipboardWriteMs = this.nowMs() - clipboardStartedAt;
         clipboardSuccess = true;
+        this.pushEvent("clipboard", "completed", clipboardWriteMs);
         pasteStartedAt = this.nowMs();
         await this.dependencies.pasteClipboard();
         pasteAttemptMs = this.nowMs() - pasteStartedAt;
         pasteSuccess = true;
         this.callbacks.onStateChange("pasted");
+        this.pushEvent(
+          "paste",
+          "completed",
+          pasteAttemptMs,
+          null,
+          this.nowMs() - this.activeTraceStartedAt,
+        );
       } catch (caught) {
         const error = parseFloeError(caught);
         sanitizedErrorCode = floeErrorCode(error);
         if (clipboardSuccess) {
           pasteAttemptMs = this.nowMs() - pasteStartedAt;
           errorStage = "paste";
+          this.pushEvent("paste", "failed", pasteAttemptMs, sanitizedErrorCode);
           this.callbacks.onErrorChange(null);
           this.callbacks.onStateChange("copied");
           copiedOnly = true;
@@ -293,6 +335,12 @@ export class PushToTalkController {
         }
         clipboardWriteMs = this.nowMs() - clipboardStartedAt;
         errorStage = "clipboard";
+        this.pushEvent(
+          "clipboard",
+          "failed",
+          clipboardWriteMs,
+          sanitizedErrorCode,
+        );
         throw error;
       }
     } catch (caught) {
@@ -304,9 +352,18 @@ export class PushToTalkController {
       this.callbacks.onErrorChange(this.callbacks.errorMessage(error));
       this.callbacks.onStateChange("error");
     } finally {
+      if (errorStage !== null) {
+        this.pushEvent(
+          errorStage,
+          "failed",
+          this.nowMs() - this.activeTraceStartedAt,
+          sanitizedErrorCode,
+        );
+      }
       this.storeDiagnostics({
         createdAt: this.createdAt(),
         platform: this.platform,
+        appVersion: this.appVersion,
         totalMs: this.nowMs() - totalStartedAt,
         hotkeyToRecordingStartMs: this.hotkeyToRecordingStartMs,
         recordingInfo: latestRecording,
@@ -358,6 +415,28 @@ export class PushToTalkController {
     } catch {
       // Recording already stopped; status refresh should not block transcription.
     }
+  }
+
+  /** Push a structured lifecycle event to the backend's timed timeline. */
+  private pushEvent(
+    stage: string,
+    eventType: string,
+    durationMs: number,
+    errorCode?: string | null,
+    pipelineTotalMs?: number | null,
+  ): void {
+    if (!this.activeTraceId) return;
+    void logFrontendEvent({
+      traceId: this.activeTraceId,
+      stage,
+      eventType,
+      durationMs: Math.round(durationMs),
+      errorCode: errorCode ?? null,
+      retryCount: null,
+      pipelineTotalMs: pipelineTotalMs ?? null,
+    }).catch(() => {
+      // Best-effort; never block the pipeline over diagnostics.
+    });
   }
 
   private storeDiagnostics(

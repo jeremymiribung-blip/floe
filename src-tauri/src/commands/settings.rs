@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use tauri::{AppHandle, Runtime, State};
 
 use crate::{
@@ -11,9 +13,14 @@ use crate::{
 #[tauri::command]
 pub fn save_api_key(
     manager: State<'_, SettingsManager>,
+    shared_api_key: State<'_, Arc<Mutex<String>>>,
     api_key: String,
 ) -> Result<ApiKeyStatus, SettingsError> {
-    manager.save_api_key(api_key)
+    let status = manager.save_api_key(api_key.clone())?;
+    if let Ok(mut key) = shared_api_key.lock() {
+        *key = api_key;
+    }
+    Ok(status)
 }
 
 #[tauri::command]

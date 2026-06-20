@@ -4,8 +4,8 @@ import type {
   RecordingInfo,
   TranscriptCleanupResult,
 } from "../types/app";
+import { assertNoForbiddenKeys, assertNoForbiddenPatterns } from "./privacy";
 
-const APP_VERSION = "0.1.0";
 const TRACE_VERSION = 1;
 
 export type PipelineStage =
@@ -39,6 +39,14 @@ export interface PipelineDiagnostics {
   models: {
     stt: string;
     cleanup: string;
+  };
+  stt_provider: {
+    provider_name: string;
+    audio_duration_ms: number;
+    transcription_ms: number;
+    realtime_factor: number;
+    fallback_used: boolean;
+    error_code: string | null;
   };
   audio: {
     format: "wav";
@@ -85,6 +93,7 @@ export interface PipelineDiagnostics {
 export interface PipelineDiagnosticsInput {
   createdAt: Date;
   platform: string;
+  appVersion: string;
   totalMs: number;
   hotkeyToRecordingStartMs: number;
   recordingInfo?: RecordingInfo | null;
@@ -131,12 +140,13 @@ export function createPipelineDiagnostics(
     trace_version: TRACE_VERSION,
     created_at: input.createdAt.toISOString(),
     platform: input.platform,
-    app_version: APP_VERSION,
+    app_version: input.appVersion,
     pipeline,
     models: {
       stt: input.stt?.model ?? input.sttError?.model ?? "",
       cleanup: input.cleanup?.model ?? "",
     },
+    stt_provider: sttProviderDiagnostics(input),
     audio: {
       format: recordingInfo?.wavFormat ?? "wav",
       sample_rate:
@@ -174,6 +184,27 @@ export function createPipelineDiagnostics(
   };
   assertDiagnosticsSafe(diagnostics);
   return diagnostics;
+}
+
+function sttProviderDiagnostics(
+  input: PipelineDiagnosticsInput,
+): PipelineDiagnostics["stt_provider"] {
+  const provider = input.stt?.sttProvider ?? input.sttError?.sttProvider;
+  const audioDurationMs =
+    provider?.audioDurationMs ?? input.recordingInfo?.durationMs ?? 0;
+  const transcriptionMs = provider?.transcriptionMs ?? input.sttDurationMs;
+
+  return {
+    provider_name: provider?.providerName ?? "",
+    audio_duration_ms: normalizeDuration(audioDurationMs),
+    transcription_ms: normalizeDuration(transcriptionMs),
+    realtime_factor: sanitizeRealtimeFactor(
+      provider?.realtimeFactor ??
+        realtimeFactor(transcriptionMs, audioDurationMs),
+    ),
+    fallback_used: provider?.fallbackUsed === true,
+    error_code: sanitizeDiagnosticCode(provider?.errorCode ?? null),
+  };
 }
 
 function rateLimitDiagnostics(
@@ -244,94 +275,10 @@ export function bottleneckFor(
   };
 }
 
-const FORBIDDEN_KEYS: ReadonlySet<string> = new Set([
-  "transcript",
-  "transcripts",
-  "cleaned",
-  "cleaned_text",
-  "text",
-  "api_key",
-  "apikey",
-  "api-key",
-  "key",
-  "bearer",
-  "authorization",
-  "auth",
-  "samples",
-  "raw_audio",
-  "rawaudio",
-  "audio_data",
-  "audiodata",
-  "audio_bytes",
-  "audiobytes",
-  "wav",
-  "wav_bytes",
-  "wavbytes",
-  "pcm",
-  "pcm_samples",
-  "pcmsamples",
-  "clipboard",
-  "clipboard_text",
-  "clipboardtext",
-  "response",
-  "response_body",
-  "responsebody",
-  "body",
-  "payload",
-  "headers",
-  "request",
-  "url",
-  "endpoint",
-]);
-
-const FORBIDDEN_SUBSTRINGS: ReadonlyArray<{
-  pattern: RegExp;
-  name: string;
-}> = [
-  { pattern: /\bBearer\s+[A-Za-z0-9._\-+/=]{8,}/i, name: "Bearer token" },
-  { pattern: /gsk_[A-Za-z0-9]{8,}/, name: "Groq API key prefix" },
-  {
-    pattern: /Authorization\s*[:=]/i,
-    name: "Authorization header",
-  },
-  {
-    pattern: /x-api-key\s*[:=]/i,
-    name: "x-api-key header",
-  },
-];
-
 export function assertDiagnosticsSafe(diagnostics: PipelineDiagnostics): void {
   assertNoForbiddenKeys(diagnostics, "");
   const json = diagnosticsToJson(diagnostics);
-  for (const { pattern, name } of FORBIDDEN_SUBSTRINGS) {
-    if (pattern.test(json)) {
-      throw new Error(`Diagnostics contain forbidden pattern: ${name}`);
-    }
-  }
-}
-
-function assertNoForbiddenKeys(value: unknown, path: string): void {
-  if (value === null || value === undefined) {
-    return;
-  }
-  if (typeof value !== "object") {
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (let i = 0; i < value.length; i += 1) {
-      assertNoForbiddenKeys(value[i], `${path}[${i}]`);
-    }
-    return;
-  }
-  const record = value as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
-    if (FORBIDDEN_KEYS.has(key.toLowerCase())) {
-      throw new Error(
-        `Diagnostics contain forbidden key: ${path ? `${path}.` : ""}${key}`,
-      );
-    }
-    assertNoForbiddenKeys(record[key], path ? `${path}.${key}` : key);
-  }
+  assertNoForbiddenPatterns(json);
 }
 
 function normalizeDuration(value: number): number {
@@ -342,4 +289,54 @@ function normalizeDuration(value: number): number {
   return Math.round(value);
 }
 
+function realtimeFactor(
+  transcriptionMs: number,
+  audioDurationMs: number,
+): number {
+  if (
+    !Number.isFinite(transcriptionMs) ||
+    !Number.isFinite(audioDurationMs) ||
+    audioDurationMs <= 0
+  ) {
+    return 0;
+  }
 
+  return sanitizeRealtimeFactor(transcriptionMs / audioDurationMs);
+}
+
+function sanitizeRealtimeFactor(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.round(value * 1000) / 1000;
+}
+
+export function sanitizeDiagnosticCode(
+  value: string | null | undefined,
+): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const sanitized = value
+    .trim()
+    .split("")
+    .map((ch) => (/[a-zA-Z0-9_-]/.test(ch) ? ch.toLowerCase() : "_"))
+    .join("");
+
+  if (
+    sanitized.length === 0 ||
+    sanitized.length > 64 ||
+    sanitized.includes("bearer") ||
+    sanitized.includes("authorization") ||
+    sanitized.includes("api_key") ||
+    sanitized.includes("api-key") ||
+    sanitized.includes("gsk_") ||
+    sanitized.includes("sk_")
+  ) {
+    return "internal";
+  }
+
+  return sanitized;
+}

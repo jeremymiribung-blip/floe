@@ -19,7 +19,9 @@ use floe_lib::{
 /// This must match `ALL_COMMANDS` in `src-tauri/src/contract.rs`
 /// AND `ALL_COMMANDS` in `src/lib/contract.ts`.
 const ALL_COMMANDS: &[&str] = &[
+    "bubble_cancel_recording",
     "bubble_hide",
+    "bubble_set_state",
     "bubble_show",
     "cleanup_transcript",
     "clear_api_key",
@@ -29,6 +31,7 @@ const ALL_COMMANDS: &[&str] = &[
     "get_api_key_status",
     "get_app_settings",
     "get_current_trace",
+    "get_diagnostics_report",
     "get_hotkey_settings",
     "get_latest_recording_info",
     "get_recent_traces",
@@ -46,6 +49,8 @@ const ALL_COMMANDS: &[&str] = &[
     "stop_recording",
     "transcribe_latest_recording",
     "unregister_global_hotkey",
+    "update_session_hotkey_latency",
+    "log_frontend_event",
 ];
 
 /// The canonical list of all event names.
@@ -82,7 +87,7 @@ fn command_names_are_snake_case() {
 
 #[test]
 fn all_commands_length_is_stable() {
-    assert_eq!(ALL_COMMANDS.len(), 27,
+    assert_eq!(ALL_COMMANDS.len(), 32,
         "Command count changed.\nIf you added/removed a command, update ALL_COMMANDS in contract.rs, contract.ts, AND this file.");
 }
 

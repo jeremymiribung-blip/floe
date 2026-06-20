@@ -34,7 +34,8 @@ pub fn encode_recording_wav(
     samples: &[f32],
     input_sample_rate: u32,
 ) -> Result<Vec<u8>, RecordingError> {
-    let mut output_samples = resample_mono_linear(samples, input_sample_rate, TARGET_WAV_SAMPLE_RATE)?;
+    let mut output_samples =
+        resample_mono_linear(samples, input_sample_rate, TARGET_WAV_SAMPLE_RATE)?;
     apply_agc(&mut output_samples);
     encode_pcm16_wav(&output_samples, TARGET_WAV_SAMPLE_RATE, OUTPUT_CHANNELS)
 }
@@ -316,7 +317,8 @@ mod tests {
         let mut samples = vec![0.01_f32; 1000];
         apply_agc(&mut samples);
 
-        let rms = (samples.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / samples.len() as f64).sqrt() as f32;
+        let rms = (samples.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / samples.len() as f64)
+            .sqrt() as f32;
         assert!(rms > 0.01, "AGC should boost quiet signal, rms={rms}");
         assert!(rms <= 0.2, "AGC should not over-boost, rms={rms}");
     }
@@ -326,7 +328,8 @@ mod tests {
         let mut samples = vec![0.8_f32; 1000];
         apply_agc(&mut samples);
 
-        let rms = (samples.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / samples.len() as f64).sqrt() as f32;
+        let rms = (samples.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / samples.len() as f64)
+            .sqrt() as f32;
         assert!(rms < 0.8, "AGC should reduce loud signal, rms={rms}");
         assert!(rms > 0.05, "AGC should not silence signal, rms={rms}");
     }

@@ -1,3 +1,4 @@
+use log;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -17,11 +18,6 @@ const MAX_API_KEY_LEN: usize = 256;
 pub struct ApiKeyStatus {
     pub configured: bool,
     pub masked_preview: Option<String>,
-}
-
-#[allow(dead_code)]
-fn default_empty_string() -> String {
-    String::new()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -233,32 +229,30 @@ impl SettingsManager {
         self.app_settings_store.load()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn get_app_settings_async(&self) -> Result<AppSettings, SettingsError> {
         self.app_settings_store.load_async().await
     }
 
-    pub fn save_app_settings(&self, settings: AppSettings) -> Result<AppSettings, SettingsError> {
-        let settings = validate_app_settings(settings)?;
-        self.app_settings_store.save(&settings)?;
-
-        Ok(settings)
-    }
-
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn save_app_settings_async(
         &self,
         settings: AppSettings,
     ) -> Result<AppSettings, SettingsError> {
         let settings = validate_app_settings(settings)?;
         self.app_settings_store.save_async(&settings).await?;
-
         Ok(settings)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn restore_settings_from_backup(&self) -> Result<(), SettingsError> {
         self.app_settings_store.restore_from_backup()
+    }
+    pub fn save_app_settings(&self, settings: AppSettings) -> Result<AppSettings, SettingsError> {
+        let settings = validate_app_settings(settings)?;
+        self.app_settings_store.save(&settings)?;
+
+        Ok(settings)
     }
 }
 
@@ -267,7 +261,6 @@ struct AppSettingsStore {
     lock: Arc<Mutex<()>>,
 }
 
-#[allow(dead_code)]
 impl AppSettingsStore {
     fn new(path: PathBuf) -> Self {
         Self {
@@ -281,15 +274,16 @@ impl AppSettingsStore {
         Self::load_from_path(&self.path)
     }
 
+    #[cfg(test)]
     async fn load_async(&self) -> Result<AppSettings, SettingsError> {
         let path = self.path.clone();
         let lock = Arc::clone(&self.lock);
         tokio::task::spawn_blocking(move || {
-            let _guard = lock.lock().map_err(|_| app_settings_error())?;
+            let _guard = lock.lock().map_err(|e| log_then_settings_error(e))?;
             Self::load_from_path(&path)
         })
         .await
-        .map_err(|_| app_settings_error())?
+        .map_err(|e| log_then_settings_error(e))?
     }
 
     fn load_from_path(path: &PathBuf) -> Result<AppSettings, SettingsError> {
@@ -297,7 +291,7 @@ impl AppSettingsStore {
             return Ok(AppSettings::default());
         }
 
-        let raw = fs::read_to_string(path).map_err(|_| app_settings_error())?;
+        let raw = fs::read_to_string(path).map_err(|e| log_then_settings_error(e))?;
 
         match serde_json::from_str::<serde_json::Value>(&raw) {
             Ok(value) => {
@@ -322,9 +316,9 @@ impl AppSettingsStore {
     }
 
     fn load_settings_from_file(path: &PathBuf) -> Result<AppSettings, SettingsError> {
-        let raw = fs::read_to_string(path).map_err(|_| app_settings_error())?;
+        let raw = fs::read_to_string(path).map_err(|e| log_then_settings_error(e))?;
         let value: serde_json::Value =
-            serde_json::from_str(&raw).map_err(|_| app_settings_error())?;
+            serde_json::from_str(&raw).map_err(|e| log_then_settings_error(e))?;
 
         let hotkey = load_hotkey_settings(value.get("hotkey"))?;
 
@@ -340,37 +334,39 @@ impl AppSettingsStore {
         Self::save_to_path(&self.path, settings)
     }
 
+    #[cfg(test)]
     async fn save_async(&self, settings: &AppSettings) -> Result<(), SettingsError> {
         let path = self.path.clone();
         let lock = Arc::clone(&self.lock);
         let settings = settings.clone();
         tokio::task::spawn_blocking(move || {
-            let _guard = lock.lock().map_err(|_| app_settings_error())?;
+            let _guard = lock.lock().map_err(|e| log_then_settings_error(e))?;
             Self::save_to_path(&path, &settings)
         })
         .await
-        .map_err(|_| app_settings_error())?
+        .map_err(|e| log_then_settings_error(e))?
     }
 
     fn save_to_path(path: &PathBuf, settings: &AppSettings) -> Result<(), SettingsError> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|_| app_settings_error())?;
+            fs::create_dir_all(parent).map_err(|e| log_then_settings_error(e))?;
         }
 
         // Create backup of existing file before overwriting
         if path.exists() {
             let backup = Self::backup_path(path);
-            fs::copy(path, &backup).map_err(|_| app_settings_error())?;
+            fs::copy(path, &backup).map_err(|e| log_then_settings_error(e))?;
         }
 
-        let raw = serde_json::to_string_pretty(settings).map_err(|_| app_settings_error())?;
-        fs::write(path, raw).map_err(|_| app_settings_error())
+        let raw = serde_json::to_string_pretty(settings).map_err(|e| log_then_settings_error(e))?;
+        fs::write(path, raw).map_err(|e| log_then_settings_error(e))
     }
 
     fn backup_path(path: &Path) -> PathBuf {
         path.with_extension("json.bak")
     }
 
+    #[cfg(test)]
     fn restore_backup_to_path(path: &Path) -> Result<(), SettingsError> {
         let backup = Self::backup_path(path);
         if !backup.exists() {
@@ -378,20 +374,21 @@ impl AppSettingsStore {
         }
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|_| app_settings_error())?;
+            fs::create_dir_all(parent).map_err(|e| log_then_settings_error(e))?;
         }
 
-        fs::copy(&backup, path).map_err(|_| app_settings_error())?;
+        fs::copy(&backup, path).map_err(|e| log_then_settings_error(e))?;
         Ok(())
     }
 
+    #[cfg(test)]
     fn restore_from_backup(&self) -> Result<(), SettingsError> {
         let _guard = self.settings_lock()?;
         Self::restore_backup_to_path(&self.path)
     }
 
     fn settings_lock(&self) -> Result<std::sync::MutexGuard<'_, ()>, SettingsError> {
-        self.lock.lock().map_err(|_| app_settings_error())
+        self.lock.lock().map_err(|e| log_then_settings_error(e))
     }
 }
 
@@ -400,6 +397,13 @@ fn map_keyring_error(_error: KeyringError) -> SettingsError {
         SettingsErrorCode::SecretStoreUnavailable,
         "Secure key storage is unavailable. Floe did not store the API key.",
     )
+}
+
+/// Log the original error detail, then return the generic app_settings_error.
+/// Preserves diagnostic info that was previously discarded.
+fn log_then_settings_error<E: std::fmt::Display>(e: E) -> SettingsError {
+    log::warn!("settings_error_detail=\"{}\"", e);
+    app_settings_error()
 }
 
 fn app_settings_error() -> SettingsError {

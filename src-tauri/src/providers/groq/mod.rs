@@ -8,5 +8,4 @@ pub mod util;
 pub use cleanup::GroqCleanupClient;
 pub use types::{
     GroqCleanupError, GroqTranscription, GroqTranscriptionError, GroqTranscriptionErrorCode,
-    GROQ_STT_MODEL,
 };

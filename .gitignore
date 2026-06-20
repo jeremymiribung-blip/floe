@@ -33,3 +33,14 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+# npm lock — project uses pnpm
+package-lock.json
+
+# Runtime/build artifacts
+diag.txt
+diag_stderr.log
+fe_diag.log
+inventory.ndjson
+nul
+libpolicy.rlib
+.venv-nemotron/

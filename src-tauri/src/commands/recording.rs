@@ -3,7 +3,7 @@ use std::time::Instant;
 use tauri::State;
 
 use crate::{
-    diag::{DiagEvent, PipelineContext},
+    diag::{DiagEvent, LastSessionStore, PipelineContext},
     lifecycle,
     recording::{
         RecordingError, RecordingErrorCode, RecordingInfo, RecordingManager, RecordingStatus,
@@ -14,6 +14,7 @@ use crate::{
 pub async fn start_recording(
     manager: State<'_, RecordingManager>,
     diag_ctx: State<'_, PipelineContext>,
+    last_session: State<'_, LastSessionStore>,
 ) -> Result<RecordingStatus, RecordingError> {
     if !lifecycle::can_accept_commands() {
         return Err(RecordingError {
@@ -34,10 +35,24 @@ pub async fn start_recording(
     log::info!(
         "{}",
         DiagEvent::RecordingStarted {
-            trace_id,
+            trace_id: trace_id.clone(),
             duration_ms: setup_ms,
         }
     );
+
+    // Stash a fresh session snapshot so the diagnostics report has
+    // per-stage data even if the user never releases the hotkey.
+    // Use set() (not update() with ..snapshot.clone()) so stale fields
+    // from a prior incomplete session are never carried forward.
+    last_session.set(crate::diag::SessionSnapshot {
+        trace_id: Some(trace_id.clone()),
+        completed: false,
+        recording_setup_ms: setup_ms,
+        error_stage: None,
+        sanitized_error_code: None,
+        last_error: None,
+        ..Default::default()
+    });
 
     Ok(status)
 }
@@ -46,6 +61,7 @@ pub async fn start_recording(
 pub async fn stop_recording(
     manager: State<'_, RecordingManager>,
     diag_ctx: State<'_, PipelineContext>,
+    last_session: State<'_, LastSessionStore>,
 ) -> Result<RecordingInfo, RecordingError> {
     if !lifecycle::can_accept_commands() {
         return Err(RecordingError {
@@ -66,7 +82,7 @@ pub async fn stop_recording(
             log::info!(
                 "{}",
                 DiagEvent::RecordingStopped {
-                    trace_id,
+                    trace_id: trace_id.clone(),
                     duration_ms,
                     encode_ms: info.audio_encode_ms,
                     wav_bytes: info.wav_byte_count,
@@ -74,7 +90,29 @@ pub async fn stop_recording(
                     ended_reason: format!("{:?}", info.ended_reason).to_lowercase(),
                 }
             );
-            diag_ctx.end_session();
+
+            last_session.update(|snapshot| {
+                *snapshot = crate::diag::SessionSnapshot {
+                    trace_id: Some(trace_id.clone()),
+                    completed: false,
+                    audio: Some(crate::diag::AudioSnapshot {
+                        format: info.wav_format.to_string(),
+                        sample_rate: info.wav_sample_rate,
+                        channels: info.wav_channels,
+                        bits_per_sample: info.wav_bits_per_sample,
+                        bytes: info.wav_byte_count,
+                        duration_ms: info.duration_ms,
+                        ended_reason: format!("{:?}", info.ended_reason).to_lowercase(),
+                        max_duration_reached: info.max_duration_reached,
+                    }),
+                    audio_capture_ms: info.duration_ms,
+                    buffering_to_encode_ms: info.recording_stop_to_encode_start_ms,
+                    audio_encode_ms: info.audio_encode_ms,
+                    recording_started_at_unix_ms: Some(info.started_at_ms),
+                    recording_ended_at_unix_ms: Some(info.ended_at_ms),
+                    ..snapshot.clone()
+                };
+            });
         }
         Err(err) => {
             log::warn!(
@@ -84,6 +122,16 @@ pub async fn stop_recording(
                     error_code: format!("{:?}", err.code),
                 }
             );
+            last_session.update(|snapshot| {
+                snapshot.error_stage = Some("recording".to_string());
+                snapshot.sanitized_error_code = Some(format!("{:?}", err.code).to_lowercase());
+                snapshot.last_error = Some(crate::diag::LastError {
+                    stage: "recording".to_string(),
+                    code: format!("{:?}", err.code).to_lowercase(),
+                    message: String::new(),
+                });
+                snapshot.completed = false;
+            });
         }
     }
 
@@ -107,13 +155,4 @@ pub fn get_latest_recording_info(
     manager: State<'_, RecordingManager>,
 ) -> Result<Option<RecordingInfo>, RecordingError> {
     manager.get_latest_recording_info()
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn recording_command_signatures_are_stable() {
-        // Compile-time verification that recording commands have the expected signatures
-        // This ensures no provider-switching complexity has been added
-    }
 }

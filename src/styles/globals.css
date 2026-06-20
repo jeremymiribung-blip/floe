@@ -1,0 +1,379 @@
+@import "tailwindcss";
+@import "../lib/shadcn-theme.css";
+
+/* ── Design tokens (Tailwind v4 @theme) ──────────────────── */
+@theme {
+  /* Font families */
+  --font-sans:
+    "Inter", system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Segoe UI", sans-serif;
+  --font-mono:
+    "JetBrains Mono", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono",
+    monospace;
+
+  /* Colors ─ Backgrounds */
+  --color-floe-bg-base: #070708;
+  --color-floe-bg-elevated: #0b0b0d;
+  --color-floe-bg-subtle: #08080a;
+  --color-floe-bg-overlay: rgba(7, 7, 8, 0.85);
+  --color-floe-bg-recording-pill: rgba(10, 10, 12, 0.92);
+
+  /* Colors ─ Surfaces */
+  --color-floe-surface-muted: #111113;
+  --color-floe-surface-strong: #15151a;
+  --color-floe-surface-border-subtle: #1e1e22;
+  --color-floe-surface-border-strong: #2a2a2f;
+
+  /* Colors ─ Borders & dividers */
+  --color-floe-border-subtle: #1e1e22;
+  --color-floe-border-strong: #2a2a2f;
+  --color-floe-border-focus: #7c9a92;
+  --color-floe-border-danger: #f97373;
+
+  /* Colors ─ Text */
+  --color-floe-text-primary: #f5f5f7;
+  --color-floe-text-secondary: #c7cbd8;
+  --color-floe-text-muted: #7a7f91;
+  --color-floe-text-on-accent: #0a1413;
+  --color-floe-text-danger: #fca5a5;
+  --color-floe-text-success: #4ade80;
+
+  /* Colors ─ Accent */
+  --color-floe-accent: #7c9a92;
+  --color-floe-accent-soft: #2e3e3b;
+  --color-floe-accent-muted: #506c66;
+
+  /* Colors ─ Functional grays */
+  --color-floe-gray-100: #f9fafb;
+  --color-floe-gray-300: #d1d5db;
+  --color-floe-gray-500: #6b7280;
+  --color-floe-gray-700: #374151;
+  --color-floe-gray-800: #111827;
+  --color-floe-gray-900: #020617;
+
+  /* Colors ─ shadcn semantic (Tailwind utilities) */
+  --color-background: #070708;
+  --color-foreground: #f5f5f7;
+  --color-card: #111113;
+  --color-card-foreground: #f5f5f7;
+  --color-popover: rgba(10, 10, 12, 0.92);
+  --color-popover-foreground: #f5f5f7;
+  --color-primary: #7c9a92;
+  --color-primary-foreground: #0a1413;
+  --color-secondary: rgba(15, 15, 18, 0.85);
+  --color-secondary-foreground: #c7cbd8;
+  --color-muted: rgba(15, 15, 18, 0.55);
+  --color-muted-foreground: #7a7f91;
+  --color-accent: #2e3e3b;
+  --color-accent-foreground: #f5f5f7;
+  --color-destructive: #f97373;
+  --color-destructive-foreground: #0a1413;
+  --color-border: #1e1e22;
+  --color-input: #1e1e22;
+  --color-ring: #7c9a92;
+
+  /* Border radius */
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 999px;
+
+  /* Shadows */
+  --shadow-floe-soft: 0 30px 80px -40px rgba(0, 0, 0, 0.85);
+  --shadow-floe-strong: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
+  --shadow-floe-focus-outer: 0 0 0 4px rgba(124, 154, 146, 0.18);
+  --shadow-floe-focus-inner: 0 0 0 1px #7c9a92;
+  --shadow-floe-inner-card: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  /* Font sizes */
+  --text-xs: 11px;
+  --text-xs--line-height: 16px;
+  --text-xs--letter-spacing: 0.06em;
+  --text-sm: 12px;
+  --text-sm--line-height: 18px;
+  --text-sm--letter-spacing: 0.01em;
+  --text-base: 13px;
+  --text-base--line-height: 20px;
+  --text-base--letter-spacing: 0;
+  --text-md: 14px;
+  --text-md--line-height: 22px;
+  --text-md--letter-spacing: 0;
+  --text-lg: 15px;
+  --text-lg--line-height: 24px;
+  --text-lg--letter-spacing: -0.01em;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-xl--letter-spacing: -0.02em;
+}
+
+/* ── Plain CSS custom properties ─────────────────────────── */
+:root {
+  /* Backgrounds */
+  --floe-bg-base: #070708;
+  --floe-bg-elevated: #0b0b0d;
+  --floe-bg-subtle: #08080a;
+  --floe-bg-overlay: rgba(7, 7, 8, 0.85);
+  --floe-bg-recording-pill: rgba(10, 10, 12, 0.92);
+
+  /* Surfaces */
+  --floe-surface-muted: #111113;
+  --floe-surface-strong: #15151a;
+  --floe-surface-border-subtle: #1e1e22;
+  --floe-surface-border-strong: #2a2a2f;
+
+  /* Borders & dividers */
+  --floe-border-subtle: #1e1e22;
+  --floe-border-strong: #2a2a2f;
+  --floe-border-focus: #7c9a92;
+  --floe-border-danger: #f97373;
+
+  /* Text */
+  --floe-text-primary: #f5f5f7;
+  --floe-text-secondary: #c7cbd8;
+  --floe-text-muted: #7a7f91;
+  --floe-text-on-accent: #0a1413;
+  --floe-text-danger: #fca5a5;
+  --floe-text-success: #4ade80;
+
+  /* Accent */
+  --floe-accent: #7c9a92;
+  --floe-accent-soft: #2e3e3b;
+  --floe-accent-muted: #506c66;
+
+  /* Functional grays */
+  --floe-gray-100: #f9fafb;
+  --floe-gray-300: #d1d5db;
+  --floe-gray-500: #6b7280;
+  --floe-gray-700: #374151;
+  --floe-gray-800: #111827;
+  --floe-gray-900: #020617;
+
+  /* Border radius */
+  --floe-radius-xs: 3px;
+  --floe-radius-sm: 6px;
+  --floe-radius-md: 10px;
+  --floe-radius-lg: 14px;
+  --floe-radius-xl: 18px;
+  --floe-radius-full: 999px;
+
+  /* Shadows */
+  --floe-shadow-soft: 0 30px 80px -40px rgba(0, 0, 0, 0.85);
+  --floe-shadow-strong: 0 40px 120px -40px rgba(0, 0, 0, 0.9);
+  --floe-shadow-focus-outer: 0 0 0 4px rgba(124, 154, 146, 0.18);
+  --floe-shadow-focus-inner: 0 0 0 1px #7c9a92;
+  --floe-shadow-inner-card: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  /* Spacing */
+  --floe-space-1: 2px;
+  --floe-space-2: 4px;
+  --floe-space-3: 6px;
+  --floe-space-4: 8px;
+  --floe-space-5: 10px;
+  --floe-space-6: 12px;
+  --floe-space-7: 16px;
+  --floe-space-8: 20px;
+  --floe-space-9: 24px;
+}
+
+/* ── Base body styles ────────────────────────────────────── */
+body {
+  margin: 0;
+  background-color: var(--floe-bg-base);
+  color: var(--floe-text-primary);
+  font-family:
+    "Inter",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI",
+    sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: 0;
+}
+
+/* ── Subtle scrollbars ───────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--floe-gray-700) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--floe-gray-700);
+  border-radius: var(--floe-radius-full);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--floe-gray-500);
+}
+
+/* ── Window chrome ───────────────────────────────────────── */
+.floe-window {
+  background: rgba(7, 7, 8, 0.78);
+  color: var(--floe-text-primary);
+  border-radius: var(--floe-radius-lg);
+  box-shadow: var(--floe-shadow-soft);
+  border: 1px solid var(--floe-border-subtle);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.floe-titlebar {
+  height: 36px;
+  padding-inline: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: transparent;
+  border-bottom: 0;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--floe-text-muted);
+}
+
+/* ── Base utility classes for dense inputs/buttons ───────── */
+.floe-input-base {
+  height: 44px;
+  padding-inline: 16px;
+  font-size: 13px;
+  letter-spacing: 0;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--floe-border-subtle);
+  border-radius: var(--floe-radius-md);
+  color: var(--floe-text-primary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--floe-shadow-inner-card);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.floe-input-base::placeholder {
+  color: var(--floe-text-muted);
+}
+
+.floe-input-base:focus {
+  outline: none;
+  border-color: var(--floe-border-focus);
+  background: rgba(124, 154, 146, 0.05);
+  box-shadow: var(--floe-shadow-focus-outer);
+}
+
+.floe-button-base {
+  height: 36px;
+  padding-inline: 16px;
+  font-size: 13px;
+  letter-spacing: 0;
+  font-weight: 500;
+  border-radius: var(--floe-radius-md);
+  border: 1px solid var(--floe-border-subtle);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--floe-text-primary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--floe-shadow-inner-card);
+  cursor: pointer;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.floe-button-base:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--floe-border-strong);
+}
+
+.floe-button-base:active {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.floe-button-primary {
+  background: var(--floe-accent);
+  color: var(--floe-text-on-accent);
+  border-color: var(--floe-accent);
+}
+
+.floe-button-primary:hover {
+  background: color-mix(in srgb, var(--floe-accent) 90%, white 10%);
+  border-color: var(--floe-accent);
+}
+
+/* ── Glassmorphism card ──────────────────────────────────── */
+.floe-card {
+  background: var(--floe-surface-muted);
+  border: 1px solid var(--floe-border-subtle);
+  border-radius: var(--floe-radius-xl);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--floe-shadow-soft), var(--floe-shadow-inner-card);
+}
+
+.floe-card-elevated {
+  background: var(--floe-surface-muted);
+  border: 1px solid var(--floe-border-subtle);
+  border-radius: var(--floe-radius-xl);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow:
+    0 30px 80px -40px rgba(0, 0, 0, 0.85),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* ── Eyebrow / micro labels ─────────────────────────────── */
+.floe-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--floe-text-muted);
+  font-weight: 500;
+}
+
+/* ── Breathing pulse for the recording bubble ──────────── */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.82;
+  }
+}
+
+/* ── Audio bars (waveform in recording bubble) ──────────── */
+.audio-bars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  animation: breathe 3s ease-in-out infinite;
+}
+
+.audio-bars__bar {
+  display: block;
+  width: 3px;
+  min-height: 4px;
+  border-radius: 2px;
+  background-color: var(--floe-text-secondary);
+  transition: height 0.1s ease;
+}
+
+/* ── Bubble window: transparent, click-through ───────────── */
+html.bubble-window,
+html.bubble-window body,
+html.bubble-window #root {
+  background: transparent !important;
+  pointer-events: none;
+}

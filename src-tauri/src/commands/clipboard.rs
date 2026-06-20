@@ -1,3 +1,4 @@
+use log;
 use std::time::{Duration, Instant};
 
 use enigo::{
@@ -8,7 +9,7 @@ use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-use crate::diag::{DiagEvent, PipelineContext};
+use crate::diag::{DiagEvent, LastSessionStore, PipelineContext};
 use crate::lifecycle::{log_lifecycle, LifecycleLevel};
 
 const CLIPBOARD_SETTLE_DELAY: Duration = Duration::from_millis(50);
@@ -56,7 +57,10 @@ impl TextClipboard for TauriTextClipboard {
         self.app
             .clipboard()
             .write_text(text.to_string())
-            .map_err(|_| clipboard_unavailable_error())?;
+            .map_err(|e| {
+                log::warn!("clipboard_write_error=\"{}\"", e);
+                clipboard_unavailable_error()
+            })?;
 
         match self.app.clipboard().read_text() {
             Ok(read_back) if read_back == text => Ok(()),
@@ -70,18 +74,24 @@ struct EnigoPasteSimulator;
 
 impl PasteSimulator for EnigoPasteSimulator {
     fn paste_shortcut(&self, shortcut: PasteShortcut) -> Result<(), ClipboardError> {
-        let mut enigo = Enigo::new(&Settings::default()).map_err(|_| paste_unavailable_error())?;
+        let mut enigo = Enigo::new(&Settings::default()).map_err(|e| {
+            log::warn!("enigo_init_error=\"{}\"", e);
+            paste_unavailable_error()
+        })?;
         let modifier = enigo_modifier_key(shortcut.modifier);
 
-        enigo
-            .key(modifier, Press)
-            .map_err(|_| paste_unavailable_error())?;
-        let paste_result = enigo
-            .key(Key::Unicode('v'), Click)
-            .map_err(|_| paste_unavailable_error());
-        let release_result = enigo
-            .key(modifier, Release)
-            .map_err(|_| paste_unavailable_error());
+        enigo.key(modifier, Press).map_err(|e| {
+            log::warn!("enigo_press_error=\"{}\"", e);
+            paste_unavailable_error()
+        })?;
+        let paste_result = enigo.key(Key::Unicode('v'), Click).map_err(|e| {
+            log::warn!("enigo_click_error=\"{}\"", e);
+            paste_unavailable_error()
+        });
+        let release_result = enigo.key(modifier, Release).map_err(|e| {
+            log::warn!("enigo_release_error=\"{}\"", e);
+            paste_unavailable_error()
+        });
 
         paste_result?;
         release_result
@@ -92,6 +102,7 @@ impl PasteSimulator for EnigoPasteSimulator {
 pub fn copy_text_to_clipboard(
     app: AppHandle,
     diag_ctx: tauri::State<'_, PipelineContext>,
+    last_session: tauri::State<'_, LastSessionStore>,
     text: String,
 ) -> Result<(), ClipboardError> {
     let trace_id = diag_ctx.current_trace_id().unwrap_or_default();
@@ -110,16 +121,33 @@ pub fn copy_text_to_clipboard(
                     duration_ms
                 }
             );
+            last_session.update(|snapshot| {
+                snapshot.clipboard_ms = duration_ms;
+                snapshot.completed = true;
+            });
         }
         Err(e) => {
+            let code = format!("{:?}", e.code).to_lowercase();
             log::error!(
                 "{}",
                 DiagEvent::ClipboardFailed {
                     trace_id,
                     duration_ms,
-                    error_code: format!("{:?}", e.code),
+                    error_code: code.clone(),
                 }
             );
+            last_session.update(|snapshot| {
+                snapshot.clipboard_ms = duration_ms;
+                snapshot.clipboard_error_code = Some(code.clone());
+                snapshot.error_stage = Some("clipboard".to_string());
+                snapshot.sanitized_error_code = Some(code.clone());
+                snapshot.last_error = Some(crate::diag::LastError {
+                    stage: "clipboard".to_string(),
+                    code,
+                    message: String::new(),
+                });
+                snapshot.completed = false;
+            });
         }
     }
 
@@ -130,6 +158,7 @@ pub fn copy_text_to_clipboard(
 pub fn paste_text(
     app: AppHandle,
     diag_ctx: tauri::State<'_, PipelineContext>,
+    last_session: tauri::State<'_, LastSessionStore>,
     text: String,
 ) -> Result<(), ClipboardError> {
     let trace_id = diag_ctx.current_trace_id().unwrap_or_default();
@@ -156,24 +185,46 @@ pub fn paste_text(
                     duration_ms
                 }
             );
+            last_session.update(|snapshot| {
+                snapshot.paste_ms = duration_ms;
+                snapshot.completed = true;
+            });
         }
         Err(e) => {
+            let code = format!("{:?}", e.code).to_lowercase();
             log::error!(
                 "{}",
                 DiagEvent::PasteFailed {
                     trace_id,
                     duration_ms,
-                    error_code: format!("{:?}", e.code),
+                    error_code: code.clone(),
                 }
             );
+            last_session.update(|snapshot| {
+                snapshot.paste_ms = duration_ms;
+                snapshot.paste_error_code = Some(code.clone());
+                snapshot.error_stage = Some("paste".to_string());
+                snapshot.sanitized_error_code = Some(code.clone());
+                snapshot.last_error = Some(crate::diag::LastError {
+                    stage: "paste".to_string(),
+                    code,
+                    message: String::new(),
+                });
+                snapshot.completed = false;
+            });
         }
     }
+
+    diag_ctx.end_session();
 
     result
 }
 
 #[tauri::command]
-pub fn paste_clipboard(diag_ctx: tauri::State<'_, PipelineContext>) -> Result<(), ClipboardError> {
+pub fn paste_clipboard(
+    diag_ctx: tauri::State<'_, PipelineContext>,
+    last_session: tauri::State<'_, LastSessionStore>,
+) -> Result<(), ClipboardError> {
     let trace_id = diag_ctx.current_trace_id().unwrap_or_default();
     let paste_simulator = EnigoPasteSimulator;
 
@@ -190,18 +241,37 @@ pub fn paste_clipboard(diag_ctx: tauri::State<'_, PipelineContext>) -> Result<()
                     duration_ms
                 }
             );
+            last_session.update(|snapshot| {
+                snapshot.paste_ms = duration_ms;
+                snapshot.completed = true;
+            });
         }
         Err(e) => {
+            let code = format!("{:?}", e.code).to_lowercase();
             log::error!(
                 "{}",
                 DiagEvent::PasteFailed {
                     trace_id,
                     duration_ms,
-                    error_code: format!("{:?}", e.code),
+                    error_code: code.clone(),
                 }
             );
+            last_session.update(|snapshot| {
+                snapshot.paste_ms = duration_ms;
+                snapshot.paste_error_code = Some(code.clone());
+                snapshot.error_stage = Some("paste".to_string());
+                snapshot.sanitized_error_code = Some(code.clone());
+                snapshot.last_error = Some(crate::diag::LastError {
+                    stage: "paste".to_string(),
+                    code,
+                    message: String::new(),
+                });
+                snapshot.completed = false;
+            });
         }
     }
+
+    diag_ctx.end_session();
 
     result
 }

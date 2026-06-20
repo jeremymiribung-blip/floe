@@ -7,10 +7,8 @@ pub use crate::contract::{
     EVENT_RECORDING_STATE_CHANGED as RECORDING_STATE_EVENT,
     LEVEL_EMIT_INTERVAL_MS as EMIT_INTERVAL_MS,
 };
-pub const ATTACK_COEFFICIENT: f32 = 0.7;
-pub const RELEASE_COEFFICIENT: f32 = 0.12;
-pub const NOISE_FLOOR: f32 = 0.005;
-const MIN_DB: f64 = -50.0;
+pub const NOISE_FLOOR: f32 = 0.001;
+const MIN_DB: f64 = -60.0;
 const MAX_DB: f64 = 0.0;
 
 #[derive(Debug, Clone, Serialize)]
@@ -30,15 +28,12 @@ pub fn normalize_rms(rms: f32) -> f32 {
     (normalized.clamp(0.0, 1.0) as f32).clamp(0.0, 1.0)
 }
 
-pub fn fold_level(previous: f32, next: f32) -> f32 {
-    let coefficient = if next > previous {
-        ATTACK_COEFFICIENT
-    } else {
-        RELEASE_COEFFICIENT
-    };
-    let coefficient = coefficient.clamp(0.0, 1.0);
-    let smoothed = previous + (next - previous) * coefficient;
-    smoothed.clamp(0.0, 1.0)
+/// Identity pass-through: no backend smoothing.
+/// All smoothing is handled by the frontend envelope follower.
+/// This eliminates double-smoothing artifacts and gives the
+/// frontend full control over attack/release dynamics.
+pub fn fold_level(_previous: f32, next: f32) -> f32 {
+    next.clamp(0.0, 1.0)
 }
 
 pub struct LevelMeter {
@@ -74,7 +69,7 @@ impl Default for LevelMeter {
 
 #[cfg(test)]
 mod tests {
-    use super::{fold_level, normalize_rms, ATTACK_COEFFICIENT, NOISE_FLOOR, RELEASE_COEFFICIENT};
+    use super::{fold_level, normalize_rms, NOISE_FLOOR};
 
     #[test]
     fn normalize_returns_zero_for_silence() {
@@ -84,7 +79,7 @@ mod tests {
     #[test]
     fn normalize_returns_zero_below_noise_floor() {
         assert_eq!(normalize_rms(NOISE_FLOOR / 2.0), 0.0);
-        assert_eq!(normalize_rms(0.005), 0.0);
+        assert_eq!(normalize_rms(0.0005), 0.0);
     }
 
     #[test]
@@ -112,29 +107,16 @@ mod tests {
     }
 
     #[test]
-    fn fold_uses_attack_when_rising() {
-        let next = fold_level(0.1, 0.9);
-        let expected = 0.1 + (0.9 - 0.1) * ATTACK_COEFFICIENT;
-        assert!(
-            (next - expected).abs() < 1.0e-5,
-            "got {next} expected {expected}"
-        );
+    fn fold_passes_through_raw_value() {
+        // fold_level is now identity pass-through
+        assert_eq!(fold_level(0.1, 0.9), 0.9);
+        assert_eq!(fold_level(0.9, 0.1), 0.1);
+        assert_eq!(fold_level(0.5, 0.5), 0.5);
     }
 
     #[test]
-    fn fold_uses_release_when_falling() {
-        let next = fold_level(0.9, 0.1);
-        let expected = 0.9 + (0.1 - 0.9) * RELEASE_COEFFICIENT;
-        assert!(
-            (next - expected).abs() < 1.0e-5,
-            "got {next} expected {expected}"
-        );
-    }
-
-    #[test]
-    fn fold_clamps_output_to_unit_range() {
-        assert_eq!(fold_level(1.0, 1.5).clamp(0.0, 1.0), fold_level(1.0, 1.5));
-        let low = fold_level(-0.5, -0.2);
-        assert!((0.0..=1.0).contains(&low));
+    fn fold_clamps_to_unit_range() {
+        assert_eq!(fold_level(0.0, 1.5), 1.0);
+        assert_eq!(fold_level(0.0, -0.5), 0.0);
     }
 }

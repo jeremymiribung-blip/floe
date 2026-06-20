@@ -1,6 +1,6 @@
 import { useLayoutEffect } from "react";
-import { RecordingBubble } from "./components/RecordingBubble";
 import { isOverlayWindow } from "./lib/windowLabel";
+import { Overlay } from "./components/overlay/Overlay";
 import App from "./App";
 
 const BUBBLE_WINDOW_CLASS = "bubble-window";
@@ -19,7 +19,7 @@ export function Root() {
   }, [isBubble]);
 
   if (isBubble) {
-    return <RecordingBubble />;
+    return <Overlay />;
   }
   return <App />;
 }

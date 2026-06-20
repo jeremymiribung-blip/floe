@@ -319,3 +319,48 @@ References:
 - Tauri RPM package: https://v2.tauri.app/distribute/rpm/
 - Tauri prerequisites: https://v2.tauri.app/start/prerequisites/
 - Tauri app icons: https://v2.tauri.app/develop/icons/
+
+## Fedora Quickstart (dieser Rechner)
+
+Auf diesem System ist `pnpm` nicht verfügbar — es wird `npm` verwendet. Das `.rpm` kann nicht gebaut werden, da die Tauri-Systembibliotheken für Linux fehlen (kein `sudo` auf diesem Rechner).
+
+**Frontend-only testen:**
+
+```bash
+npm run dev            # Vite-Dev-Server (http://localhost:1420)
+npm run build          # Produktions-Build → dist/
+npm test               # Vitest (50 Tests)
+npx tsc --noEmit       # TypeScript-Check
+```
+
+**RPM bauen (auf einem System mit sudo):**
+
+```bash
+# 1. Systemdeps installieren
+sudo dnf install -y \
+  webkit2gtk4.1-devel \
+  libsoup3-devel \
+  dbus-devel \
+  pkgconf-pkg-config \
+  libappindicator-gtk3-devel \
+  librsvg2-devel \
+  patchelf \
+  openssl-devel \
+  gcc \
+  glib2-devel \
+  cairo-gobject-devel \
+  gdk-pixbuf2-devel \
+  at-spi2-core-devel \
+  alsa-lib-devel \
+  rpm-build
+
+# 2. Rust installieren (falls nicht vorhanden)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# 3. Bauen
+npm ci
+npm run tauri:build
+
+# → src-tauri/target/release/bundle/rpm/floe-*.rpm
+```

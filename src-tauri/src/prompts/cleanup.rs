@@ -8,9 +8,8 @@ mod tests {
     fn prompt_forbids_rewriting_and_explanations() {
         assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not summarize"));
         assert!(CLEANUP_SYSTEM_PROMPT.contains("do not remove any substantive information"));
-        assert!(
-            CLEANUP_SYSTEM_PROMPT.contains("Do not include any labels, intros, explanations, or comments")
-        );
+        assert!(CLEANUP_SYSTEM_PROMPT
+            .contains("Do not include any labels, intros, explanations, or comments"));
         assert!(CLEANUP_SYSTEM_PROMPT.contains("Do not translate"));
     }
 }

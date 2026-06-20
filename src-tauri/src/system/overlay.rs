@@ -5,34 +5,55 @@ use crate::lifecycle::{log_lifecycle, LifecycleLevel};
 
 pub use crate::contract::BUBBLE_WINDOW_LABEL as OVERLAY_WINDOW_LABEL;
 pub use crate::contract::EVENT_BUBBLE_STATE as OVERLAY_STATE_EVENT;
-const OVERLAY_WIDTH: f64 = 170.0;
-const OVERLAY_HEIGHT: f64 = 48.0;
-const OVERLAY_BOTTOM_MARGIN: f64 = 64.0;
+const OVERLAY_WIDTH: f64 = 220.0;
+const OVERLAY_HEIGHT: f64 = 80.0;
+const OVERLAY_BOTTOM_MARGIN: f64 = 16.0;
 
 pub fn show_overlay<R: Runtime>(app: &AppHandle<R>) {
+    let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
+        log_lifecycle(LifecycleLevel::Error, "overlay_window_missing");
+        return;
+    };
+
+    emit_bubble_state(app, "active");
+
+    match window.show() {
+        Ok(()) => log_lifecycle(LifecycleLevel::Info, "overlay_shown"),
+        Err(error) => {
+            log_lifecycle(LifecycleLevel::Error, "overlay_show_failed");
+            let _ = error;
+        }
+    }
+}
+
+pub fn hide_overlay<R: Runtime>(app: &AppHandle<R>) {
+    let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
+        log_lifecycle(LifecycleLevel::Error, "overlay_window_missing");
+        return;
+    };
+
+    emit_bubble_state(app, "idle");
+
+    match window.hide() {
+        Ok(()) => log_lifecycle(LifecycleLevel::Info, "overlay_hidden"),
+        Err(_) => log_lifecycle(LifecycleLevel::Error, "overlay_hide_failed"),
+    }
+}
+
+pub fn set_overlay_state<R: Runtime>(app: &AppHandle<R>, state: &str) {
     let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
         log_lifecycle(LifecycleLevel::Warn, "overlay_window_missing");
         return;
     };
 
-    emit_overlay_state(app, true);
+    emit_bubble_state(app, state);
 
-    if let Err(error) = window.show() {
-        log_lifecycle(LifecycleLevel::Warn, "overlay_show_failed");
-        let _ = error;
-    }
-
-    emit_overlay_state(app, true);
-}
-
-pub fn hide_overlay<R: Runtime>(app: &AppHandle<R>) {
-    let Some(window) = app.get_webview_window(OVERLAY_WINDOW_LABEL) else {
-        return;
-    };
-
-    emit_overlay_state(app, false);
-
-    if window.hide().is_err() {
+    if state != "idle" {
+        if let Err(error) = window.show() {
+            log_lifecycle(LifecycleLevel::Warn, "overlay_show_failed");
+            let _ = error;
+        }
+    } else if window.hide().is_err() {
         log_lifecycle(LifecycleLevel::Warn, "overlay_hide_failed");
     }
 }
@@ -69,6 +90,21 @@ pub fn is_overlay_window<R: Runtime>(window: &Window<R>) -> bool {
     window.label() == OVERLAY_WINDOW_LABEL
 }
 
+fn emit_bubble_state<R: Runtime>(app: &AppHandle<R>, state: &str) {
+    if app
+        .emit_to(
+            OVERLAY_WINDOW_LABEL,
+            OVERLAY_STATE_EVENT,
+            BubbleStatePayload {
+                bubble_state: state.to_string(),
+            },
+        )
+        .is_err()
+    {
+        log_lifecycle(LifecycleLevel::Warn, "overlay_state_emit_failed");
+    }
+}
+
 fn preferred_overlay_monitor<R: Runtime>(
     app: &AppHandle<R>,
     window: &tauri::WebviewWindow<R>,
@@ -86,19 +122,6 @@ fn preferred_overlay_monitor<R: Runtime>(
     match app.primary_monitor() {
         Ok(Some(monitor)) => Some(monitor),
         _ => None,
-    }
-}
-
-fn emit_overlay_state<R: Runtime>(app: &AppHandle<R>, recording: bool) {
-    if app
-        .emit_to(
-            OVERLAY_WINDOW_LABEL,
-            OVERLAY_STATE_EVENT,
-            OverlayStatePayload { recording },
-        )
-        .is_err()
-    {
-        log_lifecycle(LifecycleLevel::Warn, "overlay_state_emit_failed");
     }
 }
 
@@ -125,10 +148,10 @@ fn calculate_bottom_center_position(
     )
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct OverlayStatePayload {
-    recording: bool,
+struct BubbleStatePayload {
+    bubble_state: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -148,8 +171,9 @@ struct LogicalSize {
 #[cfg(test)]
 mod tests {
     use super::{
-        calculate_bottom_center_position, LogicalRect, LogicalSize, OVERLAY_BOTTOM_MARGIN,
-        OVERLAY_HEIGHT, OVERLAY_STATE_EVENT, OVERLAY_WIDTH, OVERLAY_WINDOW_LABEL,
+        calculate_bottom_center_position, BubbleStatePayload, LogicalRect, LogicalSize,
+        OVERLAY_BOTTOM_MARGIN, OVERLAY_HEIGHT, OVERLAY_STATE_EVENT, OVERLAY_WIDTH,
+        OVERLAY_WINDOW_LABEL,
     };
 
     #[test]
@@ -178,8 +202,8 @@ mod tests {
             OVERLAY_BOTTOM_MARGIN,
         );
 
-        assert_eq!(position.x, 875.0);
-        assert_eq!(position.y, 968.0);
+        assert_eq!(position.x, 850.0);
+        assert_eq!(position.y, 984.0);
     }
 
     #[test]
@@ -198,8 +222,8 @@ mod tests {
             OVERLAY_BOTTOM_MARGIN,
         );
 
-        assert_eq!(position.x, 655.0);
-        assert_eq!(position.y, 828.0);
+        assert_eq!(position.x, 630.0);
+        assert_eq!(position.y, 844.0);
     }
 
     #[test]
@@ -218,13 +242,13 @@ mod tests {
             OVERLAY_BOTTOM_MARGIN,
         );
 
-        assert_eq!(position.x, -1045.0);
-        assert_eq!(position.y, 848.0);
+        assert_eq!(position.x, -1070.0);
+        assert_eq!(position.y, 864.0);
     }
 
     #[test]
     fn uses_expected_bottom_margin() {
-        const { assert!(OVERLAY_BOTTOM_MARGIN == 64.0) };
+        const { assert!(OVERLAY_BOTTOM_MARGIN == 16.0) };
     }
 
     #[test]
@@ -235,9 +259,18 @@ mod tests {
                 "bubble must sit clearly lower than the prior 96px baseline",
             );
             assert!(
-                OVERLAY_BOTTOM_MARGIN >= 32.0,
+                OVERLAY_BOTTOM_MARGIN >= 16.0,
                 "bubble must not clip into the screen edge",
             );
         };
+    }
+
+    #[test]
+    fn bubble_state_payload_serde_roundtrip() {
+        let payload = BubbleStatePayload {
+            bubble_state: "active".to_string(),
+        };
+        let json = serde_json::to_string(&payload).unwrap();
+        assert_eq!(json, r#"{"bubbleState":"active"}"#);
     }
 }

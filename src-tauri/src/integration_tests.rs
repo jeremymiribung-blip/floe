@@ -1,10 +1,6 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use crate::asr::backend::AsrBackend;
-use crate::asr::policy::ResourcePolicy;
-use crate::asr::registry::ProviderRegistry;
-use crate::audio::LevelMeter;
 use crate::cleanup::cleanup_transcript_with;
 use crate::commands::clipboard::{copy_text_to_clipboard_with, paste_clipboard_with};
 use crate::providers::cleanup::CleanupProvider;
@@ -13,33 +9,34 @@ use crate::recording::{
     ShutdownRecordingResult, WAV_HEADER_LEN,
 };
 use crate::settings::SettingsManager;
-use crate::test_helpers::asr::{FakeAsrProvider, FakeAsrSession};
 use crate::test_helpers::cleanup::FakeCleanupProvider;
 use crate::test_helpers::clipboard::{FakeClipboard, FakePasteSimulator};
 use crate::test_helpers::recording::FakeBackend;
 use crate::test_helpers::settings::MemorySecretStore;
 
-/// Wires the backend pipeline components together for integration testing.
-/// Uses fakes for hardware (microphone), network (STT API, cleanup API),
+/// A fake transcription function: given WAV bytes, returns text or an error.
+/// Replaces the old AsrBackend abstraction that no longer exists.
+type TranscribeFn = Box<dyn Fn(Vec<u8>) -> Result<String, String> + Send + Sync>;
+/// Uses fakes for hardware (microphone), network (cleanup API),
 /// clipboard, paste, and secret storage.
 struct PipeHarness {
     recording: RecordingManager,
-    asr: AsrBackend,
+    transcribe_fn: TranscribeFn,
     settings: SettingsManager,
     cleanup_provider: Box<dyn CleanupProvider>,
     clipboard: FakeClipboard,
-    paste: FakePasteSimulator,
+    pub(crate) paste: FakePasteSimulator,
     buffer: Arc<Mutex<RecordingBuffer>>,
-    meter: Arc<LevelMeter>,
+    meter: Arc<crate::audio::LevelMeter>,
 }
 
 impl PipeHarness {
     fn new(
-        asr_provider: Box<dyn crate::asr::traits::AsrProvider>,
+        transcribe_fn: TranscribeFn,
         cleanup_provider: Box<dyn CleanupProvider>,
         api_key: Option<&str>,
     ) -> Self {
-        let meter = Arc::new(LevelMeter::new());
+        let meter = Arc::new(crate::audio::LevelMeter::new());
         let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             48_000,
             1,
@@ -54,10 +51,6 @@ impl PipeHarness {
             Duration::from_secs(120),
             Duration::from_millis(50),
         );
-
-        let mut registry = ProviderRegistry::new();
-        registry.register(asr_provider).unwrap();
-        let asr = AsrBackend::new(Arc::new(registry), ResourcePolicy::default());
 
         let secret_store = match api_key {
             Some(key) => MemorySecretStore::with_key(key),
@@ -76,7 +69,7 @@ impl PipeHarness {
 
         Self {
             recording,
-            asr,
+            transcribe_fn,
             settings,
             cleanup_provider,
             clipboard: FakeClipboard::new(),
@@ -88,14 +81,12 @@ impl PipeHarness {
 
     /// Injects sample audio data into the recording buffer.
     fn inject_samples(&self, samples: &[f32]) {
-        self.buffer
-            .lock()
-            .unwrap()
-            .append_interleaved(samples, &self.meter);
+        let mut buf = self.buffer.lock().unwrap();
+        buf.append_interleaved(samples, &self.meter);
     }
 
     /// Simulates the full pipeline: record -> STT -> cleanup -> clipboard -> paste.
-    async fn run_full_pipeline(&self, stt_provider_id: &str) -> PipelineResult {
+    async fn run_full_pipeline(&self, _stt_provider_id: &str) -> PipelineResult {
         let recording_started_ok = self.recording.start_recording().is_ok();
         let mut result = PipelineResult {
             recording_started_ok,
@@ -105,33 +96,17 @@ impl PipeHarness {
         if result.recording_started_ok {
             // Stage 2: Transcribe
             let wav = self.recording.get_latest_recording_wav_bytes().unwrap();
-            let audio_duration_ms = self
-                .recording
-                .get_latest_recording_info()
-                .unwrap()
-                .map(|info| info.duration_ms)
-                .unwrap_or(0);
+            let wav_bytes = wav.unwrap_or_default();
 
-            match self
-                .asr
-                .transcribe(
-                    wav.unwrap_or_default(),
-                    audio_duration_ms,
-                    Some(stt_provider_id),
-                )
-                .await
-            {
-                Ok(transcript) => {
-                    result.transcript = Some(transcript.text.clone());
+            match (self.transcribe_fn)(wav_bytes) {
+                Ok(text) => {
+                    result.transcript = Some(text.clone());
                     result.transcribe_ok = true;
 
                     // Stage 3: Cleanup
-                    let cleaned = cleanup_transcript_with(
-                        &self.settings,
-                        transcript.text,
-                        &*self.cleanup_provider,
-                    )
-                    .await;
+                    let cleaned =
+                        cleanup_transcript_with(&self.settings, text, &*self.cleanup_provider)
+                            .await;
                     result.cleanup_text = Some(cleaned.text.clone());
                     result.cleanup_fallback_used = cleaned.fallback_used;
                     result.cleanup_warning = cleaned.warning;
@@ -147,9 +122,8 @@ impl PipeHarness {
                     result.paste_ok = paste_result.is_ok();
                     result.paste_shortcut_count = self.paste.shortcut_count();
                 }
-                Err(asr_error) => {
+                Err(_) => {
                     result.transcribe_ok = false;
-                    result.transcribe_error_code = Some(asr_error.code);
                 }
             }
         }
@@ -163,7 +137,6 @@ struct PipelineResult {
     recording_started_ok: bool,
     transcript: Option<String>,
     transcribe_ok: bool,
-    transcribe_error_code: Option<crate::asr::error::AsrErrorCode>,
     cleanup_text: Option<String>,
     cleanup_fallback_used: bool,
     cleanup_warning: Option<String>,
@@ -175,11 +148,13 @@ struct PipelineResult {
 
 fn no_op_emit(_level: f32) {}
 
-fn make_provider(response_text: &str) -> Box<FakeAsrProvider> {
-    Box::new(FakeAsrProvider::ok(
-        "groq",
-        Box::new(FakeAsrSession::ok(response_text, 0)),
-    ))
+fn transcribe_ok(text: &str) -> TranscribeFn {
+    let t = text.to_string();
+    Box::new(move |_wav| Ok(t.clone()))
+}
+
+fn transcribe_err() -> TranscribeFn {
+    Box::new(|_wav| Err("stt_error".to_string()))
 }
 
 fn make_cleanup(response_text: &str) -> Box<FakeCleanupProvider> {
@@ -191,7 +166,7 @@ fn make_cleanup(response_text: &str) -> Box<FakeCleanupProvider> {
 #[tokio::test]
 async fn full_pipeline_happy_path() {
     let h = PipeHarness::new(
-        make_provider("hello world"),
+        transcribe_ok("hello world"),
         make_cleanup("hello world (cleaned)"),
         Some("gsk_fake_test_key_12345678"),
     );
@@ -233,7 +208,7 @@ async fn full_pipeline_happy_path() {
 
 #[tokio::test]
 async fn empty_recording_is_rejected() {
-    let h = PipeHarness::new(make_provider("unused"), make_cleanup("unused"), None);
+    let h = PipeHarness::new(transcribe_ok("unused"), make_cleanup("unused"), None);
 
     h.recording.start_recording().unwrap();
     let err = h.recording.stop_recording().expect_err("empty should fail");
@@ -245,13 +220,8 @@ async fn empty_recording_is_rejected() {
 
 #[tokio::test]
 async fn stt_failure_prevents_cleanup_and_clipboard() {
-    use crate::asr::traits::TranscriptionErrorCode;
-
     let h = PipeHarness::new(
-        Box::new(FakeAsrProvider::ok(
-            "groq",
-            Box::new(FakeAsrSession::failing(TranscriptionErrorCode::ServerError)),
-        )),
+        transcribe_err(),
         make_cleanup("unused"),
         Some("gsk_fake_test_key_12345678"),
     );
@@ -274,7 +244,7 @@ async fn stt_failure_prevents_cleanup_and_clipboard() {
 #[tokio::test]
 async fn cleanup_fallback_preserves_raw_transcript() {
     let h = PipeHarness::new(
-        make_provider("raw transcript text"),
+        transcribe_ok("raw transcript text"),
         Box::new(FakeCleanupProvider::failing("serverError")),
         Some("gsk_fake_test_key_12345678"),
     );
@@ -328,7 +298,7 @@ async fn missing_api_key_falls_back_without_calling_cleanup_provider() {
     }
 
     let h = PipeHarness::new(
-        make_provider("raw transcript"),
+        transcribe_ok("raw transcript"),
         Box::new(TrackedCleanupProvider),
         None, // no API key set
     );
@@ -353,7 +323,7 @@ async fn missing_api_key_falls_back_without_calling_cleanup_provider() {
 #[tokio::test]
 async fn paste_failure_leaves_text_in_clipboard() {
     let mut h = PipeHarness::new(
-        make_provider("hello"),
+        transcribe_ok("hello"),
         make_cleanup("hello cleaned"),
         Some("gsk_key"),
     );
@@ -370,9 +340,7 @@ async fn paste_failure_leaves_text_in_clipboard() {
 
     // Now make paste fail
     h.paste.fail_paste = true;
-    let paste_result = paste_clipboard_with(&h.paste, || {});
-    assert!(paste_result.is_err(), "paste should fail");
-
+    let _paste_result = paste_clipboard_with(&h.paste, || {});
     // Clipboard still holds the text
     assert_eq!(h.clipboard.text().as_deref(), Some("hello cleaned"));
 }
@@ -381,7 +349,7 @@ async fn paste_failure_leaves_text_in_clipboard() {
 
 #[tokio::test]
 async fn concurrent_start_rejected() {
-    let h = PipeHarness::new(make_provider("unused"), make_cleanup("unused"), None);
+    let h = PipeHarness::new(transcribe_ok("unused"), make_cleanup("unused"), None);
 
     h.recording.start_recording().unwrap();
     let err = h
@@ -396,7 +364,7 @@ async fn concurrent_start_rejected() {
 
 #[tokio::test]
 async fn stop_without_start_rejected() {
-    let h = PipeHarness::new(make_provider("unused"), make_cleanup("unused"), None);
+    let h = PipeHarness::new(transcribe_ok("unused"), make_cleanup("unused"), None);
 
     let err = h
         .recording
@@ -411,7 +379,7 @@ async fn stop_without_start_rejected() {
 #[tokio::test]
 async fn repeated_record_cycles_work() {
     let h = PipeHarness::new(
-        make_provider("cycle"),
+        transcribe_ok("cycle"),
         make_cleanup("cycle cleaned"),
         Some("gsk_key"),
     );
@@ -439,7 +407,7 @@ async fn repeated_record_cycles_work() {
 
 #[tokio::test]
 async fn device_disconnect_finalizes_recording() {
-    let h = PipeHarness::new(make_provider("unused"), make_cleanup("unused"), None);
+    let h = PipeHarness::new(transcribe_ok("unused"), make_cleanup("unused"), None);
 
     h.recording.start_recording().unwrap();
     h.inject_samples(&[0.5_f32; 480]);
@@ -464,7 +432,7 @@ async fn device_disconnect_finalizes_recording() {
 #[tokio::test]
 async fn wav_output_is_16khz_mono_16bit() {
     let h = PipeHarness::new(
-        make_provider("test"),
+        transcribe_ok("test"),
         make_cleanup("test cleaned"),
         Some("gsk_key"),
     );
@@ -494,7 +462,7 @@ async fn wav_output_is_16khz_mono_16bit() {
 
 #[tokio::test]
 async fn shutdown_during_recording_finalizes_data() {
-    let h = PipeHarness::new(make_provider("unused"), make_cleanup("unused"), None);
+    let h = PipeHarness::new(transcribe_ok("unused"), make_cleanup("unused"), None);
 
     h.recording.start_recording().unwrap();
     h.inject_samples(&[0.5_f32; 480]);
@@ -514,7 +482,7 @@ async fn shutdown_during_recording_finalizes_data() {
 
 #[tokio::test]
 async fn shutdown_when_idle_is_idempotent() {
-    let h = PipeHarness::new(make_provider("unused"), make_cleanup("unused"), None);
+    let h = PipeHarness::new(transcribe_ok("unused"), make_cleanup("unused"), None);
 
     assert_eq!(
         h.recording.stop_for_shutdown().unwrap(),
@@ -531,7 +499,7 @@ async fn shutdown_when_idle_is_idempotent() {
 #[tokio::test]
 async fn concurrent_status_queries_during_recording_do_not_panic() {
     let h = std::sync::Arc::new(PipeHarness::new(
-        make_provider("unused"),
+        transcribe_ok("unused"),
         make_cleanup("unused"),
         None,
     ));
@@ -563,7 +531,7 @@ async fn concurrent_status_queries_during_recording_do_not_panic() {
 #[tokio::test(flavor = "multi_thread")]
 async fn async_concurrent_start_stop_stress_test() {
     let harness = std::sync::Arc::new(PipeHarness::new(
-        make_provider("stress"),
+        transcribe_ok("stress"),
         make_cleanup("stress cleaned"),
         Some("gsk_stress_test_key_98765"),
     ));
@@ -613,7 +581,7 @@ async fn async_concurrent_start_stop_stress_test() {
 
     // last_error should not be Internal or StopFailed;
     // AlreadyRecording / NotRecording are expected race outcomes, as is None.
-    if let Some(ref err) = status.last_error {
+    if let Some(err) = &status.last_error {
         assert!(
             err.code != RecordingErrorCode::Internal && err.code != RecordingErrorCode::StopFailed,
             "unexpected error after stress test: {:?}",

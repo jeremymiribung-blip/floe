@@ -188,14 +188,6 @@ impl RecordingManager {
         }
     }
 
-    #[allow(dead_code)]
-    fn set_state_and_emit(&self, new_state: types::RecordingState) {
-        if let Ok(mut state) = self.state.lock() {
-            state.recording_state = new_state;
-        }
-        self.emit_only(new_state);
-    }
-
     /// Emit without taking the state lock. Call when state lock is already held.
     fn emit_only(&self, new_state: types::RecordingState) {
         if let Ok(emit) = self.emit_state.lock() {

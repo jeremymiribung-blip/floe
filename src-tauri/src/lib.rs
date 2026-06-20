@@ -1,4 +1,3 @@
-mod asr;
 mod audio;
 mod cleanup;
 mod commands;
@@ -48,46 +47,34 @@ pub fn run() {
         .manage(commands::diag::DiagLog::new())
         .manage(diag::PipelineContext::new())
         .manage(diag::PipelineTracer::new(20))
+        .manage(diag::LastSessionStore::new())
         .setup(|app| {
             use tauri::{Emitter, Manager};
 
             let is_background_launch = system::startup::is_background_launch_from_env();
             let config_dir = app.path().app_config_dir()?;
             let diag_path = diag::default_diag_path(&config_dir);
-            let _ = diag::init(log::LevelFilter::Info, &diag_path, 2_000_000, 3);
+            let _ = diag::init(log::LevelFilter::Debug, &diag_path, 2_000_000, 3);
             log::info!("diagnostic_logger_initialized path={}", diag_path.display());
             let groq_http_client = providers::http::build_shared_http_client()?;
 
             let settings_manager = settings::SettingsManager::new(config_dir);
-            let mut app_settings = settings_manager.get_app_settings().unwrap_or_default();
+            let mut app_settings = settings_manager.get_app_settings().unwrap_or_else(|e| {
+                log::warn!("app_settings_load_failed error=\"{:?}\"", e);
+                settings::AppSettings::default()
+            });
             settings::migrate_legacy_keyring_entries(&mut app_settings);
-            let _ = settings_manager.save_app_settings(app_settings);
+            if let Err(e) = settings_manager.save_app_settings(app_settings) {
+                log::warn!("app_settings_save_failed error=\"{:?}\"", e);
+            }
 
             app.manage(settings_manager);
             app.manage(providers::groq::GroqCleanupClient::new(
                 groq_http_client.clone(),
             ));
-
-            let api_key = {
-                if let Some(settings) = app.try_state::<settings::SettingsManager>() {
-                    settings
-                        .get_api_key_secret()
-                        .ok()
-                        .flatten()
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                }
-            };
-            let mut registry = asr::registry::ProviderRegistry::new();
-            let _ = registry.register(Box::new(asr::adapters::groq::GroqAdapter::new(
+            app.manage(providers::groq::stt::GroqTranscriptionClient::new(
                 groq_http_client,
-                api_key,
-            )));
-
-            let registry = std::sync::Arc::new(registry);
-            let policy = asr::policy::ResourcePolicy::default();
-            app.manage(asr::backend::AsrBackend::new(registry, policy));
+            ));
             system::tray::setup_tray(app)?;
             system::hotkey::register_startup_hotkey(app.handle());
 
@@ -160,12 +147,17 @@ pub fn run() {
             commands::clipboard::copy_text_to_clipboard,
             commands::clipboard::paste_text,
             commands::clipboard::paste_clipboard,
+            commands::bubble::bubble_cancel_recording,
             commands::bubble::bubble_show,
             commands::bubble::bubble_hide,
+            commands::bubble::bubble_set_state,
             commands::diag::diag_log,
             commands::diag::diag_log_str,
             commands::diag::get_recent_traces,
             commands::diag::get_current_trace,
+            commands::diag::get_diagnostics_report,
+            commands::diag::update_session_hotkey_latency,
+            commands::diag::log_frontend_event,
         ]);
 
     match builder.build(tauri::generate_context!()) {

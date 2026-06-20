@@ -158,6 +158,9 @@ impl RecordingBuffer {
 
         let ended_reason = self.end_reason.clone().unwrap_or(default_reason);
         let ended_at_ms = self.ended_at_ms.unwrap_or_else(super::now_ms);
+        // Capture the time when recording stopped (after finish() returns)
+        let recording_stopped_at = Instant::now();
+
         let info = RecordingInfo {
             sample_rate: self.sample_rate,
             input_channels: self.input_channels,
@@ -169,7 +172,7 @@ impl RecordingBuffer {
             sample_count: self.samples.len() as u64,
             wav_byte_count: 0,
             wav_bits_per_sample: WAV_BITS_PER_SAMPLE,
-            recording_stop_to_encode_start_ms: 0,
+            recording_stop_to_encode_start_ms: 0, // Will be updated after encoding starts
             audio_encode_ms: 0,
             started_at_ms: self.started_at_ms,
             ended_at_ms,
@@ -178,10 +181,13 @@ impl RecordingBuffer {
             ended_reason,
         };
         let encode_started = Instant::now();
+        // Measure the time between recording stop and encoding start
+        let recording_stop_to_encode_start_ms = recording_stopped_at.elapsed().as_millis() as u64;
         let wav_bytes = encode_recording_wav(&self.samples, self.sample_rate)?;
         let info = RecordingInfo {
             wav_byte_count: wav_bytes.len() as u64,
             audio_encode_ms: super::elapsed_ms(encode_started),
+            recording_stop_to_encode_start_ms,
             ..info
         };
 

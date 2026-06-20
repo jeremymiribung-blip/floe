@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -247,7 +247,7 @@ impl HotkeyManager {
     }
 
     fn status(&self, configured: HotkeySettings) -> HotkeyStatus {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock();
         let is_registered = state
             .registered
             .as_ref()
@@ -271,11 +271,11 @@ impl HotkeyManager {
     }
 
     fn current_registered(&self) -> Option<HotkeySettings> {
-        self.state.lock().unwrap().registered.clone()
+        self.state.lock().registered.clone()
     }
 
     fn set_registered(&self, registered: Option<HotkeySettings>, error: Option<String>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         state.registered = registered;
         state.registration_error = error;
     }
@@ -363,6 +363,7 @@ pub fn normalize_hotkey_settings_for_os(
 
 fn emit_hotkey_event<R: Runtime>(app: &AppHandle<R>, event: ShortcutEvent) {
     if !can_accept_commands() {
+        log::info!("event=hotkey_blocked reason=can_accept_commands");
         return;
     }
 
@@ -371,7 +372,7 @@ fn emit_hotkey_event<R: Runtime>(app: &AppHandle<R>, event: ShortcutEvent) {
         ShortcutState::Released => HotkeyEventState::Released,
     };
 
-    log::debug!(
+    log::info!(
         "event=emit_hotkey_event state={:?} thread={:?}",
         state,
         std::thread::current().id(),
@@ -380,15 +381,20 @@ fn emit_hotkey_event<R: Runtime>(app: &AppHandle<R>, event: ShortcutEvent) {
     let app2 = app.clone();
     let result = app.run_on_main_thread(move || {
         let emit_result = app2.emit(HOTKEY_EVENT, HotkeyEventPayload { state });
-        log::debug!("event=hotkey_emit_result result={:?}", emit_result);
+        log::info!("event=hotkey_emit_result result={:?}", emit_result);
     });
-    log::debug!("event=run_on_main_thread returned={:?}", result);
+    log::info!("event=run_on_main_thread returned={:?}", result);
 }
 
 fn parse_shortcut(accelerator: &str) -> Result<Shortcut, HotkeyError> {
-    accelerator
-        .parse::<Shortcut>()
-        .map_err(|_| unsupported_hotkey_error())
+    accelerator.parse::<Shortcut>().map_err(|e| {
+        log::warn!(
+            "hotkey_parse_failed accelerator=\"{}\" error=\"{}\"",
+            accelerator,
+            e
+        );
+        unsupported_hotkey_error()
+    })
 }
 
 fn validate_shortcut(shortcut: &Shortcut) -> Result<(), HotkeyError> {

@@ -1,6 +1,4 @@
 #[cfg(test)]
-pub(crate) mod asr;
-#[cfg(test)]
 pub(crate) mod cleanup;
 #[cfg(test)]
 pub(crate) mod clipboard;

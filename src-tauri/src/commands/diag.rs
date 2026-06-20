@@ -1,11 +1,22 @@
-#![allow(dead_code)]
-
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::Deserialize;
+use tauri::{AppHandle, Manager, Runtime};
+
+use std::collections::BTreeMap;
+
+use crate::{
+    diag::{
+        DiagnosticsReport, LastSessionStore, PlatformInfo, ReportInputs, SessionSnapshot,
+        SettingsSnapshot,
+    },
+    settings::SettingsManager,
+    system::autostart::{get_start_at_login_status_with, TauriAutostartIntegration},
+    system::hotkey::HotkeyManager,
+};
 
 /// Privacy-safe diagnostics logger.
 /// Only logs the allowed diagnostic fields:
@@ -31,7 +42,7 @@ impl DiagLog {
             path: Mutex::new(None),
         }
     }
-
+    #[allow(dead_code)]
     pub fn set_path(&self, path: String) {
         if let Ok(mut guard) = self.path.lock() {
             if !path.is_empty() {
@@ -85,6 +96,7 @@ pub struct DiagEntry {
 
 impl DiagEntry {
     /// Create a new privacy-safe diagnostic entry.
+    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider_name: impl Into<String>,
@@ -151,16 +163,10 @@ impl DiagEntry {
 
 /// Sanitize error codes for logging to ensure no sensitive data leaks.
 fn sanitize_error_for_log(code: &str) -> String {
-    let lower = code.trim().to_ascii_lowercase();
-
-    // Redact any error codes that might contain secrets
-    if lower.contains("bearer")
-        || lower.contains("authorization")
-        || lower.contains("api_key")
-        || lower.contains("api-key")
-        || lower.contains("gsk_")
-        || lower.contains("token")
-    {
+    // Redact any error codes that might contain secrets.
+    // Uses the shared marker list from diag::report so new markers
+    // are automatically checked everywhere.
+    if crate::diag::contains_secret_marker(code) {
         return "redacted".to_string();
     }
 
@@ -224,6 +230,199 @@ pub fn get_current_trace(ctx: tauri::State<'_, crate::diag::PipelineContext>) ->
     ctx.current_trace_id()
 }
 
+/// Build and return the privacy-safe diagnostics report describing the most
+/// recent dictation session and current app state.
+///
+/// Always returns a valid, serializable report — even if no session has
+/// run yet, managers are unavailable, or the last session failed.
+fn collect_platform_info() -> PlatformInfo {
+    let mut platform = PlatformInfo {
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        family: std::env::consts::FAMILY.to_string(),
+        tauri_version: None,
+        os_version: None,
+        cpu_model: None,
+        cpu_logical_cores: None,
+        memory_total_mb: None,
+        memory_available_mb: None,
+        process_memory_mb: None,
+        uptime_secs: None,
+    };
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use sysinfo::{ProcessesToUpdate, System};
+
+        let mut sys = System::new();
+
+        // OS version
+        platform.os_version = System::long_os_version();
+
+        // CPU info
+        sys.refresh_cpu_all();
+        let cpus = sys.cpus();
+        platform.cpu_logical_cores = Some(cpus.len() as u32);
+        if let Some(first) = cpus.first() {
+            let brand = first.brand().to_string();
+            if !brand.is_empty() {
+                platform.cpu_model = Some(brand);
+            }
+        }
+
+        // Memory info
+        sys.refresh_memory();
+        platform.memory_total_mb = Some(sys.total_memory() / 1024);
+        platform.memory_available_mb = Some(sys.available_memory() / 1024);
+
+        // Process memory (best-effort)
+        if let Ok(pid) = sysinfo::get_current_pid() {
+            sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
+            if let Some(process) = sys.process(pid) {
+                platform.process_memory_mb = Some(process.memory() / 1024);
+            }
+        }
+
+        // System uptime (the method needs the System instance)
+        platform.uptime_secs = Some(sysinfo::System::uptime());
+    }
+
+    platform
+}
+
+#[tauri::command]
+pub fn get_diagnostics_report<R: Runtime>(
+    app: AppHandle<R>,
+    settings_manager: tauri::State<'_, SettingsManager>,
+    hotkey_manager: tauri::State<'_, HotkeyManager>,
+    last_session: tauri::State<'_, LastSessionStore>,
+    tracer: tauri::State<'_, crate::diag::PipelineTracer>,
+) -> DiagnosticsReport {
+    let platform = collect_platform_info();
+
+    let hotkey = hotkey_manager
+        .get_hotkey_settings(&settings_manager)
+        .map(|status| crate::diag::HotkeySnapshot {
+            accelerator: status.accelerator,
+            label: status.label,
+            is_default: status.is_default,
+            is_registered: status.is_registered,
+            error: status.error,
+        })
+        .unwrap_or_default();
+
+    let mut settings_snapshot = SettingsSnapshot {
+        feature_flags: BTreeMap::new(),
+        ..Default::default()
+    };
+    if let Ok(status) = settings_manager.get_api_key_status() {
+        settings_snapshot.api_key_configured = status.configured;
+        settings_snapshot.api_key_masked_preview = status.masked_preview;
+    }
+    if let Ok(settings) = settings_manager.get_app_settings() {
+        settings_snapshot.keyring_migrated = settings.keyring_migrated;
+    }
+
+    let integration = TauriAutostartIntegration::new(&app);
+    if let Ok(status) = get_start_at_login_status_with(&integration) {
+        settings_snapshot.start_at_login_enabled = Some(status.enabled);
+        settings_snapshot.start_at_login_available = Some(status.available);
+    }
+
+    let mut session: SessionSnapshot = last_session.get().unwrap_or_default();
+    if session.trace_id.is_none() {
+        if let Some(trace) = tracer.recent(1).into_iter().next() {
+            session.trace_id = Some(trace.trace_id);
+        }
+    }
+
+    let provider_available = session.stt_provider.is_some();
+
+    let recording_active =
+        if let Some(manager) = app.try_state::<crate::recording::RecordingManager>() {
+            manager
+                .get_recording_status()
+                .map(|s| s.is_recording)
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+    let background_launch = crate::system::startup::is_background_launch_from_env();
+
+    DiagnosticsReport::build(ReportInputs {
+        platform,
+        hotkey,
+        settings: settings_snapshot,
+        session,
+        background_launch,
+        recording_active,
+        provider_available,
+    })
+}
+
+/// Update the hotkey-to-recording-start latency for the current session.
+///
+/// The frontend measures this latency (time between hotkey press and recording start)
+/// and calls this command to persist it in the session snapshot.
+#[tauri::command]
+pub fn update_session_hotkey_latency(
+    last_session: tauri::State<'_, LastSessionStore>,
+    trace_id: String,
+    hotkey_to_recording_start_ms: u64,
+) {
+    last_session.update(|snapshot| {
+        if snapshot.trace_id.as_deref() == Some(&trace_id) {
+            snapshot.hotkey_to_recording_start_ms = hotkey_to_recording_start_ms;
+        }
+    });
+}
+
+/// Structured event from the frontend dictation pipeline, pushed into the
+/// backend's detailed_timeline so the diagnostics report can reconstruct
+/// frontend-only lifecycle events (pipeline wall-clock start, stage
+/// transitions, frontend-detected retries, etc.).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendEvent {
+    /// The active trace_id from the frontend.
+    pub trace_id: String,
+    /// Pipeline stage name (e.g. "pipeline", "stt", "cleanup", "clipboard", "paste").
+    pub stage: String,
+    /// Event type (e.g. "started", "completed", "failed", "retry").
+    pub event_type: String,
+    /// Duration in ms for this event (0 for instantaneous events).
+    pub duration_ms: u64,
+    /// Optional error code.
+    pub error_code: Option<String>,
+    /// Optional retry count.
+    pub retry_count: Option<u32>,
+    /// Frontend-measured total pipeline wall-clock duration.
+    /// Only set on the final pipeline event to update the backend total.
+    pub pipeline_total_ms: Option<u64>,
+}
+
+/// Accept a structured lifecycle event from the frontend and merge it into
+/// the backend session snapshot's detailed_timeline. This bridges the gap
+/// between the frontend's PipelineDiagnostics and the backend's report.
+#[tauri::command]
+pub fn log_frontend_event(last_session: tauri::State<'_, LastSessionStore>, event: FrontendEvent) {
+    let trace_id = &event.trace_id;
+    let detailed = crate::diag::DetailedEvent {
+        stage: event.stage,
+        event_type: event.event_type,
+        duration_ms: event.duration_ms,
+        error_code: event.error_code,
+        retry_count: event.retry_count,
+    };
+    last_session.push_frontend_event(trace_id, detailed);
+
+    // If this event carries a frontend-measured total, write it onto the snapshot.
+    if let Some(total_ms) = event.pipeline_total_ms {
+        last_session.set_frontend_total_ms(trace_id, total_ms);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,7 +466,7 @@ mod tests {
     #[test]
     fn diag_entry_with_fallback() {
         let entry = DiagEntry::new(
-            "whisper_local",
+            "groq",
             "base",
             "native",
             1000,
@@ -374,5 +573,95 @@ mod tests {
 
         // Should not panic or write to default location
         diag.append(entry);
+    }
+
+    #[test]
+    fn contains_secret_marker_catches_sk_prefix_and_api_key() {
+        use crate::diag::contains_secret_marker;
+
+        assert!(contains_secret_marker("sk_abcdef12"), "sk_ prefix");
+        assert!(contains_secret_marker("sk-abcdef12"), "sk- prefix");
+        assert!(contains_secret_marker("gsk_abcdef12"), "gsk_ prefix");
+        assert!(contains_secret_marker("api_key=value"), "api_key");
+        assert!(contains_secret_marker("api-key=value"), "api-key");
+        assert!(contains_secret_marker("apikey=value"), "apikey");
+        assert!(!contains_secret_marker("timeout_error"), "safe code");
+        assert!(!contains_secret_marker("server_error"), "safe code");
+    }
+
+    #[test]
+    fn log_frontend_event_appends_to_session_snapshot() {
+        use crate::diag::{LastSessionStore, SessionSnapshot};
+
+        let store = LastSessionStore::new();
+        store.set(SessionSnapshot {
+            trace_id: Some("deadbeef".into()),
+            ..Default::default()
+        });
+
+        // Simulate what log_frontend_event does
+        let event = FrontendEvent {
+            trace_id: "deadbeef".into(),
+            stage: "pipeline".into(),
+            event_type: "started".into(),
+            duration_ms: 25,
+            error_code: None,
+            retry_count: None,
+            pipeline_total_ms: None,
+        };
+        let detailed = crate::diag::DetailedEvent {
+            stage: event.stage,
+            event_type: event.event_type,
+            duration_ms: event.duration_ms,
+            error_code: event.error_code,
+            retry_count: event.retry_count,
+        };
+        store.push_frontend_event(&event.trace_id, detailed);
+
+        let snapshot = store.get().unwrap();
+        assert_eq!(snapshot.detailed_timeline.len(), 1);
+        assert_eq!(snapshot.detailed_timeline[0].stage, "pipeline");
+        assert_eq!(snapshot.detailed_timeline[0].event_type, "started");
+        assert_eq!(snapshot.detailed_timeline[0].duration_ms, 25);
+    }
+
+    #[test]
+    fn log_frontend_event_sets_pipeline_total_ms() {
+        use crate::diag::LastSessionStore;
+
+        let store = LastSessionStore::new();
+        store.set(crate::diag::SessionSnapshot {
+            trace_id: Some("abc123".into()),
+            ..Default::default()
+        });
+
+        store.set_frontend_total_ms("abc123", 2737);
+
+        let snapshot = store.get().unwrap();
+        assert_eq!(snapshot.pipeline_total_ms, Some(2737));
+    }
+
+    #[test]
+    fn frontend_event_requires_matching_trace_id() {
+        use crate::diag::LastSessionStore;
+
+        let store = LastSessionStore::new();
+        store.set(crate::diag::SessionSnapshot {
+            trace_id: Some("session1".into()),
+            ..Default::default()
+        });
+
+        // Push event with a DIFFERENT trace_id — should be silently ignored.
+        let detailed = crate::diag::DetailedEvent {
+            stage: "stt".into(),
+            event_type: "completed".into(),
+            duration_ms: 500,
+            error_code: None,
+            retry_count: None,
+        };
+        store.push_frontend_event("wrong_trace", detailed);
+
+        let snapshot = store.get().unwrap();
+        assert!(snapshot.detailed_timeline.is_empty());
     }
 }

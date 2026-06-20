@@ -42,6 +42,7 @@ pub enum GroqTranscriptionErrorCode {
 }
 
 impl GroqTranscriptionError {
+    #[allow(dead_code)]
     pub fn new(code: GroqTranscriptionErrorCode, message: &'static str) -> Self {
         Self {
             domain: "stt",

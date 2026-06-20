@@ -162,11 +162,21 @@ export type SttErrorCode =
   | "emptyAudio"
   | "serverError";
 
+export interface SttProviderDiagnostics {
+  providerName: string;
+  audioDurationMs: number;
+  transcriptionMs: number;
+  realtimeFactor: number;
+  fallbackUsed: boolean;
+  errorCode?: string;
+}
+
 export interface SttResult {
   text: string;
   model: string;
   retryCount: number;
   rateLimit?: RateLimitMetadata;
+  sttProvider?: SttProviderDiagnostics;
 }
 
 export interface SttError {
@@ -176,6 +186,7 @@ export interface SttError {
   model?: string;
   retryCount?: number;
   rateLimit?: RateLimitMetadata;
+  sttProvider?: SttProviderDiagnostics;
 }
 
 export interface TranscriptCleanupResult {
@@ -211,4 +222,9 @@ export interface ClipboardError {
   domain: "clipboard";
   code: ClipboardErrorCode;
   message: string;
+}
+
+/** Payload for EVENT_BUBBLE_STATE. */
+export interface BubbleStatePayload {
+  bubbleState: "hidden" | "active" | "processing" | "success" | "error";
 }
