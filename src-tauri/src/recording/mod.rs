@@ -1436,7 +1436,9 @@ mod tests {
             .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
 
         // Wait for the watchdog to fire and mark the buffer as finished.
-        std::thread::sleep(Duration::from_millis(60));
+        // macOS CI runners are slower, so allow extra time.
+        let wait_ms = if cfg!(target_os = "macos") { 200 } else { 60 };
+        std::thread::sleep(Duration::from_millis(wait_ms));
 
         // Spawn a concurrent status reader to add state/buffer contention
         // during the race window.

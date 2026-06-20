@@ -564,6 +564,14 @@ mod tests {
         default_hotkey_for_os, normalize_hotkey_settings_for_os, HotkeyError, HotkeyErrorCode,
         HotkeyManager, HotkeyRegistrar, HotkeySettings,
     };
+
+    fn ctrl_label() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "Control"
+        } else {
+            "Ctrl"
+        }
+    }
     use crate::settings::{AppSettings, SecretStore, SettingsError, SettingsManager};
 
     #[derive(Default)]
@@ -763,12 +771,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(status.accelerator, "Control+Alt+KeyA");
-        assert_eq!(status.label, "Ctrl + Alt + A");
+        assert_eq!(status.label, format!("{} + Alt + A", ctrl_label()));
         assert!(!status.is_default);
         assert!(status.is_registered);
         assert_eq!(
             settings.get_app_settings().unwrap().hotkey.label,
-            "Ctrl + Alt + A"
+            format!("{} + Alt + A", ctrl_label())
         );
     }
 
@@ -953,6 +961,6 @@ mod tests {
         let saved = settings.get_app_settings().unwrap();
 
         assert_eq!(saved.hotkey.accelerator, "Control+Shift+KeyB");
-        assert_eq!(saved.hotkey.label, "Ctrl + Shift + B");
+        assert_eq!(saved.hotkey.label, format!("{} + Shift + B", ctrl_label()));
     }
 }

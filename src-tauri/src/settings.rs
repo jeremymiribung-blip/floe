@@ -752,7 +752,7 @@ mod tests {
         let settings = manager.get_app_settings().unwrap();
 
         assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
     }
 
     #[test]
@@ -766,7 +766,7 @@ mod tests {
         let settings = manager.get_app_settings().unwrap();
 
         assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
     }
 
     #[test]
@@ -795,7 +795,7 @@ mod tests {
 
         let settings = manager.get_app_settings().unwrap();
 
-        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
     }
 
     #[test]
@@ -903,7 +903,7 @@ mod tests {
             .expect("Control+Space should save");
 
         assert_eq!(saved.hotkey.accelerator, "Control+Space");
-        assert_eq!(saved.hotkey.label, "Ctrl + Space");
+        assert_eq!(saved.hotkey.label, format!("{} + Space", ctrl_label()));
     }
 
     #[test]
@@ -921,7 +921,7 @@ mod tests {
             .expect("valid settings should save");
 
         assert_eq!(saved.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(saved.hotkey.label, "Ctrl + Shift + A");
+        assert_eq!(saved.hotkey.label, format!("{} + Shift + A", ctrl_label()));
         assert_eq!(manager.get_app_settings().unwrap(), saved);
     }
 
@@ -975,7 +975,7 @@ mod tests {
 
         let settings = manager.get_app_settings().unwrap();
         assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
     }
 
     #[test]
@@ -1016,7 +1016,7 @@ mod tests {
 
         let settings = manager.get_app_settings().unwrap();
         assert_eq!(settings.hotkey.accelerator, "Control+Shift+KeyA");
-        assert_eq!(settings.hotkey.label, "Ctrl + Shift + A");
+        assert_eq!(settings.hotkey.label, format!("{} + Shift + A", ctrl_label()));
     }
 
     #[test]
@@ -1044,6 +1044,14 @@ mod tests {
 
         let settings = manager.get_app_settings().unwrap();
         assert_eq!(settings, AppSettings::default());
+    }
+
+    fn ctrl_label() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "Control"
+        } else {
+            "Ctrl"
+        }
     }
 
     fn test_manager() -> SettingsManager {
