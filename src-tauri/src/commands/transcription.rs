@@ -86,8 +86,8 @@ pub async fn transcribe_latest_recording(
 
             let rate_limit_map = transcription
                 .rate_limit
-                .as_ref()
-                .map(|rl| crate::diag::rate_limit_to_map(rl));
+                .as_deref()
+                .map(crate::diag::rate_limit_to_map);
 
             let has_retries = transcription.retry_count > 0;
 

@@ -1,4 +1,3 @@
-use log;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -230,11 +229,13 @@ impl SettingsManager {
     }
 
     #[cfg(test)]
+    #[expect(dead_code)]
     pub async fn get_app_settings_async(&self) -> Result<AppSettings, SettingsError> {
         self.app_settings_store.load_async().await
     }
 
     #[cfg(test)]
+    #[expect(dead_code)]
     pub async fn save_app_settings_async(
         &self,
         settings: AppSettings,
@@ -279,11 +280,11 @@ impl AppSettingsStore {
         let path = self.path.clone();
         let lock = Arc::clone(&self.lock);
         tokio::task::spawn_blocking(move || {
-            let _guard = lock.lock().map_err(|e| log_then_settings_error(e))?;
+            let _guard = lock.lock().map_err(log_then_settings_error)?;
             Self::load_from_path(&path)
         })
         .await
-        .map_err(|e| log_then_settings_error(e))?
+        .map_err(log_then_settings_error)?
     }
 
     fn load_from_path(path: &PathBuf) -> Result<AppSettings, SettingsError> {
@@ -291,7 +292,7 @@ impl AppSettingsStore {
             return Ok(AppSettings::default());
         }
 
-        let raw = fs::read_to_string(path).map_err(|e| log_then_settings_error(e))?;
+        let raw = fs::read_to_string(path).map_err(log_then_settings_error)?;
 
         match serde_json::from_str::<serde_json::Value>(&raw) {
             Ok(value) => {
@@ -316,9 +317,9 @@ impl AppSettingsStore {
     }
 
     fn load_settings_from_file(path: &PathBuf) -> Result<AppSettings, SettingsError> {
-        let raw = fs::read_to_string(path).map_err(|e| log_then_settings_error(e))?;
+        let raw = fs::read_to_string(path).map_err(log_then_settings_error)?;
         let value: serde_json::Value =
-            serde_json::from_str(&raw).map_err(|e| log_then_settings_error(e))?;
+            serde_json::from_str(&raw).map_err(log_then_settings_error)?;
 
         let hotkey = load_hotkey_settings(value.get("hotkey"))?;
 
@@ -340,26 +341,26 @@ impl AppSettingsStore {
         let lock = Arc::clone(&self.lock);
         let settings = settings.clone();
         tokio::task::spawn_blocking(move || {
-            let _guard = lock.lock().map_err(|e| log_then_settings_error(e))?;
+            let _guard = lock.lock().map_err(log_then_settings_error)?;
             Self::save_to_path(&path, &settings)
         })
         .await
-        .map_err(|e| log_then_settings_error(e))?
+        .map_err(log_then_settings_error)?
     }
 
     fn save_to_path(path: &PathBuf, settings: &AppSettings) -> Result<(), SettingsError> {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| log_then_settings_error(e))?;
+            fs::create_dir_all(parent).map_err(log_then_settings_error)?;
         }
 
         // Create backup of existing file before overwriting
         if path.exists() {
             let backup = Self::backup_path(path);
-            fs::copy(path, &backup).map_err(|e| log_then_settings_error(e))?;
+            fs::copy(path, &backup).map_err(log_then_settings_error)?;
         }
 
-        let raw = serde_json::to_string_pretty(settings).map_err(|e| log_then_settings_error(e))?;
-        fs::write(path, raw).map_err(|e| log_then_settings_error(e))
+        let raw = serde_json::to_string_pretty(settings).map_err(log_then_settings_error)?;
+        fs::write(path, raw).map_err(log_then_settings_error)
     }
 
     fn backup_path(path: &Path) -> PathBuf {
@@ -374,10 +375,10 @@ impl AppSettingsStore {
         }
 
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| log_then_settings_error(e))?;
+            fs::create_dir_all(parent).map_err(log_then_settings_error)?;
         }
 
-        fs::copy(&backup, path).map_err(|e| log_then_settings_error(e))?;
+        fs::copy(&backup, path).map_err(log_then_settings_error)?;
         Ok(())
     }
 
@@ -388,7 +389,7 @@ impl AppSettingsStore {
     }
 
     fn settings_lock(&self) -> Result<std::sync::MutexGuard<'_, ()>, SettingsError> {
-        self.lock.lock().map_err(|e| log_then_settings_error(e))
+        self.lock.lock().map_err(log_then_settings_error)
     }
 }
 

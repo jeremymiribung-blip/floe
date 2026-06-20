@@ -80,8 +80,8 @@ pub async fn cleanup_transcript(
         );
         let rate_limit_map = result
             .rate_limit
-            .as_ref()
-            .map(|rl| crate::diag::rate_limit_to_map(rl));
+            .as_deref()
+            .map(crate::diag::rate_limit_to_map);
 
         last_session.update(|snapshot| {
             snapshot.cleanup_ms = duration_ms;
@@ -96,7 +96,7 @@ pub async fn cleanup_transcript(
                 let rl =
                     snapshot
                         .rate_limit
-                        .get_or_insert_with(|| crate::diag::RateLimitSnapshot {
+                        .get_or_insert(crate::diag::RateLimitSnapshot {
                             stt: None,
                             cleanup: None,
                         });

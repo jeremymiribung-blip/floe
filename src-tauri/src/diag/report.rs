@@ -876,7 +876,7 @@ pub fn redact_string_for_report(value: &str) -> String {
 }
 
 /// Convert RateLimitMetadata into a BTreeMap for diagnostics RateLimitSnapshot.
-pub fn rate_limit_to_map(rl: &Box<RateLimitMetadata>) -> BTreeMap<String, String> {
+pub fn rate_limit_to_map(rl: &RateLimitMetadata) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     if let Some(v) = &rl.remaining_requests {
         map.insert("remaining_requests".to_string(), v.clone());
