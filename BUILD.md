@@ -41,7 +41,7 @@ Verified project configuration:
 | npm package name         | `floe`                                                                                                                                                |
 | Cargo package name       | `floe`                                                                                                                                                |
 | Product name             | `Floe`                                                                                                                                                |
-| Version                  | `0.1.0`                                                                                                                                               |
+| Version                  | `1.0.0`                                                                                                                                               |
 | Identifier               | `dev.floe.desktop`                                                                                                                                    |
 | Tauri config             | `src-tauri/tauri.conf.json`                                                                                                                           |
 | Bundle active            | `true`                                                                                                                                                |
@@ -230,7 +230,7 @@ The release pipeline lives in `.github/workflows/release.yml` and produces the W
 
 **Triggers**
 
-- `push` of a tag matching `v*` (for example `v0.1.0`).
+- `push` of a tag matching `v*` (for example `v1.0.0`).
 - `workflow_dispatch` for a manual pre-flight run with a short reason string. The manual run is intended for sanity checks before cutting a release tag; it still creates a draft release with the head `ref_name`, so prefer to push a dedicated test tag like `v0.0.0-preflight` and delete it after the run.
 
 **What the job does**

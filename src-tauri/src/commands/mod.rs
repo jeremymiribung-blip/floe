@@ -6,3 +6,4 @@ pub mod hotkey;
 pub mod recording;
 pub mod settings;
 pub mod transcription;
+pub mod update;

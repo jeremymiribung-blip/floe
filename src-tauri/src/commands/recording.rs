@@ -156,3 +156,10 @@ pub fn get_latest_recording_info(
 ) -> Result<Option<RecordingInfo>, RecordingError> {
     manager.get_latest_recording_info()
 }
+
+#[tauri::command]
+pub fn force_stop_recording(
+    manager: State<'_, RecordingManager>,
+) -> Result<(), RecordingError> {
+    manager.force_stop_recording()
+}

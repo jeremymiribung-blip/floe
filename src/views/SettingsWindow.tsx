@@ -5,13 +5,19 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { DiagnosticsSection } from "../components/DiagnosticsSection";
+import UpdateSection from "../components/UpdateSection";
 import {
   isTauriRuntime,
   saveApiKey,
+  validateApiKey,
   setHotkey as setHotkeyBackend,
   setStartAtLoginEnabled,
+  getAudioDevices,
+  getAppSettings,
+  saveAppSettings,
 } from "../lib/tauri";
 import useFloeStore from "../stores/useFloeStore";
+import type { AudioDevice } from "../types/app";
 import { useReducedMotionPreference } from "../hooks/useReducedMotionPreference";
 import { cn } from "../lib/utils";
 
@@ -59,42 +65,80 @@ interface SettingsWindowProps {
   onClose?: () => void;
 }
 
-const APP_VERSION = "1.0.0";
-
 export default function SettingsWindow({ onClose }: SettingsWindowProps) {
   const apiKey = useFloeStore((s) => s.apiKey);
   const hotkey = useFloeStore((s) => s.hotkey);
   const isHotkeyCaptureActive = useFloeStore((s) => s.isHotkeyCaptureActive);
   const launchOnStartup = useFloeStore((s) => s.launchOnStartup);
   const apiKeyConfigured = useFloeStore((s) => s.apiKeyConfigured);
+  const audioDevices = useFloeStore((s) => s.audioDevices);
+  const selectedAudioDeviceId = useFloeStore((s) => s.selectedAudioDeviceId);
   const setApiKey = useFloeStore((s) => s.setApiKey);
+  const setApiKeyStatus = useFloeStore((s) => s.setApiKeyStatus);
   const setHotkey = useFloeStore((s) => s.setHotkey);
   const setLaunchOnStartup = useFloeStore((s) => s.setLaunchOnStartup);
+  const setAudioDevices = useFloeStore((s) => s.setAudioDevices);
+  const setSelectedAudioDeviceId = useFloeStore((s) => s.setSelectedAudioDeviceId);
   const startHotkeyCapture = useFloeStore((s) => s.startHotkeyCapture);
   const stopHotkeyCapture = useFloeStore((s) => s.stopHotkeyCapture);
   const closeSettings = useFloeStore((s) => s.closeSettings);
+  const updateInfo = useFloeStore((s) => s.updateInfo);
 
   const reducedMotion = useReducedMotionPreference();
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [isLoadingDevices, setIsLoadingDevices] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const apiKeyRef = useRef(apiKey);
   apiKeyRef.current = apiKey;
 
+  const validateAndSaveApiKey = useCallback(
+    async (key: string) => {
+      if (!isTauriRuntime() || !key) return;
+
+      setIsValidating(true);
+      setValidationError(null);
+
+      try {
+        const isValid = await validateApiKey(key);
+        if (isValid) {
+          await saveApiKey(key);
+          setApiKeyStatus(true, "Configured");
+        } else {
+          setValidationError(
+            "Invalid API key. Please check your Groq console.",
+          );
+        }
+      } catch (err) {
+        console.error("validateApiKey failed:", err);
+        setValidationError(
+          "Could not validate API key. Check your network connection.",
+        );
+      } finally {
+        setIsValidating(false);
+      }
+    },
+    [setApiKeyStatus],
+  );
+
   const handleClose = () => {
-    saveCurrentApiKey();
+    const key = apiKeyRef.current;
+    if (key) {
+      validateAndSaveApiKey(key);
+    }
     closeSettings();
     onClose?.();
   };
 
-  const saveCurrentApiKey = useCallback(() => {
-    const key = apiKeyRef.current;
-    if (!isTauriRuntime() || !key) return;
-    saveApiKey(key).catch((err) => console.error("saveApiKey failed:", err));
-  }, []);
-
   const handleApiKeyBlur = useCallback(() => {
-    saveCurrentApiKey();
-  }, [saveCurrentApiKey]);
+    const key = apiKeyRef.current;
+    if (key) {
+      validateAndSaveApiKey(key);
+    }
+  }, [validateAndSaveApiKey]);
 
   // ── Keydown listener for hotkey capture ────────────────
   const handleKeyDown = useCallback(
@@ -127,6 +171,9 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
     if (!isHotkeyCaptureActive) startHotkeyCapture();
   };
 
+  const skipCleanup = useFloeStore((s) => s.skipCleanup);
+  const setSkipCleanup = useFloeStore((s) => s.setSkipCleanup);
+
   const handleLaunchOnStartupChange = useCallback(
     (checked: boolean) => {
       setLaunchOnStartup(checked);
@@ -137,6 +184,81 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
       }
     },
     [setLaunchOnStartup],
+  );
+
+  const showSaveError = useCallback((message: string) => {
+    setSaveError(message);
+    if (saveErrorTimerRef.current) clearTimeout(saveErrorTimerRef.current);
+    saveErrorTimerRef.current = setTimeout(() => setSaveError(null), 6000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (saveErrorTimerRef.current) clearTimeout(saveErrorTimerRef.current);
+    };
+  }, []);
+
+  const handleSkipCleanupChange = useCallback(
+    async (checked: boolean) => {
+      const previous = useFloeStore.getState().skipCleanup;
+      setSkipCleanup(checked);
+      if (isTauriRuntime()) {
+        try {
+          const settings = await getAppSettings();
+          await saveAppSettings({ ...settings, skipCleanup: checked });
+        } catch (err) {
+          setSkipCleanup(previous);
+          const message = err instanceof Error ? err.message : String(err);
+          showSaveError(`Failed to save settings: ${message}`);
+        }
+      }
+    },
+    [setSkipCleanup, showSaveError],
+  );
+
+  // Load audio devices on mount
+  useEffect(() => {
+    let mounted = true;
+    const loadDevices = async () => {
+      if (!isTauriRuntime()) return;
+      setIsLoadingDevices(true);
+      try {
+        const devices = await getAudioDevices();
+        if (mounted) {
+          setAudioDevices(devices);
+          // If no device is selected yet, select the first one (default)
+          if (!selectedAudioDeviceId && devices.length > 0) {
+            setSelectedAudioDeviceId(devices[0].id);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load audio devices:", err);
+      } finally {
+        if (mounted) setIsLoadingDevices(false);
+      }
+    };
+    loadDevices();
+    return () => {
+      mounted = false;
+    };
+  }, [isTauriRuntime, setAudioDevices, setSelectedAudioDeviceId, selectedAudioDeviceId]);
+
+  const handleAudioDeviceChange = useCallback(
+    async (deviceId: string) => {
+      const previous = useFloeStore.getState().selectedAudioDeviceId;
+      setSelectedAudioDeviceId(deviceId);
+      if (isTauriRuntime()) {
+        try {
+          const settings = await getAppSettings();
+          await saveAppSettings({ ...settings, deviceId });
+        } catch (err) {
+          setSelectedAudioDeviceId(previous);
+          const message = err instanceof Error ? err.message : String(err);
+          showSaveError(`Failed to save settings: ${message}`);
+        }
+      }
+    },
+    [setSelectedAudioDeviceId, showSaveError],
   );
 
   const cardEnterTransition = reducedMotion
@@ -194,23 +316,43 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
                 >
                   API key
                 </Label>
-                <KeyStatusIndicator configured={apiKeyConfigured} />
+                <KeyStatusIndicator
+                  configured={apiKeyConfigured}
+                  isValidating={isValidating}
+                />
               </div>
               <Input
                 id="floe-api-key"
                 type="password"
                 placeholder="Enter your API key"
                 value={apiKey ?? ""}
-                onChange={(e) => setApiKey(e.target.value)}
+                onChange={(e) => {
+                  setValidationError(null);
+                  setApiKey(e.target.value);
+                }}
                 onBlur={handleApiKeyBlur}
-                className="h-11 rounded-(--floe-radius-md) px-4 text-sm"
+                className={cn(
+                  "h-11 rounded-(--floe-radius-md) px-4 text-sm",
+                  validationError &&
+                    "border-red-500/60 focus-visible:ring-red-500/40",
+                )}
                 autoComplete="off"
                 spellCheck={false}
               />
-              <p className="text-xs leading-relaxed text-white/40">
-                Stored securely in your system&rsquo;s keychain and used only
-                for speech-to-text requests. Nothing is logged or shared.
-              </p>
+              {validationError && (
+                <p
+                  className="text-xs leading-relaxed text-red-400"
+                  role="alert"
+                >
+                  {validationError}
+                </p>
+              )}
+              {!validationError && (
+                <p className="text-xs leading-relaxed text-white/40">
+                  Stored securely in your system&rsquo;s keychain and used only
+                  for speech-to-text requests. Nothing is logged or shared.
+                </p>
+              )}
             </div>
 
             <div className="h-px bg-white/5" />
@@ -235,6 +377,85 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
                 onCheckedChange={handleLaunchOnStartupChange}
                 className="data-[state=checked]:bg-(--floe-accent)"
               />
+            </div>
+
+            <div className="h-px bg-white/5" />
+
+            {/* Skip cleanup */}
+            <div className="flex items-center justify-between gap-6">
+              <div className="flex flex-col gap-1">
+                <Label
+                  htmlFor="floe-skip-cleanup"
+                  className="text-sm font-medium text-white/85"
+                >
+                  Skip AI text cleanup (output raw transcript only)
+                </Label>
+                <p className="text-xs leading-relaxed text-white/40">
+                  Bypass the Llama 3.3 cleanup step and paste the raw Whisper
+                  transcription directly.
+                </p>
+              </div>
+              <Switch
+                id="floe-skip-cleanup"
+                checked={skipCleanup}
+                onCheckedChange={handleSkipCleanupChange}
+                className="data-[state=checked]:bg-(--floe-accent)"
+              />
+            </div>
+          </motion.section>
+
+          {/* ── Audio Card ────────────────────────────────── */}
+          <motion.section
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.08, ...cardEnterTransition }}
+            className="floe-card-elevated flex flex-col gap-7 p-8"
+          >
+            <div className="flex flex-col gap-2">
+              <span className="floe-eyebrow">Audio</span>
+              <h2 className="text-lg font-medium leading-snug text-white/90">
+                Microphone
+              </h2>
+              <p className="max-w-prose text-sm leading-relaxed text-white/50">
+                Select the microphone Floe should use for recording.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <Label
+                htmlFor="floe-audio-device"
+                className="text-xs font-medium uppercase tracking-[0.18em] text-white/45"
+              >
+                Input device
+              </Label>
+              <select
+                id="floe-audio-device"
+                value={selectedAudioDeviceId ?? ""}
+                onChange={(e) => handleAudioDeviceChange(e.target.value)}
+                disabled={isLoadingDevices || audioDevices.length === 0}
+                className="h-11 rounded-(--floe-radius-md) px-4 text-sm bg-white/5 border border-white/10 text-white/90 focus:outline-none focus:ring-2 focus:ring-(--floe-accent)/50 disabled:opacity-50 disabled:cursor-not-allowed appearance-none"
+              >
+                {isLoadingDevices ? (
+                  <option value="" disabled>
+                    Loading devices…
+                  </option>
+                ) : audioDevices.length === 0 ? (
+                  <option value="" disabled>
+                    No input devices found
+                  </option>
+                ) : (
+                  audioDevices.map((device: AudioDevice) => (
+                    <option key={device.id} value={device.id}>
+                      {device.name}
+                    </option>
+                  ))
+                )}
+              </select>
+              {selectedAudioDeviceId && (
+                <p className="text-xs leading-relaxed text-white/40">
+                  Floe will use this microphone for recording.
+                </p>
+              )}
             </div>
           </motion.section>
 
@@ -297,6 +518,26 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
             </button>
           </motion.section>
 
+          {/* ── Updates Card ────────────────────────────────── */}
+          <motion.section
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.16, ...cardEnterTransition }}
+            className="floe-card-elevated flex flex-col gap-7 p-8"
+          >
+            <div className="flex flex-col gap-2">
+              <span className="floe-eyebrow">Updates</span>
+              <h2 className="text-lg font-medium leading-snug text-white/90">
+                App version
+              </h2>
+              <p className="max-w-prose text-sm leading-relaxed text-white/50">
+                Floe checks for new versions automatically. You can also check
+                manually below.
+              </p>
+            </div>
+            <UpdateSection />
+          </motion.section>
+
           {/* ── Hidden Diagnostics Reveal ────────────────── */}
           <div className="flex flex-col items-center gap-4">
             <button
@@ -333,7 +574,9 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
                         reporting an issue.
                       </p>
                     </div>
-                    <DiagnosticsSection appVersion={APP_VERSION} />
+                    <DiagnosticsSection
+                      appVersion={updateInfo?.currentVersion ?? "1.0.0"}
+                    />
                   </div>
                 </motion.section>
               )}
@@ -342,9 +585,24 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
         </div>
 
         {/* ── Footer ─────────────────────────────────────── */}
+        <AnimatePresence>
+          {saveError && (
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 16 }}
+              transition={{ duration: 0.2 }}
+              className="pointer-events-none fixed bottom-20 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-red-500/30 bg-red-500/10 px-5 py-3 text-sm text-red-400 shadow-lg backdrop-blur-sm"
+              role="alert"
+            >
+              {saveError}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <footer className="mt-auto px-8 pb-6 pt-2 text-center">
           <span className="text-[10px] tracking-[0.22em] uppercase text-white/20">
-            Version {APP_VERSION}
+            Version {updateInfo?.currentVersion ?? "1.0.0"}
           </span>
         </footer>
       </main>
@@ -352,20 +610,38 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
   );
 }
 
-function KeyStatusIndicator({ configured }: { configured: boolean }) {
+function KeyStatusIndicator({
+  configured,
+  isValidating,
+}: {
+  configured: boolean;
+  isValidating?: boolean;
+}) {
   return (
     <span
       className="flex items-center gap-2 text-[11px] font-medium tracking-[0.04em] text-white/45"
       aria-live="polite"
     >
-      <span
-        aria-hidden
-        className={cn(
-          "inline-block size-1.5 rounded-full transition-colors",
-          configured ? "bg-(--floe-accent)" : "bg-white/25",
-        )}
-      />
-      {configured ? "Active" : "Not set"}
+      {isValidating ? (
+        <>
+          <span
+            aria-hidden
+            className="inline-block size-1.5 rounded-full bg-amber-400/70 animate-pulse"
+          />
+          Validating…
+        </>
+      ) : (
+        <>
+          <span
+            aria-hidden
+            className={cn(
+              "inline-block size-1.5 rounded-full transition-colors",
+              configured ? "bg-(--floe-accent)" : "bg-white/25",
+            )}
+          />
+          {configured ? "Active" : "Not set"}
+        </>
+      )}
     </span>
   );
 }

@@ -26,6 +26,10 @@ pub struct AppSettings {
     pub hotkey: HotkeySettings,
     #[serde(default)]
     pub keyring_migrated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<String>,
+    #[serde(default)]
+    pub skip_cleanup: bool,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -34,6 +38,8 @@ impl Default for AppSettings {
         Self {
             hotkey: HotkeySettings::default(),
             keyring_migrated: false,
+            device_id: None,
+            skip_cleanup: false,
         }
     }
 }
@@ -298,8 +304,18 @@ impl AppSettingsStore {
             Ok(value) => {
                 // JSON parsed successfully; validate hotkey content
                 let hotkey = load_hotkey_settings(value.get("hotkey"))?;
+                let device_id = value
+                    .get("deviceId")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let skip_cleanup = value
+                    .get("skipCleanup")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let settings = AppSettings {
                     hotkey,
+                    device_id,
+                    skip_cleanup,
                     ..Default::default()
                 };
                 validate_app_settings(settings)
@@ -322,9 +338,19 @@ impl AppSettingsStore {
             serde_json::from_str(&raw).map_err(log_then_settings_error)?;
 
         let hotkey = load_hotkey_settings(value.get("hotkey"))?;
+        let device_id = value
+            .get("deviceId")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let skip_cleanup = value
+            .get("skipCleanup")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
 
         let settings = AppSettings {
             hotkey,
+            device_id,
+            skip_cleanup,
             ..Default::default()
         };
         validate_app_settings(settings)
@@ -497,22 +523,8 @@ fn status_from_secret(secret: Option<String>) -> ApiKeyStatus {
     }
 }
 
-fn mask_api_key(api_key: &str) -> Option<String> {
-    if api_key.chars().count() < 12 {
-        return Some("Configured key".to_string());
-    }
-
-    let start: String = api_key.chars().take(4).collect();
-    let end: String = api_key
-        .chars()
-        .rev()
-        .take(4)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect();
-
-    Some(format!("{start}...{end}"))
+fn mask_api_key(_api_key: &str) -> Option<String> {
+    Some("Configured".to_string())
 }
 
 fn settings_error(code: SettingsErrorCode, message: &'static str) -> SettingsError {
@@ -577,9 +589,9 @@ mod tests {
     }
 
     #[test]
-    fn masks_api_keys_without_exposing_short_values() {
-        assert_eq!(mask_api_key("gsk_12345678abcd").unwrap(), "gsk_...abcd");
-        assert_eq!(mask_api_key("short").unwrap(), "Configured key");
+    fn masks_api_keys_without_exposing_key_characteristics() {
+        assert_eq!(mask_api_key("gsk_12345678abcd").unwrap(), "Configured");
+        assert_eq!(mask_api_key("short").unwrap(), "Configured");
     }
 
     #[test]
@@ -694,7 +706,7 @@ mod tests {
             status,
             ApiKeyStatus {
                 configured: true,
-                masked_preview: Some("gsk_...abcd".to_string()),
+                masked_preview: Some("Configured".to_string()),
             }
         );
         assert!(!serialized.contains(api_key));

@@ -25,7 +25,15 @@ pub struct StartedRecording {
     pub meter: Arc<LevelMeter>,
 }
 
-pub struct CpalInputBackend;
+pub struct CpalInputBackend {
+    device_id: Option<String>,
+}
+
+impl CpalInputBackend {
+    pub fn new(device_id: Option<String>) -> Self {
+        Self { device_id }
+    }
+}
 
 pub struct CpalRecordingStream {
     _stream: cpal::Stream,
@@ -39,7 +47,23 @@ impl RecordingInput for CpalInputBackend {
         max_duration: std::time::Duration,
     ) -> Result<StartedRecording, RecordingError> {
         let host = cpal::default_host();
-        let device = host.default_input_device().ok_or_else(|| {
+        
+        // Try to use the configured device_id if available
+        let device = if let Some(device_id) = &self.device_id {
+            host.input_devices()
+                .ok()
+                .and_then(|mut devices| {
+                    devices.find(|d| {
+                        d.id()
+                            .map(|id| id.to_string() == *device_id)
+                            .unwrap_or(false)
+                    })
+                })
+        } else {
+            None
+        }
+        .or_else(|| host.default_input_device())
+        .ok_or_else(|| {
             recording_error(
                 RecordingErrorCode::NoInputDevice,
                 "No default input device is available.",

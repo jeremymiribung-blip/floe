@@ -20,7 +20,7 @@ mod wav;
 pub use self::{
     buffer::RecordingBuffer,
     error::{RecordingError, RecordingErrorCode},
-    input::{RecordingInput, RecordingStream, StartedRecording},
+    input::{CpalInputBackend, RecordingInput, RecordingStream, StartedRecording},
     types::{
         RecordingEndReason, RecordingInfo, RecordingState, RecordingStatePayload, RecordingStatus,
         ShutdownRecordingResult, MAX_RECORDING_DURATION_SECONDS, WAV_HEADER_LEN,
@@ -144,7 +144,7 @@ impl Drop for WatchdogHandle {
 
 impl RecordingManager {
     pub fn with_cpal() -> Self {
-        Self::new(Box::new(input::CpalInputBackend))
+        Self::new(Box::new(input::CpalInputBackend::new(None)))
     }
 
     pub fn new(backend: Box<dyn RecordingInput>) -> Self {
@@ -406,11 +406,62 @@ impl RecordingManager {
     }
 
     fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, ManagerState>, RecordingError> {
-        self.state.lock().map_err(|_| RecordingError {
+        self.state.lock().map_err(|poison| {
+            // Recover from poisoned mutex by extracting and resetting the inner state
+            let mut state = poison.into_inner();
+            state.recording_state = types::RecordingState::Idle;
+            if let Some(mut handle) = state.emitter_handle.take() {
+                handle.stop_and_join();
+            }
+            if let Some(mut handle) = state.watchdog_handle.take() {
+                handle.stop_and_join();
+            }
+            state.active = None;
+            RecordingError {
+                domain: "recording",
+                code: RecordingErrorCode::Internal,
+                message: "Recording state could not be locked.".to_string(),
+            }
+        })
+    }
+
+    /// Forcibly stop recording and reset internal state.
+    /// This is used to recover from stuck states when the audio thread is hanging
+    /// or when mutex poisoning has occurred.
+    pub fn force_stop_recording(&self) -> Result<(), RecordingError> {
+        let mut state = match self.state.lock() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                // Mutex is poisoned - recover by taking the inner state
+                poison.into_inner()
+            }
+        };
+
+        // Stop watchdog and emitter threads
+        stop_watchdog(&mut state);
+        stop_emitter(&mut state);
+
+        // Clear active recording (this drops the stream and releases audio device)
+        state.active = None;
+
+        // Reset state to idle
+        state.recording_state = types::RecordingState::Idle;
+        state.last_error = Some(RecordingError {
             domain: "recording",
             code: RecordingErrorCode::Internal,
-            message: "Recording state could not be locked.".to_string(),
-        })
+            message: "Recording reset due to hardware error".to_string(),
+        });
+
+        // Emit idle state
+        drop(state);
+        self.emit_only(types::RecordingState::Idle);
+
+        // Clear level meter
+        if let Ok(emit_slot) = self.emit_level.lock() {
+            (emit_slot)(0.0);
+        }
+
+        Ok(())
     }
 
     #[allow(dead_code)]
@@ -694,7 +745,7 @@ mod tests {
     use super::{
         buffer::RecordingBuffer,
         error::RecordingErrorCode,
-        input::{RecordingInput, RecordingStream, StartedRecording},
+        input::{CpalInputBackend, RecordingInput, RecordingStream, StartedRecording},
         types::{
             RecordingEndReason, ShutdownRecordingResult, MAX_RECORDING_DURATION_SECONDS,
             WAV_HEADER_LEN,

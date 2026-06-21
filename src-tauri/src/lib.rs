@@ -9,6 +9,7 @@ mod providers;
 mod recording;
 mod settings;
 mod system;
+mod update;
 
 // ── Public re-exports for serialization contract tests (integration tests in tests/contract_tests.rs) ──
 pub use cleanup::TranscriptCleanupResult;
@@ -19,6 +20,7 @@ pub use recording::{
     RecordingStatePayload, RecordingStatus,
 };
 pub use settings::{ApiKeyStatus, SettingsError, SettingsErrorCode};
+pub use update::{UpdateError, UpdateErrorCode, UpdateInfo, UpdateStatusLabel};
 pub use system::autostart::{StartAtLoginError, StartAtLoginErrorCode, StartAtLoginStatus};
 pub use system::hotkey::{HotkeyError, HotkeyErrorCode, HotkeyStatus};
 
@@ -42,7 +44,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec![system::startup::BACKGROUND_ARG]),
         ))
-        .manage(recording::RecordingManager::with_cpal())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(system::hotkey::HotkeyManager::default())
         .manage(commands::diag::DiagLog::new())
         .manage(diag::PipelineContext::new())
@@ -56,9 +58,32 @@ pub fn run() {
             let diag_path = diag::default_diag_path(&config_dir);
             let _ = diag::init(log::LevelFilter::Debug, &diag_path, 2_000_000, 3);
             log::info!("diagnostic_logger_initialized path={}", diag_path.display());
+
+            // ── File-backed session persistence & crash detection ──
+            let session_path = diag::default_session_path(&config_dir);
+            if let Some(store) = app.try_state::<diag::LastSessionStore>() {
+                store.set_persist_path(session_path.clone());
+            }
+
+            // Detect and finalize any crashed session from the previous run.
+            match diag::finalize_crashed_session(&session_path) {
+                Ok(Some(crash_info)) => {
+                    log::warn!(
+                        "crash_detected_and_finalized previous_trace_id={:?}",
+                        crash_info.trace_id
+                    );
+                }
+                Ok(None) => {
+                    // No crash detected — either no session file existed or it was clean.
+                }
+                Err(e) => {
+                    log::warn!("crash_detection_failed error=\"{e}\"");
+                }
+            }
+
             let groq_http_client = providers::http::build_shared_http_client()?;
 
-            let settings_manager = settings::SettingsManager::new(config_dir);
+            let settings_manager = settings::SettingsManager::new(config_dir.clone());
             let mut app_settings = settings_manager.get_app_settings().unwrap_or_else(|e| {
                 log::warn!("app_settings_load_failed error=\"{:?}\"", e);
                 settings::AppSettings::default()
@@ -68,16 +93,33 @@ pub fn run() {
                 log::warn!("app_settings_save_failed error=\"{:?}\"", e);
             }
 
+            // Get app_settings before moving settings_manager
+            let app_settings = settings_manager
+                .get_app_settings()
+                .unwrap_or_else(|e| {
+                    log::warn!("app_settings_load_failed error=\"{:?}\"", e);
+                    settings::AppSettings::default()
+                });
+
             app.manage(settings_manager);
+
+            // Create RecordingManager with configured audio device
+            let recording_manager = recording::RecordingManager::new(Box::new(
+                recording::CpalInputBackend::new(app_settings.device_id),
+            ));
+            app.manage(recording_manager);
+
             app.manage(providers::groq::GroqCleanupClient::new(
                 groq_http_client.clone(),
             ));
             app.manage(providers::groq::stt::GroqTranscriptionClient::new(
-                groq_http_client,
+                groq_http_client.clone(),
             ));
+
             system::tray::setup_tray(app)?;
             system::hotkey::register_startup_hotkey(app.handle());
 
+            // Set up recording manager emitters
             if let Some(manager) = app.try_state::<recording::RecordingManager>() {
                 let emit_app = app.handle().clone();
                 manager.set_level_emitter(Box::new(move |level: f32| {
@@ -127,9 +169,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::settings::save_api_key,
+            commands::settings::validate_api_key,
             commands::settings::clear_api_key,
             commands::settings::get_api_key_status,
             commands::settings::get_app_settings,
+            commands::settings::get_audio_devices,
             commands::settings::save_app_settings,
             commands::settings::get_start_at_login_status,
             commands::settings::set_start_at_login_enabled,
@@ -142,6 +186,7 @@ pub fn run() {
             commands::recording::stop_recording,
             commands::recording::get_recording_status,
             commands::recording::get_latest_recording_info,
+            commands::recording::force_stop_recording,
             commands::transcription::transcribe_latest_recording,
             commands::cleanup::cleanup_transcript,
             commands::clipboard::copy_text_to_clipboard,
@@ -158,6 +203,7 @@ pub fn run() {
             commands::diag::get_diagnostics_report,
             commands::diag::update_session_hotkey_latency,
             commands::diag::log_frontend_event,
+            commands::update::check_and_install_update,
         ]);
 
     match builder.build(tauri::generate_context!()) {

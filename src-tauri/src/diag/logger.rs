@@ -115,8 +115,13 @@ pub fn init(
     max_bytes: u64,
     max_files: u32,
 ) -> Result<(), SetLoggerError> {
+    // On Windows the binary is always a GUI-subsystem app (via
+    // the windows_subsystem attribute in main.rs) so there is
+    // no console to write to — disable stderr output to prevent
+    // any possibility of conhost.exe interaction.
+    let stderr = cfg!(not(target_os = "windows"));
     let logger = FloeLogger::new(
-        true,
+        stderr,
         path.to_path_buf(),
         max_level,
         LogRotation {

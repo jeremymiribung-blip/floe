@@ -12,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::providers::cleanup::RateLimitMetadata;
 
@@ -155,7 +155,7 @@ pub struct StageRecord {
     pub skipped_reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum StageStatus {
     Succeeded,
@@ -241,7 +241,7 @@ impl StageRecord {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AudioSnapshot {
     pub format: String,
@@ -254,7 +254,7 @@ pub struct AudioSnapshot {
     pub max_duration_reached: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct SttProviderSnapshot {
     pub provider_name: String,
@@ -267,21 +267,21 @@ pub struct SttProviderSnapshot {
     pub transcript_words: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct RateLimitSnapshot {
     pub stt: Option<BTreeMap<String, String>>,
     pub cleanup: Option<BTreeMap<String, String>>,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct RetrySnapshot {
     pub stt: u32,
     pub cleanup: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct RecoveryAction {
     pub stage: String,
@@ -289,7 +289,7 @@ pub struct RecoveryAction {
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct LastError {
     pub stage: String,
@@ -320,7 +320,7 @@ pub struct TimelineEvent {
 /// A detailed chronological event recorded during pipeline execution.
 /// These provide higher fidelity than the stage-based summary — retries,
 /// fallback activations, and intermediate attempts are preserved.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct DetailedEvent {
     pub stage: String,
@@ -335,7 +335,7 @@ pub struct DetailedEvent {
 /// Every field is optional so the snapshot can be assembled even when only
 /// partial information is available (e.g. STT failed before producing a
 /// model name).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionSnapshot {
     pub trace_id: Option<String>,
     pub completed: bool,

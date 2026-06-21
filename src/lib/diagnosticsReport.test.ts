@@ -22,7 +22,7 @@ function sampleReport(): DiagnosticsReport {
   return {
     schema_version: 1,
     app: "Floe",
-    app_version: "0.1.0",
+    app_version: "1.0.0",
     generated_at: "2026-06-18T00:00:00.000Z",
     environment: "development",
     platform: {
@@ -201,7 +201,7 @@ describe("diagnosticsReport", () => {
       const parsed = JSON.parse(json);
       expect(parsed.schema_version).toBe(1);
       expect(parsed.app).toBe("Floe");
-      expect(parsed.app_version).toBe("0.1.0");
+      expect(parsed.app_version).toBe("1.0.0");
       expect(parsed.hotkey.is_default).toBe(true);
       expect(parsed.last_session.stages.transcription.model).toBe(
         "whisper-large-v3-turbo",
@@ -324,7 +324,7 @@ describe("diagnosticsReport", () => {
     it("returns a safe-to-share empty report with snake_case keys", () => {
       const report = emptyDiagnosticsReport(
         "Floe",
-        "0.1.0",
+        "1.0.0",
         "2026-01-01T00:00:00.000Z",
       );
       const parsed = JSON.parse(diagnosticsReportToJson(report));

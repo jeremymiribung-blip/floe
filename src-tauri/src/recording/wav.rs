@@ -34,10 +34,26 @@ pub fn encode_recording_wav(
     samples: &[f32],
     input_sample_rate: u32,
 ) -> Result<Vec<u8>, RecordingError> {
-    let mut output_samples =
-        resample_mono_linear(samples, input_sample_rate, TARGET_WAV_SAMPLE_RATE)?;
-    apply_agc(&mut output_samples);
-    encode_pcm16_wav(&output_samples, TARGET_WAV_SAMPLE_RATE, OUTPUT_CHANNELS)
+    // Attempt to resample to the target sample rate (16 kHz mono 16-bit PCM).
+    // If resampling fails (e.g., memory constraints on very long recordings),
+    // fall back to encoding at the device's native sample rate so the user's
+    // dictation is never lost. Groq's STT API accepts various sample rates.
+    match resample_mono_linear(samples, input_sample_rate, TARGET_WAV_SAMPLE_RATE) {
+        Ok(mut output_samples) => {
+            apply_agc(&mut output_samples);
+            encode_pcm16_wav(&output_samples, TARGET_WAV_SAMPLE_RATE, OUTPUT_CHANNELS)
+        }
+        Err(err) => {
+            log::warn!(
+                "wav_resample_fallback native_sample_rate={} error={}",
+                input_sample_rate,
+                err.message,
+            );
+            // Encode at the native sample rate without AGC (AGC is a
+            // production-quality optimization; losing it on fallback is acceptable).
+            encode_pcm16_wav(samples, input_sample_rate, OUTPUT_CHANNELS)
+        }
+    }
 }
 
 pub fn resample_mono_linear(

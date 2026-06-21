@@ -39,12 +39,34 @@ vi.mock("./lib/tauri", () => ({
   getStartAtLoginStatus: vi.fn(() =>
     Promise.resolve({ enabled: true, available: true }),
   ),
+  getUpdateInfo: vi.fn(() => Promise.resolve({
+    currentVersion: "1.0.0",
+    latestVersion: null,
+    status: "idle",
+    downloadProgress: 0,
+    lastCheckResult: null,
+    errorMessage: null,
+  })),
+  checkForUpdate: vi.fn(() => Promise.resolve({
+    currentVersion: "1.0.0",
+    latestVersion: null,
+    status: "no_update",
+    downloadProgress: 0,
+    lastCheckResult: "You're up to date",
+    errorMessage: null,
+  })),
   resetHotkeyToDefault: vi.fn(() => Promise.resolve()),
 }));
 
 let mockAppState: AppState = "idle";
 vi.mock("./hooks/usePushToTalk", () => ({
-  usePushToTalk: () => ({ appState: mockAppState }),
+  usePushToTalk: () => ({
+    appState: mockAppState,
+    latestTranscript: null,
+    confirmPreview: vi.fn(),
+    discardPreview: vi.fn(),
+    error: null,
+  }),
 }));
 
 describe("App", () => {

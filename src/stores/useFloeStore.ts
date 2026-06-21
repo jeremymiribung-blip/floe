@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AppState } from "../types/app";
+import type { AppState, UpdateInfo, AudioDevice } from "../types/app";
 
 export type FloeStatus = "idle" | "recording" | "processing";
 
@@ -11,6 +11,7 @@ function appStateToFloeStatus(state: AppState): FloeStatus {
     case "stopping":
     case "transcribing":
     case "cleaning":
+    case "preview":
     case "pasting":
     case "pasted":
     case "copied":
@@ -34,6 +35,13 @@ export interface FloeState {
   isSettingsOpen: boolean;
   isHotkeyCaptureActive: boolean;
   launchOnStartup: boolean;
+  audioDevices: AudioDevice[];
+  selectedAudioDeviceId: string | null;
+  skipCleanup: boolean;
+
+  /* ── Update state ─────────────────────────────────────── */
+  updateInfo: UpdateInfo | null;
+  updateCheckInProgress: boolean;
 
   /* ── Actions ───────────────────────────────────────────── */
   syncFromPipeline: (appState: AppState) => void;
@@ -51,6 +59,11 @@ export interface FloeState {
   startHotkeyCapture: () => void;
   stopHotkeyCapture: () => void;
   setLaunchOnStartup: (value: boolean) => void;
+  setAudioDevices: (devices: AudioDevice[]) => void;
+  setSelectedAudioDeviceId: (deviceId: string | null) => void;
+  setSkipCleanup: (skipCleanup: boolean) => void;
+  setUpdateInfo: (info: UpdateInfo | null) => void;
+  setUpdateCheckInProgress: (inProgress: boolean) => void;
 
   /* ── Derived selectors ─────────────────────────────────── */
   isIdle: () => boolean;
@@ -70,6 +83,11 @@ const useFloeStore = create<FloeState>()((set, get) => ({
   isSettingsOpen: false,
   launchOnStartup: false,
   isHotkeyCaptureActive: false,
+  audioDevices: [],
+  selectedAudioDeviceId: null,
+  skipCleanup: false,
+  updateInfo: null,
+  updateCheckInProgress: false,
 
   /* ── Pipeline-synced actions ──────────────────────────── */
   syncFromPipeline: (appState: AppState) =>
@@ -135,6 +153,18 @@ const useFloeStore = create<FloeState>()((set, get) => ({
   stopHotkeyCapture: () => set({ isHotkeyCaptureActive: false }),
 
   setLaunchOnStartup: (launchOnStartup: boolean) => set({ launchOnStartup }),
+  setSkipCleanup: (skipCleanup: boolean) => set({ skipCleanup }),
+
+  /* ── Audio device actions ───────────────────────────────── */
+  setAudioDevices: (audioDevices: AudioDevice[]) => set({ audioDevices }),
+  setSelectedAudioDeviceId: (selectedAudioDeviceId: string | null) =>
+    set({ selectedAudioDeviceId }),
+
+  /* ── Update actions ──────────────────────────────────── */
+  setUpdateInfo: (info: UpdateInfo | null) =>
+    set({ updateInfo: info, updateCheckInProgress: false }),
+  setUpdateCheckInProgress: (inProgress: boolean) =>
+    set({ updateCheckInProgress: inProgress }),
 
   /* ── Derived selectors (computed booleans) ────────────── */
   isIdle: () => get().status === "idle",

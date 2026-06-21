@@ -8,6 +8,7 @@ export type AppState =
   | "stopping"
   | "transcribing"
   | "cleaning"
+  | "preview"
   | "pasting"
   | "pasted"
   | "copied"
@@ -31,6 +32,8 @@ export interface ApiKeyStatus {
 
 export interface AppSettings {
   hotkey: HotkeySettings;
+  deviceId?: string;
+  skipCleanup?: boolean;
 }
 
 export interface HotkeySettings {
@@ -67,6 +70,11 @@ export interface StartAtLoginError {
   domain: "startAtLogin";
   code: "enableFailed" | "disableFailed" | "unavailable";
   message: string;
+}
+
+export interface AudioDevice {
+  id: string;
+  name: string;
 }
 
 export interface GlobalHotkeyEvent {
@@ -227,4 +235,37 @@ export interface ClipboardError {
 /** Payload for EVENT_BUBBLE_STATE. */
 export interface BubbleStatePayload {
   bubbleState: "hidden" | "active" | "processing" | "success" | "error";
+}
+
+// ── Update types ────────────────────────────────────────────────────────────
+
+export type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "ready"
+  | "no_update"
+  | "error";
+
+export interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string | null;
+  status: UpdateStatus;
+  downloadProgress: number;
+  lastCheckResult: string | null;
+  errorMessage: string | null;
+}
+
+export interface UpdateError {
+  domain: "update";
+  code:
+    | "networkError"
+    | "updateNotFound"
+    | "downloadFailed"
+    | "installFailed"
+    | "alreadyUpToDate"
+    | "internal";
+  message: string;
 }

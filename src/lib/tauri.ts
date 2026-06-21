@@ -15,14 +15,19 @@ import type {
   StartAtLoginStatus,
   SttResult,
   TranscriptCleanupResult,
+  UpdateInfo,
+  UpdateError,
+  AudioDevice,
 } from "../types/app";
 
 import {
   CMD_LOG_FRONTEND_EVENT,
   CMD_SAVE_API_KEY,
+  CMD_VALIDATE_API_KEY,
   CMD_CLEAR_API_KEY,
   CMD_GET_API_KEY_STATUS,
   CMD_GET_APP_SETTINGS,
+  CMD_GET_AUDIO_DEVICES,
   CMD_SAVE_APP_SETTINGS,
   CMD_GET_HOTKEY_SETTINGS,
   CMD_SET_HOTKEY,
@@ -32,6 +37,7 @@ import {
   CMD_GET_RECORDING_STATUS,
   CMD_START_RECORDING,
   CMD_STOP_RECORDING,
+  CMD_FORCE_STOP_RECORDING,
   CMD_GET_LATEST_RECORDING_INFO,
   CMD_TRANSCRIBE_LATEST_RECORDING,
   CMD_CLEANUP_TRANSCRIPT,
@@ -43,6 +49,11 @@ import {
   CMD_DIAG_LOG_STR,
   CMD_GET_DIAGNOSTICS_REPORT,
   CMD_UPDATE_SESSION_HOTKEY_LATENCY,
+  CMD_GET_UPDATE_INFO,
+  CMD_CHECK_FOR_UPDATE,
+  CMD_DOWNLOAD_UPDATE,
+  CMD_INSTALL_UPDATE,
+  CMD_RESET_UPDATE_STATE,
 } from "./contract";
 
 // ── Runtime check ──
@@ -57,6 +68,10 @@ export function saveApiKey(apiKey: string): Promise<ApiKeyStatus> {
   return invoke(CMD_SAVE_API_KEY, { apiKey });
 }
 
+export function validateApiKey(apiKey: string): Promise<boolean> {
+  return invoke(CMD_VALIDATE_API_KEY, { apiKey });
+}
+
 export function clearApiKey(): Promise<ApiKeyStatus> {
   return invoke(CMD_CLEAR_API_KEY);
 }
@@ -69,6 +84,10 @@ export function getApiKeyStatus(): Promise<ApiKeyStatus> {
 
 export function getAppSettings(): Promise<AppSettings> {
   return invoke(CMD_GET_APP_SETTINGS);
+}
+
+export function getAudioDevices(): Promise<AudioDevice[]> {
+  return invoke(CMD_GET_AUDIO_DEVICES);
 }
 
 export function saveAppSettings(settings: AppSettings): Promise<AppSettings> {
@@ -111,6 +130,10 @@ export function stopRecording(): Promise<RecordingInfo> {
   return invoke(CMD_STOP_RECORDING);
 }
 
+export function forceStopRecording(): Promise<void> {
+  return invoke(CMD_FORCE_STOP_RECORDING);
+}
+
 export function getRecordingStatus(): Promise<RecordingStatus> {
   return invoke(CMD_GET_RECORDING_STATUS);
 }
@@ -127,8 +150,9 @@ export function transcribeLatestRecording(): Promise<SttResult> {
 
 export function cleanupTranscript(
   transcript: string,
+  skipCleanup: boolean = false,
 ): Promise<TranscriptCleanupResult> {
-  return invoke(CMD_CLEANUP_TRANSCRIPT, { transcript });
+  return invoke(CMD_CLEANUP_TRANSCRIPT, { transcript, skip_cleanup: skipCleanup });
 }
 
 // ── Clipboard commands ──
@@ -240,6 +264,28 @@ export function updateSessionHotkeyLatency(
     trace_id: traceId,
     hotkey_to_recording_start_ms: hotkeyToRecordingStartMs,
   });
+}
+
+// ── Update commands ──
+
+export function getUpdateInfo(): Promise<UpdateInfo> {
+  return invoke(CMD_GET_UPDATE_INFO);
+}
+
+export function checkForUpdate(): Promise<UpdateInfo> {
+  return invoke(CMD_CHECK_FOR_UPDATE);
+}
+
+export function downloadUpdate(): Promise<UpdateInfo> {
+  return invoke(CMD_DOWNLOAD_UPDATE);
+}
+
+export function installUpdate(): Promise<void> {
+  return invoke(CMD_INSTALL_UPDATE);
+}
+
+export function resetUpdateState(): Promise<void> {
+  return invoke(CMD_RESET_UPDATE_STATE);
 }
 
 export interface FrontendEvent {

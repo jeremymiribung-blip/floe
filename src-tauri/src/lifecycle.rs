@@ -103,6 +103,13 @@ pub fn cleanup_before_exit<R: Runtime>(app: &AppHandle<R>) {
         }
     }
 
+    // Mark the persisted session as a clean shutdown so crash detection
+    // on the next startup knows this exit was intentional.
+    if let Some(store) = app.try_state::<crate::diag::LastSessionStore>() {
+        store.mark_clean_shutdown();
+        log_lifecycle(LifecycleLevel::Info, "session_clean_shutdown_marked");
+    }
+
     LIFECYCLE.store(AppLifecycle::Exited as u8, Ordering::Release);
     log_lifecycle(LifecycleLevel::Info, "shutdown_cleanup_finished");
 }

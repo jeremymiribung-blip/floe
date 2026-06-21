@@ -29,6 +29,7 @@ const WATCHDOG_TIMEOUT_MS =
 export interface PushToTalkDependencies {
   startRecording: () => Promise<RecordingStatus>;
   stopRecording: () => Promise<RecordingInfo>;
+  forceStopRecording: () => Promise<void>;
   getRecordingStatus: () => Promise<RecordingStatus>;
   transcribeLatestRecording: () => Promise<SttResult>;
   cleanupTranscript: (transcript: string) => Promise<TranscriptCleanupResult>;
@@ -44,12 +45,27 @@ export interface PushToTalkCallbacks {
   onTranscriptChange: (transcript: string | null) => void;
   onDiagnosticsChange?: (json: string | null) => void;
   errorMessage: (error: FloeError) => string;
+  /** Show a brief toast/notification to the user */
+  showToast?: (message: string) => void;
 }
 
 export class PushToTalkController {
   private recordingState: RecordingState = "idle";
   private releaseAfterStart = false;
   private finishing = false;
+  private previewMode = false;
+  private pendingPreviewText: string | null = null;
+  /** Snapshot of pipeline data saved when entering preview, needed for confirmPreview diagnostics. */
+  private previewPipelineData: {
+    latestRecording: RecordingInfo | null;
+    transcription: SttResult | null;
+    transcriptionError: FloeError | null;
+    cleanup: TranscriptCleanupResult | null;
+    cleanupFallbackUsed: boolean;
+    cleanupValidationMs: number;
+    sttDurationMs: number;
+    cleanupDurationMs: number;
+  } | null = null;
   private activeTraceId: string | null = null;
   private activeTraceStartedAt = 0;
   private hotkeyToRecordingStartMs = 0;
@@ -78,8 +94,12 @@ export class PushToTalkController {
 
   syncRecordingState(state: RecordingState): void {
     this.recordingState = state;
+    // Don't reset finishing while preview is active — the user must
+    // confirm or discard before the pipeline is fully complete.
     if (state === "idle" || state === "stopping") {
-      this.finishing = false;
+      if (!this.previewMode) {
+        this.finishing = false;
+      }
       this.clearWatchdog();
     }
     if (state === "idle" && !this.finishing) {
@@ -100,6 +120,10 @@ export class PushToTalkController {
   }
 
   private async handlePressed(): Promise<void> {
+    // In preview mode, ignore hotkey — user must use Enter or Escape
+    if (this.previewMode) {
+      return;
+    }
     if (this.recordingState !== "idle") {
       return;
     }
@@ -158,12 +182,24 @@ export class PushToTalkController {
         });
       }
     } catch (caught) {
+      const error = parseFloeError(caught);
       this.recordingState = "idle";
       this.releaseAfterStart = false;
-      this.callbacks.onErrorChange(
-        this.callbacks.errorMessage(parseFloeError(caught)),
-      );
-      this.callbacks.onStateChange("error");
+      
+      // Check for Internal error - indicates mutex poison or stuck state
+      if (error.code === "internal") {
+        try {
+          await this.dependencies.forceStopRecording();
+        } catch {
+          // Ignore - backend state is already being reset
+        }
+        this.callbacks.onErrorChange("Hardware error: Recording reset");
+        this.callbacks.onStateChange("idle");
+        this.callbacks.showToast?.("Recording reset due to hardware error. Try again.");
+      } else {
+        this.callbacks.onErrorChange(this.callbacks.errorMessage(error));
+        this.callbacks.onStateChange("error");
+      }
     }
 
     const shouldFinishAfterStart = this.releaseAfterStart;
@@ -206,12 +242,14 @@ export class PushToTalkController {
 
     this.recordingState = "idle";
     try {
-      await this.dependencies.stopRecording();
+      // Call force_stop_recording to reset backend state even if stuck
+      await this.dependencies.forceStopRecording();
     } catch {
-      // Backend may have already finalized via its own watchdog; ignore.
+      // Backend reset failed - state is already being reset
     }
-    this.callbacks.onErrorChange("Recording failed");
-    this.callbacks.onStateChange("error");
+    this.callbacks.onErrorChange("Hardware error: Recording reset");
+    this.callbacks.onStateChange("idle");
+    this.callbacks.showToast?.("Recording reset due to hardware error. Try again.");
   }
 
   private async finishRecording(): Promise<void> {
@@ -227,7 +265,8 @@ export class PushToTalkController {
       this.recordingState === "stopping"
     ) {
       this.recordingState = "idle";
-      this.callbacks.onStateChange("ready");
+      // Do NOT set "ready" here — wait for transcription to start to avoid
+      // a race where an error between "ready" and "transcribing" is swallowed.
     }
     const totalStartedAt = this.activeTraceStartedAt || this.nowMs();
     let latestRecording: RecordingInfo | null = null;
@@ -253,6 +292,8 @@ export class PushToTalkController {
 
       this.pushEvent("stt", "started", 0);
 
+      // Transition to transcribing — this is the first state after recording stops.
+      // Any error from here on will be explicitly caught and surfaced.
       this.callbacks.onStateChange("transcribing");
       const sttStartedAt = this.nowMs();
       try {
@@ -265,6 +306,9 @@ export class PushToTalkController {
         errorStage = "stt";
         sanitizedErrorCode = floeErrorCode(transcriptionError);
         this.pushEvent("stt", "failed", sttDurationMs, sanitizedErrorCode);
+        // Explicitly surface the error via callbacks so it's not silently swallowed
+        this.callbacks.onErrorChange(this.callbacks.errorMessage(transcriptionError));
+        this.callbacks.onStateChange("error");
         throw transcriptionError;
       }
 
@@ -300,49 +344,27 @@ export class PushToTalkController {
         return;
       }
 
-      this.callbacks.onStateChange("pasting");
-      let clipboardStartedAt = 0;
-      let pasteStartedAt = 0;
-      try {
-        clipboardStartedAt = this.nowMs();
-        await this.dependencies.copyTextToClipboard(finalText);
-        clipboardWriteMs = this.nowMs() - clipboardStartedAt;
-        clipboardSuccess = true;
-        this.pushEvent("clipboard", "completed", clipboardWriteMs);
-        pasteStartedAt = this.nowMs();
-        await this.dependencies.pasteClipboard();
-        pasteAttemptMs = this.nowMs() - pasteStartedAt;
-        pasteSuccess = true;
-        this.callbacks.onStateChange("pasted");
-        this.pushEvent(
-          "paste",
-          "completed",
-          pasteAttemptMs,
-          null,
-          this.nowMs() - this.activeTraceStartedAt,
-        );
-      } catch (caught) {
-        const error = parseFloeError(caught);
-        sanitizedErrorCode = floeErrorCode(error);
-        if (clipboardSuccess) {
-          pasteAttemptMs = this.nowMs() - pasteStartedAt;
-          errorStage = "paste";
-          this.pushEvent("paste", "failed", pasteAttemptMs, sanitizedErrorCode);
-          this.callbacks.onErrorChange(null);
-          this.callbacks.onStateChange("copied");
-          copiedOnly = true;
-          return;
-        }
-        clipboardWriteMs = this.nowMs() - clipboardStartedAt;
-        errorStage = "clipboard";
-        this.pushEvent(
-          "clipboard",
-          "failed",
-          clipboardWriteMs,
-          sanitizedErrorCode,
-        );
-        throw error;
-      }
+      // ── Preview & Confirm ───────────────────────────────────
+      // Instead of immediately pasting, pause to let the user review
+      // the transcript. Store pipeline state for later completion.
+      this.previewMode = true;
+      this.pendingPreviewText = finalText;
+      this.previewPipelineData = {
+        latestRecording,
+        transcription,
+        transcriptionError,
+        cleanup,
+        cleanupFallbackUsed,
+        cleanupValidationMs,
+        sttDurationMs,
+        cleanupDurationMs,
+      };
+
+      this.callbacks.onTranscriptChange(finalText);
+      this.callbacks.onStateChange("preview");
+      // Return early — confirmPreview or discardPreview will complete
+      // the pipeline. The finally block skips cleanup when previewMode is set.
+      return;
     } catch (caught) {
       const error = parseFloeError(caught);
       if (errorStage === null) {
@@ -352,6 +374,10 @@ export class PushToTalkController {
       this.callbacks.onErrorChange(this.callbacks.errorMessage(error));
       this.callbacks.onStateChange("error");
     } finally {
+      // When in preview mode, the pipeline is paused and will be
+      // completed by confirmPreview or discardPreview. Don't reset yet.
+      if (this.previewMode) return;
+
       if (errorStage !== null) {
         this.pushEvent(
           errorStage,
@@ -386,6 +412,125 @@ export class PushToTalkController {
       this.recordingState = "idle";
       this.finishing = false;
     }
+  }
+
+  /**
+   * Confirm the previewed transcript: copy to clipboard and paste.
+   * Called when the user presses Enter in the preview state.
+   */
+  async confirmPreview(): Promise<void> {
+    if (!this.previewMode || !this.pendingPreviewText) {
+      return;
+    }
+
+    const finalText = this.pendingPreviewText;
+    const pipelineData = this.previewPipelineData;
+    this.previewMode = false;
+    this.pendingPreviewText = null;
+    this.previewPipelineData = null;
+
+    const totalStartedAt = this.activeTraceStartedAt || this.nowMs();
+    let clipboardWriteMs = 0;
+    let pasteAttemptMs = 0;
+    let clipboardSuccess = false;
+    let pasteSuccess = false;
+    let copiedOnly = false;
+    let errorStage: PipelineStage | null = null;
+    let sanitizedErrorCode: string | null = null;
+
+    this.callbacks.onStateChange("pasting");
+
+    try {
+      clipboardWriteMs = this.nowMs();
+      await this.dependencies.copyTextToClipboard(finalText);
+      clipboardWriteMs = this.nowMs() - clipboardWriteMs;
+      clipboardSuccess = true;
+      this.pushEvent("clipboard", "completed", clipboardWriteMs);
+
+      pasteAttemptMs = this.nowMs();
+      await this.dependencies.pasteClipboard();
+      pasteAttemptMs = this.nowMs() - pasteAttemptMs;
+      pasteSuccess = true;
+      this.callbacks.onStateChange("pasted");
+      this.pushEvent(
+        "paste",
+        "completed",
+        pasteAttemptMs,
+        null,
+        this.nowMs() - this.activeTraceStartedAt,
+      );
+    } catch (caught) {
+      const error = parseFloeError(caught);
+      sanitizedErrorCode = floeErrorCode(error);
+      if (clipboardSuccess) {
+        pasteAttemptMs = this.nowMs() - pasteAttemptMs;
+        errorStage = "paste";
+        this.pushEvent("paste", "failed", pasteAttemptMs, sanitizedErrorCode);
+        this.callbacks.onErrorChange(null);
+        this.callbacks.onStateChange("copied");
+        copiedOnly = true;
+        this.callbacks.showToast?.("Copied to clipboard (automatic paste failed)");
+        return;
+      }
+      clipboardWriteMs = this.nowMs() - clipboardWriteMs;
+      errorStage = "clipboard";
+      this.pushEvent(
+        "clipboard",
+        "failed",
+        clipboardWriteMs,
+        sanitizedErrorCode,
+      );
+      throw error;
+    } finally {
+      // Store diagnostics with the original pipeline data merged with paste results
+      if (pipelineData) {
+        this.storeDiagnostics({
+          createdAt: this.createdAt(),
+          platform: this.platform,
+          appVersion: this.appVersion,
+          totalMs: this.nowMs() - totalStartedAt,
+          hotkeyToRecordingStartMs: this.hotkeyToRecordingStartMs,
+          recordingInfo: pipelineData.latestRecording,
+          sttDurationMs: pipelineData.sttDurationMs,
+          stt: pipelineData.transcription,
+          sttError: pipelineData.transcriptionError as Parameters<
+            typeof this.storeDiagnostics
+          >[0]["sttError"],
+          cleanupDurationMs: pipelineData.cleanupDurationMs,
+          cleanup: pipelineData.cleanup,
+          cleanupFallbackUsed: pipelineData.cleanupFallbackUsed,
+          cleanupErrorCode: pipelineData.cleanup?.errorCode ?? null,
+          cleanupValidationMs: pipelineData.cleanupValidationMs,
+          clipboardWriteMs,
+          pasteAttemptMs,
+          clipboardSuccess,
+          pasteSuccess,
+          copiedOnly,
+          errorStage,
+          sanitizedErrorCode,
+        });
+      }
+      this.recordingState = "idle";
+      this.finishing = false;
+    }
+  }
+
+  /**
+   * Discard the previewed transcript: reset to idle without pasting.
+   * Called when the user presses Escape in the preview state.
+   */
+  async discardPreview(): Promise<void> {
+    if (!this.previewMode) {
+      return;
+    }
+
+    this.previewMode = false;
+    this.pendingPreviewText = null;
+    this.previewPipelineData = null;
+    this.finishing = false;
+    this.recordingState = "idle";
+    this.callbacks.onStateChange("idle");
+    this.callbacks.onTranscriptChange(null);
   }
 
   private async cleanTranscriptOrUseRaw(

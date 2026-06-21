@@ -42,6 +42,9 @@ export const EVENT_SHOW_SETTINGS = "floe-show-settings";
 /// Emitted when the app begins its shutdown sequence.
 export const EVENT_SHUTTING_DOWN = "floe-app-shutting-down";
 
+/// Emitted when an update has been installed and the app will restart.
+export const EVENT_UPDATE_INSTALLED = "floe-update-installed";
+
 // ── Overlay (bubble) window ─────────────────────────────────────────────────
 
 /// Label of the Tauri webview window used as the recording bubble overlay.
@@ -62,9 +65,11 @@ export const WAV_BITS_PER_SAMPLE = 16;
 // ── Tauri command names ─────────────────────────────────────────────────────
 
 export const CMD_SAVE_API_KEY = "save_api_key";
+export const CMD_VALIDATE_API_KEY = "validate_api_key";
 export const CMD_CLEAR_API_KEY = "clear_api_key";
 export const CMD_GET_API_KEY_STATUS = "get_api_key_status";
 export const CMD_GET_APP_SETTINGS = "get_app_settings";
+export const CMD_GET_AUDIO_DEVICES = "get_audio_devices";
 export const CMD_SAVE_APP_SETTINGS = "save_app_settings";
 export const CMD_GET_START_AT_LOGIN_STATUS = "get_start_at_login_status";
 export const CMD_SET_START_AT_LOGIN_ENABLED = "set_start_at_login_enabled";
@@ -75,6 +80,7 @@ export const CMD_REGISTER_GLOBAL_HOTKEY = "register_global_hotkey";
 export const CMD_UNREGISTER_GLOBAL_HOTKEY = "unregister_global_hotkey";
 export const CMD_START_RECORDING = "start_recording";
 export const CMD_STOP_RECORDING = "stop_recording";
+export const CMD_FORCE_STOP_RECORDING = "force_stop_recording";
 export const CMD_GET_RECORDING_STATUS = "get_recording_status";
 export const CMD_GET_LATEST_RECORDING_INFO = "get_latest_recording_info";
 export const CMD_TRANSCRIBE_LATEST_RECORDING = "transcribe_latest_recording";
@@ -94,3 +100,9 @@ export const CMD_GET_RECENT_TRACES = "get_recent_traces";
 export const CMD_GET_CURRENT_TRACE = "get_current_trace";
 export const CMD_UPDATE_SESSION_HOTKEY_LATENCY =
   "update_session_hotkey_latency";
+export const CMD_GET_UPDATE_INFO = "get_update_info";
+export const CMD_CHECK_FOR_UPDATE = "check_for_update";
+export const CMD_DOWNLOAD_UPDATE = "download_update";
+export const CMD_INSTALL_UPDATE = "install_update";
+export const CMD_RESET_UPDATE_STATE = "reset_update_state";
+export const CMD_CHECK_AND_INSTALL_UPDATE = "check_and_install_update";

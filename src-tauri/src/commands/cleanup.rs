@@ -16,6 +16,7 @@ pub async fn cleanup_transcript(
     diag_ctx: State<'_, PipelineContext>,
     last_session: State<'_, LastSessionStore>,
     transcript: String,
+    skip_cleanup: bool,
 ) -> Result<TranscriptCleanupResult, GroqCleanupError> {
     let trace_id = diag_ctx.current_trace_id().unwrap_or_default();
     let transcript_len = transcript.len() as u32;
@@ -30,7 +31,20 @@ pub async fn cleanup_transcript(
     );
 
     let start = Instant::now();
-    let result = cleanup_transcript_impl(&manager, &*groq_client, transcript).await;
+    let result = if skip_cleanup {
+        crate::cleanup::TranscriptCleanupResult {
+            text: transcript.clone(),
+            warning: None,
+            model: String::new(),
+            retry_count: 0,
+            validation_ms: 0,
+            fallback_used: false,
+            rate_limit: None,
+            error_code: None,
+        }
+    } else {
+        cleanup_transcript_impl(&manager, &*groq_client, transcript).await
+    };
     let duration_ms = start.elapsed().as_millis() as u64;
 
     if result.fallback_used {

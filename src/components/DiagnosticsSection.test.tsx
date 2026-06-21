@@ -14,7 +14,7 @@ vi.mock("../lib/tauri", () => ({
     Promise.resolve({
       schema_version: 1,
       app: "Floe",
-      app_version: "0.1.0",
+      app_version: "1.0.0",
       generated_at: "2026-06-18T00:00:00.000Z",
       platform: {
         os: "macos",
@@ -74,7 +74,7 @@ afterEach(() => {
 
 describe("DiagnosticsSection", () => {
   it("renders a copy button and a refresh button", async () => {
-    render(<DiagnosticsSection appVersion="0.1.0" />);
+    render(<DiagnosticsSection appVersion="1.0.0" />);
     expect(
       await screen.findByRole("button", { name: /copy diagnostics json/i }),
     ).toBeDefined();
@@ -84,7 +84,7 @@ describe("DiagnosticsSection", () => {
   });
 
   it("toggles the JSON preview when the preview header is clicked", async () => {
-    render(<DiagnosticsSection appVersion="0.1.0" />);
+    render(<DiagnosticsSection appVersion="1.0.0" />);
     const toggle = await screen.findByRole("button", { name: /preview json/i });
     fireEvent.click(toggle);
     await waitFor(() => {
@@ -98,7 +98,7 @@ describe("DiagnosticsSection", () => {
       configurable: true,
       value: { writeText },
     });
-    render(<DiagnosticsSection appVersion="0.1.0" />);
+    render(<DiagnosticsSection appVersion="1.0.0" />);
     const copy = await screen.findByRole("button", {
       name: /copy diagnostics json/i,
     });

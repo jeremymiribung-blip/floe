@@ -51,6 +51,11 @@ const ALL_COMMANDS: &[&str] = &[
     "unregister_global_hotkey",
     "update_session_hotkey_latency",
     "log_frontend_event",
+    "get_update_info",
+    "check_for_update",
+    "download_update",
+    "install_update",
+    "reset_update_state",
 ];
 
 /// The canonical list of all event names.
@@ -61,6 +66,7 @@ const ALL_EVENTS: &[&str] = &[
     "recording-bubble-state",
     "floe-show-settings",
     "floe-app-shutting-down",
+    "floe-update-installed",
 ];
 
 // ── Command name tests ──────────────────────────────────────────────────────
@@ -87,7 +93,7 @@ fn command_names_are_snake_case() {
 
 #[test]
 fn all_commands_length_is_stable() {
-    assert_eq!(ALL_COMMANDS.len(), 32,
+    assert_eq!(ALL_COMMANDS.len(), 37,
         "Command count changed.\nIf you added/removed a command, update ALL_COMMANDS in contract.rs, contract.ts, AND this file.");
 }
 
@@ -127,7 +133,7 @@ fn event_names_are_kebab_case() {
 
 #[test]
 fn all_events_length_is_stable() {
-    assert_eq!(ALL_EVENTS.len(), 6,
+    assert_eq!(ALL_EVENTS.len(), 7,
         "Event count changed.\nIf you added/removed an event, update ALL_EVENTS in contract.rs, contract.ts, AND this file.");
 }
 
@@ -973,6 +979,125 @@ fn start_at_login_status_actual_serialization() {
         serde_json::to_value(&disabled).unwrap(),
         serde_json::json!({"enabled": false, "available": false})
     );
+}
+
+#[test]
+fn update_info_actual_serialization() {
+    let info = floe_lib::UpdateInfo {
+        current_version: "1.0.0".into(),
+        latest_version: Some("v1.1.0".into()),
+        status: floe_lib::UpdateStatusLabel::Available,
+        download_progress: 0.0,
+        last_check_result: None,
+        error_message: None,
+    };
+    let value = serde_json::to_value(&info).expect("serialize UpdateInfo");
+
+    let expected = serde_json::json!({
+        "currentVersion": "1.0.0",
+        "latestVersion": "v1.1.0",
+        "status": "available",
+        "downloadProgress": 0.0,
+        "lastCheckResult": null,
+        "errorMessage": null,
+    });
+    assert_eq!(value, expected, "UpdateInfo JSON shape mismatch");
+    assert_camel_case(&value);
+}
+
+#[test]
+fn update_info_no_update_serialization() {
+    let info = floe_lib::UpdateInfo {
+        current_version: "1.0.0".into(),
+        latest_version: Some("1.0.0".into()),
+        status: floe_lib::UpdateStatusLabel::NoUpdate,
+        download_progress: 0.0,
+        last_check_result: Some("You're up to date".into()),
+        error_message: None,
+    };
+    let value = serde_json::to_value(&info).expect("serialize UpdateInfo");
+
+    let expected = serde_json::json!({
+        "currentVersion": "1.0.0",
+        "latestVersion": "1.0.0",
+        "status": "no_update",
+        "downloadProgress": 0.0,
+        "lastCheckResult": "You're up to date",
+        "errorMessage": null,
+    });
+    assert_eq!(value, expected, "UpdateInfo JSON shape mismatch");
+    assert_camel_case(&value);
+}
+
+#[test]
+fn update_info_checking_serialization() {
+    let info = floe_lib::UpdateInfo {
+        current_version: "1.0.0".into(),
+        latest_version: None,
+        status: floe_lib::UpdateStatusLabel::Checking,
+        download_progress: 0.0,
+        last_check_result: None,
+        error_message: None,
+    };
+    let value = serde_json::to_value(&info).expect("serialize UpdateInfo");
+
+    let expected = serde_json::json!({
+        "currentVersion": "1.0.0",
+        "latestVersion": null,
+        "status": "checking",
+        "downloadProgress": 0.0,
+        "lastCheckResult": null,
+        "errorMessage": null,
+    });
+    assert_eq!(value, expected, "UpdateInfo JSON shape mismatch");
+    assert_camel_case(&value);
+}
+
+#[test]
+fn update_error_actual_serialization() {
+    let err = floe_lib::UpdateError {
+        domain: "update",
+        code: floe_lib::UpdateErrorCode::NetworkError,
+        message: "Could not reach update server.".to_string(),
+    };
+    let value = serde_json::to_value(&err).expect("serialize UpdateError");
+
+    let expected = serde_json::json!({
+        "domain": "update",
+        "code": "networkError",
+        "message": "Could not reach update server.",
+    });
+    assert_eq!(value, expected, "UpdateError JSON shape mismatch");
+    assert_camel_case(&value);
+}
+
+#[test]
+fn update_error_code_values_match_typescript() {
+    let codes = serde_json::json!([
+        "networkError",
+        "updateNotFound",
+        "downloadFailed",
+        "installFailed",
+        "alreadyUpToDate",
+        "internal",
+    ]);
+    assert_eq!(codes.as_array().unwrap().len(), 6);
+    assert_camel_case(&codes);
+}
+
+#[test]
+fn update_status_label_values() {
+    let labels = serde_json::json!([
+        "idle",
+        "checking",
+        "available",
+        "downloading",
+        "downloaded",
+        "ready",
+        "no_update",
+        "error",
+    ]);
+    assert_eq!(labels.as_array().unwrap().len(), 8);
 }
 
 #[test]

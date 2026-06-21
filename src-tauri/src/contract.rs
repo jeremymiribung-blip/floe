@@ -34,6 +34,9 @@ pub const EVENT_SHOW_SETTINGS: &str = "floe-show-settings";
 /// Emitted when the app begins its shutdown sequence.
 pub const EVENT_SHUTTING_DOWN: &str = "floe-app-shutting-down";
 
+/// Emitted when an update has been installed and the app will restart.
+pub const EVENT_UPDATE_INSTALLED: &str = "floe-update-installed";
+
 // ── Overlay (bubble) window ─────────────────────────────────────────────────
 
 /// Label of the Tauri webview window used as the recording bubble overlay.
@@ -56,9 +59,11 @@ pub const WAV_BITS_PER_SAMPLE: u16 = 16;
 // The `#[cfg(test)]` block below verifies this.
 
 pub const CMD_SAVE_API_KEY: &str = "save_api_key";
+pub const CMD_VALIDATE_API_KEY: &str = "validate_api_key";
 pub const CMD_CLEAR_API_KEY: &str = "clear_api_key";
 pub const CMD_GET_API_KEY_STATUS: &str = "get_api_key_status";
 pub const CMD_GET_APP_SETTINGS: &str = "get_app_settings";
+pub const CMD_GET_AUDIO_DEVICES: &str = "get_audio_devices";
 pub const CMD_SAVE_APP_SETTINGS: &str = "save_app_settings";
 pub const CMD_GET_START_AT_LOGIN_STATUS: &str = "get_start_at_login_status";
 pub const CMD_SET_START_AT_LOGIN_ENABLED: &str = "set_start_at_login_enabled";
@@ -87,6 +92,11 @@ pub const CMD_GET_RECENT_TRACES: &str = "get_recent_traces";
 pub const CMD_GET_CURRENT_TRACE: &str = "get_current_trace";
 pub const CMD_LOG_FRONTEND_EVENT: &str = "log_frontend_event";
 pub const CMD_UPDATE_SESSION_HOTKEY_LATENCY: &str = "update_session_hotkey_latency";
+pub const CMD_GET_UPDATE_INFO: &str = "get_update_info";
+pub const CMD_CHECK_FOR_UPDATE: &str = "check_for_update";
+pub const CMD_DOWNLOAD_UPDATE: &str = "download_update";
+pub const CMD_INSTALL_UPDATE: &str = "install_update";
+pub const CMD_RESET_UPDATE_STATE: &str = "reset_update_state";
 
 #[cfg(test)]
 pub const ALL_COMMANDS: &[&str] = &[
@@ -102,6 +112,7 @@ pub const ALL_COMMANDS: &[&str] = &[
     CMD_GET_API_KEY_STATUS,
     CMD_LOG_FRONTEND_EVENT,
     CMD_GET_APP_SETTINGS,
+    CMD_GET_AUDIO_DEVICES,
     CMD_GET_CURRENT_TRACE,
     CMD_GET_DIAGNOSTICS_REPORT,
     CMD_GET_HOTKEY_SETTINGS,
@@ -122,6 +133,12 @@ pub const ALL_COMMANDS: &[&str] = &[
     CMD_TRANSCRIBE_LATEST_RECORDING,
     CMD_UNREGISTER_GLOBAL_HOTKEY,
     CMD_UPDATE_SESSION_HOTKEY_LATENCY,
+    CMD_GET_UPDATE_INFO,
+    CMD_CHECK_FOR_UPDATE,
+    CMD_DOWNLOAD_UPDATE,
+    CMD_INSTALL_UPDATE,
+    CMD_RESET_UPDATE_STATE,
+    CMD_VALIDATE_API_KEY,
 ];
 
 #[cfg(test)]

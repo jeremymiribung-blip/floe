@@ -15,7 +15,7 @@ function sampleInput(
   return {
     createdAt: new Date("2026-06-18T00:00:00.000Z"),
     platform: "macos",
-    appVersion: "0.1.0",
+    appVersion: "1.0.0",
     totalMs: 2_737,
     hotkeyToRecordingStartMs: 25,
     recordingInfo: {
@@ -79,7 +79,7 @@ describe("createPipelineDiagnostics", () => {
     expect(diag.app).toBe("Floe");
     expect(diag.trace_version).toBe(1);
     expect(diag.platform).toBe("macos");
-    expect(diag.app_version).toBe("0.1.0");
+    expect(diag.app_version).toBe("1.0.0");
 
     // Pipeline timings
     expect(diag.pipeline.total_ms).toBe(2_737);

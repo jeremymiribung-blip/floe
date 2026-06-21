@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   AppState,
   RecordingInfo,
@@ -15,6 +16,7 @@ import {
   cleanupTranscript,
   copyTextToClipboard,
   diagLog,
+  forceStopRecording,
   getRecordingStatus,
   isTauriRuntime,
   pasteClipboard,
@@ -61,6 +63,8 @@ export interface UsePushToTalkResult {
   latestRecording: RecordingInfo | null;
   triggerStart: () => void;
   triggerStop: () => void;
+  confirmPreview: () => void;
+  discardPreview: () => void;
 }
 
 export function usePushToTalk(): UsePushToTalkResult {
@@ -79,15 +83,19 @@ export function usePushToTalk(): UsePushToTalkResult {
   const controllerRef = useRef<PushToTalkController | null>(null);
   const syncFromPipeline = useFloeStore((s) => s.syncFromPipeline);
   const setRecordingStartedAt = useFloeStore((s) => s.setRecordingStartedAt);
+  const skipCleanupRef = useRef(useFloeStore.getState().skipCleanup);
+  skipCleanupRef.current = useFloeStore.getState().skipCleanup;
 
   if (controllerRef.current === null) {
     controllerRef.current = new PushToTalkController(
       {
         startRecording,
         stopRecording,
+        forceStopRecording,
         getRecordingStatus,
         transcribeLatestRecording,
-        cleanupTranscript,
+        cleanupTranscript: (transcript: string) =>
+          cleanupTranscript(transcript, skipCleanupRef.current),
         copyTextToClipboard,
         pasteClipboard,
       },
@@ -97,6 +105,18 @@ export function usePushToTalk(): UsePushToTalkResult {
           syncFromPipeline(state);
           if (state === "recording") {
             setRecordingStartedAt(Date.now());
+          }
+          if (state === "preview") {
+            // Show and focus the main window so the preview overlay is visible
+            // and can accept keyboard events
+            if (isTauriRuntime()) {
+              getCurrentWindow()
+                .show()
+                .catch(() => {});
+              getCurrentWindow()
+                .setFocus()
+                .catch(() => {});
+            }
           }
         },
         onErrorChange: setError,
@@ -186,10 +206,15 @@ export function usePushToTalk(): UsePushToTalkResult {
         void getRecordingStatus().then((status) => {
           const lastError = status.lastError;
           if (lastError) {
-            setError(
-              recordingErrorMessage(lastError) ||
-                "Recording failed unexpectedly",
-            );
+            // Check for Internal error - indicates hardware reset
+            if (lastError.code === "internal") {
+              setError("Hardware error: Recording reset");
+            } else {
+              setError(
+                recordingErrorMessage(lastError) ||
+                  "Recording failed unexpectedly",
+              );
+            }
           }
           setAppState("idle");
           syncFromPipeline("idle");
@@ -240,6 +265,14 @@ export function usePushToTalk(): UsePushToTalkResult {
     void handleHotkeyEvent("Released");
   }, [handleHotkeyEvent]);
 
+  const confirmPreview = useCallback(() => {
+    void controllerRef.current?.confirmPreview();
+  }, []);
+
+  const discardPreview = useCallback(() => {
+    void controllerRef.current?.discardPreview();
+  }, []);
+
   return {
     appState,
     error,
@@ -249,5 +282,7 @@ export function usePushToTalk(): UsePushToTalkResult {
     latestRecording,
     triggerStart,
     triggerStop,
+    confirmPreview,
+    discardPreview,
   };
 }
