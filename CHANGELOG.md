@@ -2,7 +2,7 @@
 
 All notable changes to Floe will be documented in this file.
 
-## [Unreleased]
+## [1.1.0] - 2026-06-30
 
 ### Added
 
