@@ -159,7 +159,6 @@ pub fn finalize_crashed_session(path: &Path) -> io::Result<Option<CrashedSession
 
     let info = CrashedSessionInfo {
         trace_id: persisted.snapshot.trace_id.clone(),
-        has_session: true,
     };
 
     // Finalize: write with clean_shutdown = true so the next startup doesn't
@@ -179,7 +178,6 @@ pub fn finalize_crashed_session(path: &Path) -> io::Result<Option<CrashedSession
 #[derive(Debug, Clone)]
 pub struct CrashedSessionInfo {
     pub trace_id: Option<String>,
-    pub has_session: bool,
 }
 
 fn iso_now() -> String {
@@ -398,8 +396,7 @@ mod tests {
         // Finalize should detect the crash
         let info = finalize_crashed_session(&path).unwrap();
         assert!(info.is_some());
-        assert_eq!(info.as_ref().unwrap().trace_id.as_deref(), Some("crash001"));
-        assert!(info.unwrap().has_session);
+        assert_eq!(info.unwrap().trace_id.as_deref(), Some("crash001"));
 
         // After finalization, the file should have clean_shutdown = true
         let reloaded = read_persisted_session(&path).unwrap();

@@ -3,7 +3,6 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use serde::Deserialize;
 use tauri::{AppHandle, Manager, Runtime};
 
 use std::collections::BTreeMap;
@@ -42,7 +41,7 @@ impl DiagLog {
             path: Mutex::new(None),
         }
     }
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn set_path(&self, path: String) {
         if let Ok(mut guard) = self.path.lock() {
             if !path.is_empty() {
@@ -62,24 +61,13 @@ impl DiagLog {
             }
         }
     }
-
-    /// Append a privacy-safe diagnostic entry.
-    /// Only the specified safe fields are allowed.
-    pub fn append(&self, entry: DiagEntry) {
-        if let Ok(guard) = self.path.lock() {
-            if let Some(path) = guard.as_ref() {
-                if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-                    let _ = writeln!(file, "{}", entry.to_log_string());
-                }
-            }
-        }
-    }
 }
 
 /// A privacy-safe diagnostic entry containing only approved fields.
 /// This struct enforces at compile time that we cannot accidentally
 /// include sensitive data in diagnostics.
-#[derive(Debug, Clone, Deserialize)]
+#[cfg(test)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct DiagEntry {
     pub provider_name: String,
     pub model_name: String,
@@ -94,9 +82,9 @@ pub struct DiagEntry {
     pub error_code: Option<String>,
 }
 
+#[cfg(test)]
 impl DiagEntry {
     /// Create a new privacy-safe diagnostic entry.
-    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider_name: impl Into<String>,
@@ -162,11 +150,12 @@ impl DiagEntry {
 }
 
 /// Sanitize error codes for logging to ensure no sensitive data leaks.
+#[cfg(test)]
 fn sanitize_error_for_log(code: &str) -> String {
     // Redact any error codes that might contain secrets.
     // Uses the shared marker list from diag::report so new markers
     // are automatically checked everywhere.
-    if crate::diag::contains_secret_marker(code) {
+    if crate::diag::report::contains_secret_marker(code) {
         return "redacted".to_string();
     }
 
@@ -190,6 +179,7 @@ fn sanitize_error_for_log(code: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn chrono_now_iso() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let duration = SystemTime::now()
@@ -202,11 +192,6 @@ fn chrono_now_iso() -> String {
     let minutes = (secs % 3600) / 60;
     let seconds = secs % 60;
     format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
-}
-
-#[tauri::command]
-pub fn diag_log(diag: tauri::State<'_, DiagLog>, entry: DiagEntry) {
-    diag.append(entry);
 }
 
 /// Append a raw string line to the diagnostics log file.
@@ -528,26 +513,6 @@ mod tests {
     }
 
     #[test]
-    fn diag_log_writes_to_file() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("test_diag.log");
-        let path_str = path.to_str().unwrap().to_string();
-
-        let diag = DiagLog::new();
-        diag.set_path(path_str);
-
-        let entry = DiagEntry::new(
-            "groq", "whisper", "cloud", 1000, 500, 0, 0.5, false, None, 0, None,
-        );
-
-        diag.append(entry);
-
-        let content = fs::read_to_string(&path).unwrap();
-        assert!(content.contains("provider_name=groq"));
-        assert!(content.contains("model_name=whisper"));
-    }
-
-    #[test]
     fn diag_log_str_writes_to_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("test_diag_str.log");
@@ -563,21 +528,17 @@ mod tests {
     }
 
     #[test]
-    fn diag_log_ignores_empty_path() {
+    fn diag_log_str_ignores_empty_path() {
         let diag = DiagLog::new();
         diag.set_path("".to_string());
 
-        let entry = DiagEntry::new(
-            "groq", "whisper", "cloud", 1000, 500, 0, 0.5, false, None, 0, None,
-        );
-
         // Should not panic or write to default location
-        diag.append(entry);
+        diag.append_str("test message");
     }
 
     #[test]
     fn contains_secret_marker_catches_sk_prefix_and_api_key() {
-        use crate::diag::contains_secret_marker;
+        use crate::diag::report::contains_secret_marker;
 
         assert!(contains_secret_marker("sk_abcdef12"), "sk_ prefix");
         assert!(contains_secret_marker("sk-abcdef12"), "sk- prefix");

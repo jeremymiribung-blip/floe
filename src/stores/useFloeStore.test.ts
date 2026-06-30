@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import useFloeStore from "./useFloeStore";
+import useFloeStore, { deriveSetupState } from "./useFloeStore";
 import type { UpdateInfo } from "../types/app";
 
 // Helper: reset the store to its initial state before each test.
@@ -14,11 +14,13 @@ function resetStore() {
     apiKeyConfigured: false,
     apiKeyMaskedPreview: null,
     hotkey: null,
+    hotkeyRegistered: false,
     isSettingsOpen: false,
     isHotkeyCaptureActive: false,
     launchOnStartup: false,
     updateInfo: null,
     updateCheckInProgress: false,
+    lastStartupError: null,
   });
 }
 
@@ -203,5 +205,130 @@ describe("useFloeStore – update state", () => {
     expect(state.apiKey).toBe("gsk_test");
     expect(state.hotkey).toBe("Ctrl+Space");
     expect(state.status).toBe("idle"); // default
+  });
+});
+
+describe("useFloeStore – setup state derivation", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  // ── Pure helper ──────────────────────────────────────────────────────
+
+  it("deriveSetupState returns setup_groq when API key is not configured", () => {
+    expect(
+      deriveSetupState({
+        apiKeyConfigured: false,
+        hotkey: null,
+        hotkeyRegistered: false,
+      }),
+    ).toBe("setup_groq");
+  });
+
+  it("deriveSetupState returns setup_groq even when hotkey looks registered", () => {
+    expect(
+      deriveSetupState({
+        apiKeyConfigured: false,
+        hotkey: "Ctrl+Space",
+        hotkeyRegistered: true,
+      }),
+    ).toBe("setup_groq");
+  });
+
+  it("deriveSetupState returns setup_hotkey when key is configured but hotkey missing", () => {
+    expect(
+      deriveSetupState({
+        apiKeyConfigured: true,
+        hotkey: null,
+        hotkeyRegistered: false,
+      }),
+    ).toBe("setup_hotkey");
+  });
+
+  it("deriveSetupState returns setup_hotkey when hotkey is present but not registered", () => {
+    expect(
+      deriveSetupState({
+        apiKeyConfigured: true,
+        hotkey: "Ctrl+Space",
+        hotkeyRegistered: false,
+      }),
+    ).toBe("setup_hotkey");
+  });
+
+  it("deriveSetupState returns ready when both key and hotkey are configured", () => {
+    expect(
+      deriveSetupState({
+        apiKeyConfigured: true,
+        hotkey: "Ctrl+Space",
+        hotkeyRegistered: true,
+      }),
+    ).toBe("ready");
+  });
+
+  // ── Selector integration ────────────────────────────────────────────
+
+  it("deriveSetupState selector returns setup_groq by default", () => {
+    expect(useFloeStore.getState().deriveSetupState()).toBe("setup_groq");
+  });
+
+  it("deriveSetupState selector returns setup_hotkey once key is configured", () => {
+    useFloeStore.getState().setApiKeyStatus(true, "gsk_…****");
+    expect(useFloeStore.getState().deriveSetupState()).toBe("setup_hotkey");
+  });
+
+  it("deriveSetupState selector returns ready once hotkey is registered", () => {
+    useFloeStore.getState().setApiKeyStatus(true, "gsk_…****");
+    useFloeStore.getState().setHotkeyStatus("Ctrl+Space", true);
+    expect(useFloeStore.getState().deriveSetupState()).toBe("ready");
+  });
+
+  it("deriveSetupState selector returns setup_hotkey again if hotkey becomes unregistered", () => {
+    useFloeStore.getState().setApiKeyStatus(true, "gsk_…****");
+    useFloeStore.getState().setHotkeyStatus("Ctrl+Space", true);
+    expect(useFloeStore.getState().deriveSetupState()).toBe("ready");
+
+    // Regression: clearing hotkey or marking unregistered returns to setup_hotkey
+    useFloeStore.getState().setHotkeyStatus(null, false);
+    expect(useFloeStore.getState().deriveSetupState()).toBe("setup_hotkey");
+  });
+
+  it("deriveSetupState selector returns setup_groq again if API key is cleared", () => {
+    useFloeStore.getState().setApiKeyStatus(true, "gsk_…****");
+    useFloeStore.getState().setHotkeyStatus("Ctrl+Space", true);
+    expect(useFloeStore.getState().deriveSetupState()).toBe("ready");
+
+    useFloeStore.getState().setApiKeyStatus(false, null);
+    expect(useFloeStore.getState().deriveSetupState()).toBe("setup_groq");
+  });
+});
+
+describe("useFloeStore – setHotkeyStatus action", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it("updates hotkey and hotkeyRegistered atomically", () => {
+    useFloeStore.getState().setHotkeyStatus("Ctrl+Space", true);
+    const state = useFloeStore.getState();
+    expect(state.hotkey).toBe("Ctrl+Space");
+    expect(state.hotkeyRegistered).toBe(true);
+  });
+
+  it("accepts null hotkey with isRegistered false to indicate no hotkey", () => {
+    useFloeStore.getState().setHotkeyStatus("Ctrl+Space", true);
+    useFloeStore.getState().setHotkeyStatus(null, false);
+    const state = useFloeStore.getState();
+    expect(state.hotkey).toBeNull();
+    expect(state.hotkeyRegistered).toBe(false);
+  });
+
+  it("preserves unrelated store state", () => {
+    useFloeStore.getState().setApiKeyStatus(true, "gsk_…****");
+    useFloeStore.getState().setHotkeyStatus("Alt+Space", true);
+
+    const state = useFloeStore.getState();
+    expect(state.apiKeyConfigured).toBe(true);
+    expect(state.hotkey).toBe("Alt+Space");
+    expect(state.hotkeyRegistered).toBe(true);
   });
 });

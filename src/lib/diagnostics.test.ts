@@ -4,7 +4,6 @@ import {
   diagnosticsToJson,
   bottleneckFor,
   assertDiagnosticsSafe,
-  sanitizeDiagnosticCode,
   type PipelineDiagnosticsInput,
 } from "./diagnostics";
 import { assertNoForbiddenPatterns } from "./privacy";
@@ -41,13 +40,6 @@ function sampleInput(
       text: "Hello world",
       model: "whisper-large-v3-turbo",
       retryCount: 0,
-      sttProvider: {
-        providerName: "groq",
-        audioDurationMs: 1_500,
-        transcriptionMs: 800,
-        realtimeFactor: 0.533,
-        fallbackUsed: false,
-      },
     },
     sttError: null,
     cleanupDurationMs: 300,
@@ -93,14 +85,6 @@ describe("createPipelineDiagnostics", () => {
     // Models
     expect(diag.models.stt).toBe("whisper-large-v3-turbo");
     expect(diag.models.cleanup).toBe("llama-3.3-70b-versatile");
-
-    // STT provider
-    expect(diag.stt_provider.provider_name).toBe("groq");
-    expect(diag.stt_provider.audio_duration_ms).toBe(1_500);
-    expect(diag.stt_provider.transcription_ms).toBe(800);
-    expect(diag.stt_provider.realtime_factor).toBeCloseTo(0.533, 3);
-    expect(diag.stt_provider.fallback_used).toBe(false);
-    expect(diag.stt_provider.error_code).toBeNull();
 
     // Audio
     expect(diag.audio.format).toBe("wav");
@@ -219,7 +203,6 @@ describe("createPipelineDiagnostics", () => {
     expect(parsed.pipeline.total_ms).toBe(2_737);
     expect(parsed.models.stt).toBe("whisper-large-v3-turbo");
     expect(parsed.models.cleanup).toBe("llama-3.3-70b-versatile");
-    expect(parsed.stt_provider.provider_name).toBe("groq");
     expect(parsed.result.stt_success).toBe(true);
     expect(parsed.result.cleanup_success).toBe(true);
     expect(parsed.bottleneck.stage).toBe("stt");
@@ -300,57 +283,6 @@ describe("bottleneckFor", () => {
   });
 });
 
-describe("sanitizeDiagnosticCode", () => {
-  it("passes through safe codes", () => {
-    expect(sanitizeDiagnosticCode("timeout")).toBe("timeout");
-    expect(sanitizeDiagnosticCode("server_error")).toBe("server_error");
-    expect(sanitizeDiagnosticCode("rate_limit")).toBe("rate_limit");
-    expect(sanitizeDiagnosticCode("noInputDevice")).toBe("noinputdevice");
-    expect(sanitizeDiagnosticCode("emptyAudio")).toBe("emptyaudio");
-  });
-
-  it("returns null for null/undefined/empty", () => {
-    expect(sanitizeDiagnosticCode(null)).toBeNull();
-    expect(sanitizeDiagnosticCode(undefined)).toBeNull();
-    expect(sanitizeDiagnosticCode("")).toBeNull();
-  });
-
-  it("returns 'internal' for bearer tokens", () => {
-    expect(sanitizeDiagnosticCode("Bearer gsk_abc123")).toBe("internal");
-  });
-
-  it("returns 'internal' for authorization headers", () => {
-    expect(sanitizeDiagnosticCode("Authorization: Bearer xyz")).toBe(
-      "internal",
-    );
-  });
-
-  it("returns 'internal' for groq API keys", () => {
-    expect(sanitizeDiagnosticCode("gsk_abc123")).toBe("internal");
-  });
-
-  it("returns 'internal' for OpenAI-style keys with sk_", () => {
-    expect(sanitizeDiagnosticCode("sk_proj_abc123")).toBe("internal");
-  });
-
-  it("returns 'internal' for api_key patterns", () => {
-    expect(sanitizeDiagnosticCode("api_key=secret")).toBe("internal");
-    expect(sanitizeDiagnosticCode("api-key=secret")).toBe("internal");
-  });
-
-  it("returns 'internal' for overly long codes", () => {
-    expect(sanitizeDiagnosticCode("a".repeat(65))).toBe("internal");
-  });
-
-  it("replaces special characters with underscores", () => {
-    const result = sanitizeDiagnosticCode("error: timeout!");
-    expect(result).toBe("error__timeout_");
-    // Should not contain the original special characters
-    expect(result).not.toContain(":");
-    expect(result).not.toContain("!");
-  });
-});
-
 describe("assertDiagnosticsSafe", () => {
   it("accepts a clean diagnostics object", () => {
     const diag = createPipelineDiagnostics(sampleInput());
@@ -376,34 +308,6 @@ describe("assertDiagnosticsSafe", () => {
     expect(() => assertNoForbiddenPatterns(dirtyJson)).toThrow(
       /forbidden pattern/i,
     );
-  });
-});
-
-describe("createPipelineDiagnostics - stt error codes", () => {
-  it("captures error code from sttError when stt is null", () => {
-    const input = sampleInput({
-      stt: null,
-      sttError: {
-        domain: "stt",
-        code: "emptyAudio",
-        message: "No audio recorded",
-        sttProvider: {
-          providerName: "groq",
-          audioDurationMs: 0,
-          transcriptionMs: 0,
-          realtimeFactor: 0,
-          fallbackUsed: false,
-          errorCode: "emptyAudio",
-        },
-      },
-      errorStage: "stt",
-      sanitizedErrorCode: "emptyaudio",
-    });
-    const diag = createPipelineDiagnostics(input);
-
-    expect(diag.stt_provider.error_code).toBe("emptyaudio");
-    expect(diag.stt_provider.provider_name).toBe("groq");
-    expect(diag.stt_provider.audio_duration_ms).toBe(0);
   });
 });
 

@@ -1,7 +1,7 @@
 import type { ClipboardError } from "../types/app";
 
-export const CLIPBOARD_UNAVAILABLE = "Clipboard unavailable";
-export const PASTE_FAILED = "Paste failed";
+const CLIPBOARD_UNAVAILABLE = "Clipboard access unavailable";
+const PASTE_FAILED = "Failed to paste from clipboard";
 
 export function clipboardErrorMessage(caught: unknown): string {
   const clipboardError = caught as Partial<ClipboardError>;

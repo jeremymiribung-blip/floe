@@ -8,12 +8,10 @@ pub mod tracer;
 pub use context::PipelineContext;
 pub use event::DiagEvent;
 pub use logger::init;
-#[allow(unused_imports)]
 pub use report::{
-    contains_secret_marker, rate_limit_to_map, redact_string_for_report, AudioSnapshot,
-    DetailedEvent, DiagnosticsReport, HotkeySnapshot, LastError, LastSession, PlatformInfo,
-    ProviderState, RateLimitSnapshot, RecoveryAction, ReportInputs, SessionSnapshot,
-    SettingsSnapshot, StageRecord, StageStatus, SttProviderSnapshot, REPORT_SCHEMA_VERSION,
+    rate_limit_to_map, AudioSnapshot, DetailedEvent, DiagnosticsReport,
+    HotkeySnapshot, LastError, PlatformInfo, RateLimitSnapshot, RecoveryAction, ReportInputs,
+    SessionSnapshot, SettingsSnapshot, SttProviderSnapshot,
 };
 pub use storage::{default_diag_path, default_session_path, finalize_crashed_session};
 pub use tracer::{PipelineTrace, PipelineTracer};
@@ -47,7 +45,6 @@ impl Default for LastSessionStore {
     }
 }
 
-#[allow(dead_code)]
 impl LastSessionStore {
     pub fn new() -> Self {
         Self::default()
@@ -152,14 +149,6 @@ impl LastSessionStore {
         }
     }
 
-    /// Check whether a previously-persisted session exists on disk.
-    pub fn has_persisted_session(&self) -> bool {
-        self.persist_path()
-            .as_ref()
-            .map(|p| p.exists())
-            .unwrap_or(false)
-    }
-
     pub fn set(&self, snapshot: SessionSnapshot) {
         if let Ok(mut guard) = self.inner.lock() {
             *guard = Some(snapshot);
@@ -177,16 +166,6 @@ impl LastSessionStore {
 
     pub fn get(&self) -> Option<SessionSnapshot> {
         self.inner.lock().ok().and_then(|g| g.clone())
-    }
-
-    pub fn clear(&self) {
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = None;
-        }
-        // Delete the on-disk file as well.
-        if let Some(path) = self.persist_path() {
-            let _ = storage::delete_persisted_session(&path);
-        }
     }
 
     /// Append a DetailedEvent from the frontend into the current session's

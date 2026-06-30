@@ -7,6 +7,7 @@ import {
   installUpdate,
   resetUpdateState,
 } from "../lib/tauri";
+import { logCritical, errorMessage } from "../lib/errorLog";
 import useFloeStore from "../stores/useFloeStore";
 import { cn } from "../lib/utils";
 import type { UpdateInfo } from "../types/app";
@@ -93,6 +94,37 @@ function friendlyError(
   return { title: "Update error", detail: rawMessage };
 }
 
+/** Extract message + code from a thrown backend error. */
+function readBackendError(err: unknown): { message: string; code?: string } {
+  if (err && typeof err === "object" && "message" in err) {
+    const payload = err as { message: unknown; code?: unknown };
+    const message =
+      typeof payload.message === "string"
+        ? payload.message
+        : errorMessage(err);
+    const code = typeof payload.code === "string" ? payload.code : undefined;
+    return { message, code };
+  }
+  return { message: errorMessage(err) };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function errorUpdateInfo(
+  currentVersion: string | undefined,
+  latestVersion: string | null | undefined,
+  fallbackMessage: string,
+): UpdateInfo {
+  return {
+    currentVersion: currentVersion ?? "1.0.0",
+    latestVersion: latestVersion ?? null,
+    status: "error",
+    downloadProgress: 0,
+    lastCheckResult: null,
+    errorMessage: fallbackMessage,
+  };
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function UpdateSection() {
@@ -110,20 +142,11 @@ export default function UpdateSection() {
       const info = await checkForUpdate();
       setUpdateInfo(info);
     } catch (err: unknown) {
-      // The backend returns UpdateError when status is Error.
-      // We capture the raw error and set it via a synthetic UpdateInfo.
-      const errorPayload =
-        err && typeof err === "object" && "message" in err
-          ? (err as { message: string; code?: string })
-          : null;
-      setUpdateInfo({
-        currentVersion: updateInfo?.currentVersion ?? "1.0.0",
-        latestVersion: null,
-        status: "error",
-        downloadProgress: 0,
-        lastCheckResult: null,
-        errorMessage: errorPayload?.message ?? "Update check failed.",
-      } as UpdateInfo);
+      logCritical("update checkForUpdate", err);
+      const { message } = readBackendError(err);
+      setUpdateInfo(
+        errorUpdateInfo(updateInfo?.currentVersion, null, message || "Update check failed."),
+      );
     }
   }, [setUpdateInfo, setUpdateCheckInProgress, updateInfo?.currentVersion]);
 
@@ -133,35 +156,43 @@ export default function UpdateSection() {
       const info = await downloadUpdate();
       setUpdateInfo(info);
     } catch (err: unknown) {
-      const errorPayload =
-        err && typeof err === "object" && "message" in err
-          ? (err as { message: string; code?: string })
-          : null;
-      setUpdateInfo({
-        currentVersion: updateInfo?.currentVersion ?? "1.0.0",
-        latestVersion: updateInfo?.latestVersion ?? null,
-        status: "error",
-        downloadProgress: 0,
-        lastCheckResult: null,
-        errorMessage: errorPayload?.message ?? "Download failed.",
-      } as UpdateInfo);
+      logCritical("update downloadUpdate", err);
+      const { message } = readBackendError(err);
+      setUpdateInfo(
+        errorUpdateInfo(updateInfo?.currentVersion, updateInfo?.latestVersion, message || "Download failed."),
+      );
     }
   }, [setUpdateInfo, updateInfo]);
 
-  const handleInstallUpdate = useCallback(() => {
+  const handleInstallUpdate = useCallback(async () => {
     if (!isTauriRuntime()) return;
-    installUpdate().catch((err) =>
-      console.error("installUpdate failed:", err),
-    );
-  }, []);
+    try {
+      await installUpdate();
+    } catch (err: unknown) {
+      logCritical("update installUpdate", err);
+      const { message } = readBackendError(err);
+      setUpdateInfo(
+        errorUpdateInfo(updateInfo?.currentVersion, updateInfo?.latestVersion, message || "Installation failed."),
+      );
+    }
+  }, [setUpdateInfo, updateInfo?.currentVersion, updateInfo?.latestVersion]);
 
-  const handleDismiss = useCallback(() => {
-    if (!isTauriRuntime()) return;
-    resetUpdateState().catch((err) =>
-      console.error("resetUpdateState failed:", err),
-    );
-    setUpdateInfo(null);
-  }, [setUpdateInfo]);
+  const handleDismiss = useCallback(async () => {
+    if (!isTauriRuntime()) {
+      setUpdateInfo(null);
+      return;
+    }
+    try {
+      await resetUpdateState();
+      setUpdateInfo(null);
+    } catch (err: unknown) {
+      logCritical("update resetUpdateState", err);
+      const { message } = readBackendError(err);
+      setUpdateInfo(
+        errorUpdateInfo(updateInfo?.currentVersion, updateInfo?.latestVersion, message || "Could not dismiss update."),
+      );
+    }
+  }, [setUpdateInfo, updateInfo?.currentVersion, updateInfo?.latestVersion]);
 
   const status = updateInfo?.status;
 

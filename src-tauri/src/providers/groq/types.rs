@@ -2,7 +2,7 @@ use crate::providers::cleanup::RateLimitMetadata;
 use serde::Serialize;
 
 pub const GROQ_STT_MODEL: &str = "whisper-large-v3-turbo";
-pub const GROQ_CLEANUP_MODEL: &str = "llama-3.3-70b-versatile";
+pub const GROQ_CLEANUP_MODEL: &str = "qwen/qwen3.6-27b";
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -41,19 +41,6 @@ pub enum GroqTranscriptionErrorCode {
     ServerError,
 }
 
-impl GroqTranscriptionError {
-    #[allow(dead_code)]
-    pub fn new(code: GroqTranscriptionErrorCode, message: &'static str) -> Self {
-        Self {
-            domain: "stt",
-            code,
-            message: message.to_string(),
-            model: GROQ_STT_MODEL.to_string(),
-            retry_count: 0,
-            rate_limit: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -100,17 +87,4 @@ pub enum GroqCleanupErrorCode {
     ServerError,
 }
 
-impl GroqCleanupError {
-    #[allow(dead_code)]
-    pub fn new(code: GroqCleanupErrorCode, message: &'static str) -> Self {
-        Self {
-            domain: "cleanup",
-            code,
-            message: message.to_string(),
-            model: GROQ_CLEANUP_MODEL.to_string(),
-            retry_count: 0,
-            validation_ms: 0,
-            rate_limit: None,
-        }
-    }
-}
+

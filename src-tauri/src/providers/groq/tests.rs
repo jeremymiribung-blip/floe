@@ -398,7 +398,7 @@ async fn cleanup_successful_request_sends_expected_payload() {
 }
 
 #[tokio::test]
-async fn cleanup_request_uses_llama_3_3_and_sends_no_unsupported_parameters() {
+async fn cleanup_request_uses_qwen_and_sends_no_unsupported_parameters() {
     let server = MockServer::start(vec![MockResponse::json(
         200,
         r#"{"choices":[{"message":{"content":"Cleaned."}}]}"#,
@@ -410,8 +410,7 @@ async fn cleanup_request_uses_llama_3_3_and_sends_no_unsupported_parameters() {
         .await
         .expect("cleanup should succeed");
 
-    assert_eq!(result.model, "llama-3.3-70b-versatile");
-    assert_eq!(GROQ_CLEANUP_MODEL, "llama-3.3-70b-versatile");
+    assert_eq!(result.model, GROQ_CLEANUP_MODEL);
 
     let request = server.requests()[0].clone();
     let body = extract_request_body(&request);
@@ -419,10 +418,9 @@ async fn cleanup_request_uses_llama_3_3_and_sends_no_unsupported_parameters() {
     assert!(!body_lower.contains("gpt-oss"));
     assert!(!body_lower.contains("reasoning_effort"));
     assert!(!body_lower.contains("\"reasoning\""));
-    assert!(!body_lower.contains("qwen"));
     assert!(body.contains(r#""temperature":0"#));
     assert!(body_lower.contains("\"max_tokens\":64"));
-    assert!(body.contains(r#""model":"llama-3.3-70b-versatile""#));
+    assert!(body.contains(r#""model":"qwen/qwen3.6-27b""#));
 }
 
 #[tokio::test]

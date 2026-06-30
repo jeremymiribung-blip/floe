@@ -24,6 +24,7 @@ import {
   stopRecording,
   transcribeLatestRecording,
 } from "../lib/tauri";
+import { logRecoverable, logCritical, errorMessage } from "../lib/errorLog";
 import {
   EVENT_HOTKEY_STATE,
   EVENT_RECORDING_STATE_CHANGED,
@@ -112,10 +113,14 @@ export function usePushToTalk(): UsePushToTalkResult {
             if (isTauriRuntime()) {
               getCurrentWindow()
                 .show()
-                .catch(() => {});
+                .catch((err) =>
+                  logRecoverable("preview show main window", err),
+                );
               getCurrentWindow()
                 .setFocus()
-                .catch(() => {});
+                .catch((err) =>
+                  logRecoverable("preview focus main window", err),
+                );
             }
           }
         },
@@ -140,9 +145,10 @@ export function usePushToTalk(): UsePushToTalkResult {
 
       try {
         await controllerRef.current?.handleShortcutState(state);
-      } catch {
+      } catch (err) {
+        logCritical("hotkey handleShortcutState", err);
         setAppState("error");
-        setError("Recording failed");
+        setError(pushToTalkErrorMessage(err));
         void bubbleHide();
       }
     },
@@ -169,9 +175,12 @@ export function usePushToTalk(): UsePushToTalkResult {
           nextUnlisten();
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        logCritical("listen hotkey events", err);
         if (isActive) {
-          setError("Floe could not listen for the global hotkey.");
+          setError(
+            `Floe could not listen for the global hotkey: ${errorMessage(err)}`,
+          );
           void bubbleHide();
         }
       });
@@ -206,7 +215,6 @@ export function usePushToTalk(): UsePushToTalkResult {
         void getRecordingStatus().then((status) => {
           const lastError = status.lastError;
           if (lastError) {
-            // Check for Internal error - indicates hardware reset
             if (lastError.code === "internal") {
               setError("Hardware error: Recording reset");
             } else {
@@ -229,9 +237,12 @@ export function usePushToTalk(): UsePushToTalkResult {
           nextUnlisten();
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        logCritical("listen recording state changes", err);
         if (isActive) {
-          setError("Floe could not listen for recording state changes.");
+          setError(
+            `Floe could not listen for recording state changes: ${errorMessage(err)}`,
+          );
         }
       });
 

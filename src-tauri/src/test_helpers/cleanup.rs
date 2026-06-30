@@ -2,6 +2,8 @@ use async_trait::async_trait;
 
 use crate::providers::cleanup::{CleanupError, CleanupProvider, CleanupSuccess};
 
+const MOCK_CLEANUP_MODEL: &str = "qwen/qwen3.6-27b";
+
 pub struct FakeCleanupProvider {
     response_text: String,
     fail: bool,
@@ -28,11 +30,7 @@ impl FakeCleanupProvider {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn with_latency(mut self, ms: u64) -> Self {
-        self.latency_ms = ms;
-        self
-    }
+
 }
 
 #[async_trait]
@@ -48,7 +46,7 @@ impl CleanupProvider for FakeCleanupProvider {
         if self.fail {
             return Err(CleanupError {
                 message: "fake cleanup failed".to_string(),
-                model: "llama-3.3-70b-versatile".to_string(),
+                model: MOCK_CLEANUP_MODEL.to_string(),
                 retry_count: 0,
                 validation_ms: 0,
                 rate_limit: None,
@@ -57,7 +55,7 @@ impl CleanupProvider for FakeCleanupProvider {
         }
         Ok(CleanupSuccess {
             text: self.response_text.clone(),
-            model: "llama-3.3-70b-versatile".to_string(),
+            model: MOCK_CLEANUP_MODEL.to_string(),
             retry_count: 0,
             validation_ms: 0,
             rate_limit: None,

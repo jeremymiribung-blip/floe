@@ -19,12 +19,6 @@ export interface RecordingStatePayload {
   isRecording: boolean;
 }
 
-export interface AppStatus {
-  appName: "Floe";
-  status: "setup_only";
-  message: string;
-}
-
 export interface ApiKeyStatus {
   configured: boolean;
   maskedPreview: string | null;
@@ -77,10 +71,6 @@ export interface AudioDevice {
   name: string;
 }
 
-export interface GlobalHotkeyEvent {
-  state: "Pressed" | "Released";
-}
-
 export interface SettingsError {
   domain: "settings";
   code:
@@ -88,11 +78,6 @@ export interface SettingsError {
     | "invalidAppSettings"
     | "secretStoreUnavailable"
     | "appSettingsUnavailable";
-  message: string;
-}
-
-export interface ManualTestResult {
-  action: string;
   message: string;
 }
 
@@ -170,21 +155,11 @@ export type SttErrorCode =
   | "emptyAudio"
   | "serverError";
 
-export interface SttProviderDiagnostics {
-  providerName: string;
-  audioDurationMs: number;
-  transcriptionMs: number;
-  realtimeFactor: number;
-  fallbackUsed: boolean;
-  errorCode?: string;
-}
-
 export interface SttResult {
   text: string;
   model: string;
   retryCount: number;
   rateLimit?: RateLimitMetadata;
-  sttProvider?: SttProviderDiagnostics;
 }
 
 export interface SttError {
@@ -194,7 +169,6 @@ export interface SttError {
   model?: string;
   retryCount?: number;
   rateLimit?: RateLimitMetadata;
-  sttProvider?: SttProviderDiagnostics;
 }
 
 export interface TranscriptCleanupResult {
@@ -218,13 +192,20 @@ export interface RateLimitMetadata {
 
 export type ClipboardErrorCode = "clipboardUnavailable" | "pasteUnavailable";
 
+export interface InternalError {
+  domain: "internal";
+  code: string;
+  message: string;
+}
+
 export type FloeError =
   | SettingsError
   | HotkeyError
   | RecordingError
   | SttError
   | ClipboardError
-  | StartAtLoginError;
+  | StartAtLoginError
+  | InternalError;
 
 export interface ClipboardError {
   domain: "clipboard";

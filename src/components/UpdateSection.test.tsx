@@ -18,6 +18,7 @@ vi.mock("../lib/tauri", () => ({
   downloadUpdate: (...args: unknown[]) => mockDownloadUpdate(...args),
   installUpdate: (...args: unknown[]) => mockInstallUpdate(...args),
   resetUpdateState: (...args: unknown[]) => mockResetUpdateState(...args),
+  diagLog: vi.fn(),
 }));
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -330,5 +331,52 @@ describe("UpdateSection", () => {
     renderUpdateSection();
 
     expect(screen.getByText("Update error")).toBeDefined();
+  });
+
+  // ── Install failure visibility ─────────────────────────────────────
+
+  it("surfaces installUpdate failures into UpdateInfo status error", async () => {
+    mockInstallUpdate.mockRejectedValueOnce({
+      message: "Installer could not be launched",
+      code: "installFailed",
+    });
+    setStoreState({
+      updateInfo: makeInfo({ status: "downloaded", latestVersion: "v0.2.0" }),
+    });
+    renderUpdateSection();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Restart to update"));
+
+    await vi.waitFor(() => {
+      const state = useFloeStore.getState();
+      expect(state.updateInfo?.status).toBe("error");
+      expect(state.updateInfo?.errorMessage).toContain(
+        "Installer could not be launched",
+      );
+    });
+  });
+
+  // ── Dismiss failure visibility ─────────────────────────────────────
+
+  it("surfaces resetUpdateState failures into UpdateInfo status error", async () => {
+    mockResetUpdateState.mockRejectedValueOnce(
+      new Error("could not reset update state"),
+    );
+    setStoreState({
+      updateInfo: makeInfo({ status: "available", latestVersion: "v0.2.0" }),
+    });
+    renderUpdateSection();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Dismiss"));
+
+    await vi.waitFor(() => {
+      const state = useFloeStore.getState();
+      expect(state.updateInfo?.status).toBe("error");
+      expect(state.updateInfo?.errorMessage).toContain(
+        "could not reset update state",
+      );
+    });
   });
 });

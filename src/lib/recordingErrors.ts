@@ -1,17 +1,12 @@
 import type { RecordingError } from "../types/app";
 
-export const RECORDING_ALREADY_ACTIVE = "Recording already active";
-export const RECORDING_TOO_SHORT = "Recording too short";
-export const NO_INPUT_DEVICE = "No active microphone found. Please check your connections.";
-
-export const PERMISSION_DENIED_MACOS =
-  "Microphone access denied. Please allow Floe in System Settings > Privacy & Security > Microphone.";
-export const PERMISSION_DENIED_WINDOWS =
-  "Microphone access denied. Please enable it in Windows Settings > Privacy > Microphone.";
-export const PERMISSION_DENIED_LINUX =
-  "Please check your system microphone permissions.";
-export const PERMISSION_DENIED_FALLBACK =
-  "Microphone access was denied. Please check your system privacy settings.";
+const RECORDING_ALREADY_ACTIVE = "Recording is already active";
+const NO_INPUT_DEVICE = "No microphone found";
+const RECORDING_TOO_SHORT = "Recording too short";
+const PERMISSION_DENIED_FALLBACK = "Microphone access denied";
+const PERMISSION_DENIED_MACOS = "Open System Settings > Privacy & Security > Microphone";
+const PERMISSION_DENIED_WINDOWS = "Go to Settings > Privacy & Security > Microphone";
+const PERMISSION_DENIED_LINUX = "Check your system sound settings to enable microphone access";
 
 const MICROPHONE_UNAVAILABLE_CODES: ReadonlySet<RecordingError["code"]> =
   new Set([

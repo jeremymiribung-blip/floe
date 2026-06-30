@@ -242,35 +242,6 @@ body {
 }
 
 /* ── Base utility classes for dense inputs/buttons ───────── */
-.floe-input-base {
-  height: 44px;
-  padding-inline: 16px;
-  font-size: 13px;
-  letter-spacing: 0;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid var(--floe-border-subtle);
-  border-radius: var(--floe-radius-md);
-  color: var(--floe-text-primary);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: var(--floe-shadow-inner-card);
-  transition:
-    border-color 0.2s ease,
-    box-shadow 0.2s ease,
-    background-color 0.2s ease;
-}
-
-.floe-input-base::placeholder {
-  color: var(--floe-text-muted);
-}
-
-.floe-input-base:focus {
-  outline: none;
-  border-color: var(--floe-border-focus);
-  background: rgba(124, 154, 146, 0.05);
-  box-shadow: var(--floe-shadow-focus-outer);
-}
-
 .floe-button-base {
   height: 36px;
   padding-inline: 16px;
@@ -312,15 +283,6 @@ body {
 }
 
 /* ── Glassmorphism card ──────────────────────────────────── */
-.floe-card {
-  background: var(--floe-surface-muted);
-  border: 1px solid var(--floe-border-subtle);
-  border-radius: var(--floe-radius-xl);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow: var(--floe-shadow-soft), var(--floe-shadow-inner-card);
-}
-
 .floe-card-elevated {
   background: var(--floe-surface-muted);
   border: 1px solid var(--floe-border-subtle);

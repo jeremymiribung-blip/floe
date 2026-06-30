@@ -91,7 +91,6 @@ export function emptyDiagnosticsReport(
       stage_summary: {},
       stages: {},
       audio: null,
-      stt_provider: null,
       recovery_actions: [],
       rate_limit: null,
       retries: { stt: 0, cleanup: 0 },

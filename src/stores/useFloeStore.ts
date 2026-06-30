@@ -23,6 +23,8 @@ function appStateToFloeStatus(state: AppState): FloeStatus {
   }
 }
 
+export type SetupState = "setup_groq" | "setup_hotkey" | "ready";
+
 export interface FloeState {
   /* ── State ─────────────────────────────────────────────── */
   status: FloeStatus;
@@ -32,6 +34,7 @@ export interface FloeState {
   apiKeyConfigured: boolean;
   apiKeyMaskedPreview: string | null;
   hotkey: string | null;
+  hotkeyRegistered: boolean;
   isSettingsOpen: boolean;
   isHotkeyCaptureActive: boolean;
   launchOnStartup: boolean;
@@ -43,6 +46,9 @@ export interface FloeState {
   updateInfo: UpdateInfo | null;
   updateCheckInProgress: boolean;
 
+  /* ── Startup state ─────────────────────────────────────── */
+  lastStartupError: string | null;
+
   /* ── Actions ───────────────────────────────────────────── */
   syncFromPipeline: (appState: AppState) => void;
   setRecordingStartedAt: (startedAt: number | null) => void;
@@ -53,6 +59,7 @@ export interface FloeState {
   setApiKey: (apiKey: string) => void;
   setApiKeyStatus: (configured: boolean, maskedPreview: string | null) => void;
   setHotkey: (hotkey: string) => void;
+  setHotkeyStatus: (hotkey: string | null, isRegistered: boolean) => void;
   openSettings: () => void;
   closeSettings: () => void;
   toggleSettings: () => void;
@@ -64,11 +71,23 @@ export interface FloeState {
   setSkipCleanup: (skipCleanup: boolean) => void;
   setUpdateInfo: (info: UpdateInfo | null) => void;
   setUpdateCheckInProgress: (inProgress: boolean) => void;
+  setLastStartupError: (message: string | null) => void;
 
   /* ── Derived selectors ─────────────────────────────────── */
   isIdle: () => boolean;
   isRecording: () => boolean;
   isProcessing: () => boolean;
+  deriveSetupState: () => SetupState;
+}
+
+export function deriveSetupState(state: {
+  apiKeyConfigured: boolean;
+  hotkey: string | null;
+  hotkeyRegistered: boolean;
+}): SetupState {
+  if (!state.apiKeyConfigured) return "setup_groq";
+  if (!state.hotkey || !state.hotkeyRegistered) return "setup_hotkey";
+  return "ready";
 }
 
 const useFloeStore = create<FloeState>()((set, get) => ({
@@ -80,6 +99,7 @@ const useFloeStore = create<FloeState>()((set, get) => ({
   apiKeyConfigured: false,
   apiKeyMaskedPreview: null,
   hotkey: null,
+  hotkeyRegistered: false,
   isSettingsOpen: false,
   launchOnStartup: false,
   isHotkeyCaptureActive: false,
@@ -88,6 +108,7 @@ const useFloeStore = create<FloeState>()((set, get) => ({
   skipCleanup: false,
   updateInfo: null,
   updateCheckInProgress: false,
+  lastStartupError: null,
 
   /* ── Pipeline-synced actions ──────────────────────────── */
   syncFromPipeline: (appState: AppState) =>
@@ -142,6 +163,8 @@ const useFloeStore = create<FloeState>()((set, get) => ({
   setApiKeyStatus: (configured, maskedPreview) =>
     set({ apiKeyConfigured: configured, apiKeyMaskedPreview: maskedPreview }),
   setHotkey: (hotkey: string) => set({ hotkey }),
+  setHotkeyStatus: (hotkey, isRegistered) =>
+    set({ hotkey, hotkeyRegistered: isRegistered }),
 
   /* ── UI actions ────────────────────────────────────────── */
   openSettings: () => set({ isSettingsOpen: true }),
@@ -166,10 +189,21 @@ const useFloeStore = create<FloeState>()((set, get) => ({
   setUpdateCheckInProgress: (inProgress: boolean) =>
     set({ updateCheckInProgress: inProgress }),
 
+  setLastStartupError: (lastStartupError: string | null) =>
+    set({ lastStartupError }),
+
   /* ── Derived selectors (computed booleans) ────────────── */
   isIdle: () => get().status === "idle",
   isRecording: () => get().status === "recording",
   isProcessing: () => get().status === "processing",
+  deriveSetupState: () => {
+    const s = get();
+    return deriveSetupState({
+      apiKeyConfigured: s.apiKeyConfigured,
+      hotkey: s.hotkey,
+      hotkeyRegistered: s.hotkeyRegistered,
+    });
+  },
 }));
 
 export default useFloeStore;

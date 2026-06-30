@@ -60,39 +60,6 @@ export const FORBIDDEN_PATTERNS: ReadonlyArray<{
   },
 ];
 
-export function redactValue(value: string): string {
-  const lowered = value.toLowerCase();
-
-  if (
-    lowered.includes("...") ||
-    lowered.includes("…") ||
-    lowered.includes("****")
-  ) {
-    return value;
-  }
-
-  for (const marker of [
-    "bearer ",
-    "bearer",
-    "authorization",
-    "api_key",
-    "api-key",
-    "apikey",
-    "gsk_",
-    "sk-",
-    "sk_",
-    "clipboard_text",
-    "transcript",
-    "raw_audio",
-    "audio_bytes",
-  ]) {
-    if (lowered.includes(marker)) {
-      return "redacted";
-    }
-  }
-  return value;
-}
-
 export function assertNoForbiddenKeys(value: unknown, path: string): void {
   if (value === null || value === undefined) {
     return;

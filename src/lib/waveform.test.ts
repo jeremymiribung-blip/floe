@@ -3,7 +3,6 @@ import {
   appendWaveformSample,
   createSilentWaveformBuffer,
   levelToBarRatio,
-  smoothWaveformInput,
   WAVEFORM_BUCKET_MS,
   WAVEFORM_SAMPLE_COUNT,
 } from "./waveform";
@@ -57,11 +56,4 @@ describe("waveform helpers", () => {
     expect(silent).toBeLessThan(0.2);
   });
 
-  it("smooths rising input faster than falling input", () => {
-    const rising = smoothWaveformInput(0, 1);
-    const falling = smoothWaveformInput(1, 0);
-
-    expect(rising).toBeGreaterThan(0.5);
-    expect(falling).toBeGreaterThan(0.8);
-  });
 });

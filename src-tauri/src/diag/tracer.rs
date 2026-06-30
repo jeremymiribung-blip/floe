@@ -38,7 +38,7 @@ impl PipelineTracer {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn push(&self, trace: PipelineTrace) {
         if let Ok(mut traces) = self.traces.lock() {
             if traces.len() >= self.max_traces {
@@ -57,7 +57,7 @@ impl PipelineTracer {
             .unwrap_or_default()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn clear(&self) {
         if let Ok(mut traces) = self.traces.lock() {
             traces.clear();
@@ -65,7 +65,7 @@ impl PipelineTracer {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 fn iso_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let d = SystemTime::now()
@@ -112,16 +112,16 @@ fn iso_now() -> String {
     )
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 const NORMAL_MONTH_DAYS: [i64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-#[allow(dead_code)]
+#[cfg(test)]
 const LEAP_MONTH_DAYS: [i64; 12] = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-#[allow(dead_code)]
+#[cfg(test)]
 fn is_leap(year: i64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn build_trace(
     trace_id: String,
     stages: Vec<StageRecord>,
@@ -137,7 +137,7 @@ pub fn build_trace(
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn build_stage(
     stage: impl Into<String>,
     duration_ms: u64,

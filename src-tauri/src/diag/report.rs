@@ -179,8 +179,8 @@ impl Default for StageRecord {
     }
 }
 
-#[allow(dead_code)]
 impl StageRecord {
+    #[cfg(test)]
     pub fn skipped(reason: impl Into<String>) -> Self {
         Self {
             status: StageStatus::Skipped,
@@ -371,7 +371,6 @@ pub struct SessionSnapshot {
     pub last_error: Option<LastError>,
     pub recording_started_at_unix_ms: Option<u64>,
     pub recording_ended_at_unix_ms: Option<u64>,
-    #[allow(dead_code)]
     pub detailed_timeline: Vec<DetailedEvent>,
 }
 
@@ -870,7 +869,7 @@ pub fn contains_secret_marker(value: &str) -> bool {
 
 /// Redact free-form text fields before they enter the report.
 /// Returns the original string when it is safe; otherwise returns `"redacted"`.
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn redact_string_for_report(value: &str) -> String {
     redact_string(value)
 }
@@ -1042,7 +1041,7 @@ mod tests {
             stt_model: Some("whisper-large-v3-turbo".into()),
             cleanup_ms: 300,
             cleanup_validation_ms: 12,
-            cleanup_model: Some("llama-3.3-70b-versatile".into()),
+            cleanup_model: Some("qwen/qwen3.6-27b".into()),
             clipboard_ms: 8,
             paste_ms: 80,
             pipeline_total_ms: Some(2_737),

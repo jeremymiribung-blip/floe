@@ -34,15 +34,6 @@ export function levelToBarRatio(level: number): number {
   return MIN_BAR_RATIO + (MAX_BAR_RATIO - MIN_BAR_RATIO) * shaped;
 }
 
-export function smoothWaveformInput(previous: number, next: number): number {
-  const normalizedPrevious = clamp01(previous);
-  const normalizedNext = clamp01(next);
-  const coefficient = normalizedNext > normalizedPrevious ? 0.55 : 0.16;
-  return clamp01(
-    normalizedPrevious + (normalizedNext - normalizedPrevious) * coefficient,
-  );
-}
-
 export function clamp01(value: number): number {
   if (Number.isNaN(value) || !Number.isFinite(value)) {
     return 0;

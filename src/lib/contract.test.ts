@@ -1,36 +1,26 @@
 import { describe, it, expect } from "vitest";
-import {
-  CMD_SAVE_API_KEY,
-  CMD_CLEAR_API_KEY,
-  CMD_GET_API_KEY_STATUS,
-  CMD_GET_HOTKEY_SETTINGS,
-  CMD_SET_HOTKEY,
-  CMD_RESET_HOTKEY_TO_DEFAULT,
-  CMD_GET_START_AT_LOGIN_STATUS,
-  CMD_SET_START_AT_LOGIN_ENABLED,
-  CMD_GET_RECORDING_STATUS,
-  EVENT_BUBBLE_STATE,
-  EVENT_SHOW_SETTINGS,
-} from "./contract";
+import * as contract from "./contract";
 
-const COMMANDS = [
-  CMD_SAVE_API_KEY,
-  CMD_CLEAR_API_KEY,
-  CMD_GET_API_KEY_STATUS,
-  CMD_GET_HOTKEY_SETTINGS,
-  CMD_SET_HOTKEY,
-  CMD_RESET_HOTKEY_TO_DEFAULT,
-  CMD_GET_START_AT_LOGIN_STATUS,
-  CMD_SET_START_AT_LOGIN_ENABLED,
-  CMD_GET_RECORDING_STATUS,
-] as const;
+const c = contract as unknown as Record<string, unknown>;
+const COMMAND_KEYS = Object.keys(contract).filter((k) => k.startsWith("CMD_"));
+const EVENT_KEYS = Object.keys(contract).filter((k) => k.startsWith("EVENT_"));
 
-const EVENTS = [EVENT_BUBBLE_STATE, EVENT_SHOW_SETTINGS] as const;
+const COMMANDS = COMMAND_KEYS.map((k) => c[k] as string);
+const EVENTS = EVENT_KEYS.map((k) => c[k] as string);
 
-describe("Command names", () => {
+describe("Contract exports", () => {
+  it("all exported values are non-empty strings", () => {
+    for (const value of [...COMMANDS, ...EVENTS]) {
+      expect(value.length).toBeGreaterThan(0);
+    }
+  });
+
   it("all command names are unique", () => {
-    const names = [...COMMANDS];
-    expect(new Set(names).size).toBe(names.length);
+    expect(new Set(COMMANDS).size).toBe(COMMANDS.length);
+  });
+
+  it("all event names are unique", () => {
+    expect(new Set(EVENTS).size).toBe(EVENTS.length);
   });
 
   it("all command names are snake_case", () => {
@@ -39,38 +29,55 @@ describe("Command names", () => {
     }
   });
 
-  it("count is stable at 9", () => {
-    expect(COMMANDS.length).toBe(9);
-  });
-
-  it("critical commands exist", () => {
-    expect(COMMANDS).toContain(CMD_SAVE_API_KEY);
-    expect(COMMANDS).toContain(CMD_GET_API_KEY_STATUS);
-    expect(COMMANDS).toContain(CMD_SET_HOTKEY);
-    expect(COMMANDS).toContain(CMD_GET_RECORDING_STATUS);
-  });
-
-  it("no command name exceeds 64 characters", () => {
-    for (const cmd of COMMANDS) {
-      expect(cmd.length).toBeLessThanOrEqual(64);
-    }
-  });
-});
-
-describe("Event names", () => {
-  it("all event names are unique", () => {
-    const names = [...EVENTS];
-    expect(new Set(names).size).toBe(names.length);
-  });
-
-  it("count is stable at 2", () => {
-    expect(EVENTS.length).toBe(2);
-  });
-
-  it("all event names are non-empty strings", () => {
+  it("all event names are kebab-case", () => {
     for (const ev of EVENTS) {
-      expect(typeof ev).toBe("string");
-      expect(ev.length).toBeGreaterThan(0);
+      expect(ev).toMatch(/^[a-z][a-z0-9-]*$/);
     }
+  });
+
+  it("no command or event name exceeds 64 characters", () => {
+    for (const name of [...COMMANDS, ...EVENTS]) {
+      expect(name.length).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it("has at least 33 command constants", () => {
+    expect(COMMANDS.length).toBeGreaterThanOrEqual(33);
+  });
+
+  it("has at least 5 event constants", () => {
+    expect(EVENTS.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("contains required critical commands", () => {
+    expect(COMMANDS).toContain(contract.CMD_SAVE_API_KEY);
+    expect(COMMANDS).toContain(contract.CMD_GET_API_KEY_STATUS);
+    expect(COMMANDS).toContain(contract.CMD_SET_HOTKEY);
+    expect(COMMANDS).toContain(contract.CMD_GET_RECORDING_STATUS);
+    expect(COMMANDS).toContain(contract.CMD_START_RECORDING);
+    expect(COMMANDS).toContain(contract.CMD_STOP_RECORDING);
+    expect(COMMANDS).toContain(contract.CMD_TRANSCRIBE_LATEST_RECORDING);
+    expect(COMMANDS).toContain(contract.CMD_CLEANUP_TRANSCRIPT);
+    expect(COMMANDS).toContain(contract.CMD_COPY_TEXT_TO_CLIPBOARD);
+    expect(COMMANDS).toContain(contract.CMD_CHECK_FOR_UPDATE);
+  });
+
+  it("contains required events", () => {
+    expect(EVENTS).toContain(contract.EVENT_RECORDING_STATE_CHANGED);
+    expect(EVENTS).toContain(contract.EVENT_HOTKEY_STATE);
+    expect(EVENTS).toContain(contract.EVENT_BUBBLE_STATE);
+    expect(EVENTS).toContain(contract.EVENT_SHOW_SETTINGS);
+    expect(EVENTS).toContain(contract.EVENT_UPDATE_INSTALLED);
+  });
+
+  it("numeric constants are positive", () => {
+    expect(contract.MAX_RECORDING_DURATION_SECS).toBeGreaterThan(0);
+    expect(contract.TARGET_WAV_SAMPLE_RATE).toBeGreaterThan(0);
+    expect(contract.OUTPUT_CHANNELS).toBe(1);
+    expect(contract.WAV_BITS_PER_SAMPLE).toBe(16);
+  });
+
+  it("BUBBLE_WINDOW_LABEL matches Rust contract", () => {
+    expect(contract.BUBBLE_WINDOW_LABEL).toBe("recording-bubble");
   });
 });

@@ -7,7 +7,7 @@ use std::{
 };
 use tokio::task::JoinHandle;
 
-use crate::audio::{fold_level, normalize_rms, LevelMeter, EMIT_INTERVAL_MS};
+use crate::audio::{normalize_rms, LevelMeter, EMIT_INTERVAL_MS};
 
 mod buffer;
 mod error;
@@ -16,15 +16,19 @@ mod sample;
 mod types;
 mod wav;
 
-#[allow(unused_imports)]
 pub use self::{
-    buffer::RecordingBuffer,
     error::{RecordingError, RecordingErrorCode},
-    input::{CpalInputBackend, RecordingInput, RecordingStream, StartedRecording},
+    input::{CpalInputBackend, RecordingInput, RecordingStream},
     types::{
         RecordingEndReason, RecordingInfo, RecordingState, RecordingStatePayload, RecordingStatus,
         ShutdownRecordingResult, MAX_RECORDING_DURATION_SECONDS, WAV_HEADER_LEN,
     },
+};
+
+#[cfg(test)]
+pub use self::{
+    buffer::RecordingBuffer,
+    input::StartedRecording,
     wav::encode_pcm16_wav,
 };
 
@@ -143,10 +147,6 @@ impl Drop for WatchdogHandle {
 }
 
 impl RecordingManager {
-    pub fn with_cpal() -> Self {
-        Self::new(Box::new(input::CpalInputBackend::new(None)))
-    }
-
     pub fn new(backend: Box<dyn RecordingInput>) -> Self {
         Self::new_with_emitter(backend, Box::new(no_op_emit))
     }
@@ -464,7 +464,7 @@ impl RecordingManager {
         Ok(())
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     fn state_arc(&self) -> Arc<Mutex<ManagerState>> {
         Arc::clone(&self.state)
     }
@@ -534,7 +534,7 @@ impl RecordingManager {
         Ok(true)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn poll_finalize(&self) -> Result<(), RecordingError> {
         self.try_finalize_if_finished()?;
         Ok(())
@@ -668,15 +668,11 @@ fn level_emitter_loop(
     stop: Arc<AtomicBool>,
     emit_level: SharedLevelEmitter,
 ) {
-    let mut smoothed: f32 = 0.0;
-
     while !stop.load(Ordering::SeqCst) {
-        let raw = meter.load();
-        let normalized = normalize_rms(raw);
-        smoothed = fold_level(smoothed, normalized);
+        let value = normalize_rms(meter.load());
 
         if let Ok(emit) = emit_level.lock() {
-            (emit)(smoothed);
+            (emit)(value);
         }
 
         std::thread::sleep(Duration::from_millis(EMIT_INTERVAL_MS));
@@ -745,7 +741,7 @@ mod tests {
     use super::{
         buffer::RecordingBuffer,
         error::RecordingErrorCode,
-        input::{CpalInputBackend, RecordingInput, RecordingStream, StartedRecording},
+        input::{RecordingInput, RecordingStream, StartedRecording},
         types::{
             RecordingEndReason, ShutdownRecordingResult, MAX_RECORDING_DURATION_SECONDS,
             WAV_HEADER_LEN,

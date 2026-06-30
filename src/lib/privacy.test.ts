@@ -4,50 +4,7 @@ import {
   FORBIDDEN_PATTERNS,
   assertNoForbiddenKeys,
   assertNoForbiddenPatterns,
-  redactValue,
 } from "./privacy";
-
-describe("redactValue", () => {
-  it("preserves already-masked values", () => {
-    expect(redactValue("gsk_…****")).toBe("gsk_…****");
-    expect(redactValue("sk-...abcd")).toBe("sk-...abcd");
-    expect(redactValue("****...****")).toBe("****...****");
-  });
-
-  it("redacts values containing bearer tokens", () => {
-    expect(redactValue("Bearer gsk_abc123")).toBe("redacted");
-  });
-
-  it("redacts values containing API key patterns", () => {
-    expect(redactValue("gsk_abc123def456")).toBe("redacted");
-    expect(redactValue("sk-abc123def456")).toBe("redacted");
-    expect(redactValue("api_key=secret")).toBe("redacted");
-    expect(redactValue("api-key=secret")).toBe("redacted");
-  });
-
-  it("redacts values containing transcript references", () => {
-    expect(redactValue("transcript content here")).toBe("redacted");
-    expect(redactValue("clipboard_text value")).toBe("redacted");
-  });
-
-  it("redacts values containing raw audio references", () => {
-    expect(redactValue("raw_audio data")).toBe("redacted");
-    expect(redactValue("audio_bytes buffer")).toBe("redacted");
-  });
-
-  it("preserves normal diagnostic strings", () => {
-    expect(redactValue("timeout_error")).toBe("timeout_error");
-    expect(redactValue("server_error")).toBe("server_error");
-    expect(redactValue("rate_limit")).toBe("rate_limit");
-    expect(redactValue("invalid_request")).toBe("invalid_request");
-  });
-
-  it("is case-insensitive", () => {
-    expect(redactValue("BEARER token")).toBe("redacted");
-    expect(redactValue("GSK_abc123")).toBe("redacted");
-    expect(redactValue("TRANSCRIPT data")).toBe("redacted");
-  });
-});
 
 describe("assertNoForbiddenKeys", () => {
   it("accepts an object without forbidden keys", () => {

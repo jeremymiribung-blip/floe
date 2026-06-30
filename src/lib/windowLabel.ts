@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { logRecoverable } from "./errorLog";
 
 export const OVERLAY_WINDOW_LABEL: string = "recording-bubble";
 
@@ -17,7 +18,8 @@ export function isOverlayWindow(): boolean {
   }
   try {
     return getCurrentWindow().label === OVERLAY_WINDOW_LABEL;
-  } catch {
+  } catch (err) {
+    logRecoverable("isOverlayWindow probe", err);
     return false;
   }
 }

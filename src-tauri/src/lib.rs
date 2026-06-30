@@ -196,7 +196,6 @@ pub fn run() {
             commands::bubble::bubble_show,
             commands::bubble::bubble_hide,
             commands::bubble::bubble_set_state,
-            commands::diag::diag_log,
             commands::diag::diag_log_str,
             commands::diag::get_recent_traces,
             commands::diag::get_current_trace,

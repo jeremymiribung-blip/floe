@@ -14,6 +14,7 @@ import {
   type PipelineStage,
 } from "./diagnostics";
 import { diagLog, logFrontendEvent, updateSessionHotkeyLatency } from "./tauri";
+import { logRecoverable } from "./errorLog";
 import { MAX_RECORDING_DURATION_SECS, WATCHDOG_GRACE_SECS } from "./contract";
 
 export type ShortcutState = "Pressed" | "Released";
@@ -177,8 +178,8 @@ export class PushToTalkController {
         void updateSessionHotkeyLatency(
           status.traceId,
           this.hotkeyToRecordingStartMs,
-        ).catch((e) => {
-          diagLog(`[FE] updateSessionHotkeyLatency failed: ${e}`);
+        ).catch((err) => {
+          logRecoverable("updateSessionHotkeyLatency", err);
         });
       }
     } catch (caught) {
@@ -190,8 +191,8 @@ export class PushToTalkController {
       if (error.code === "internal") {
         try {
           await this.dependencies.forceStopRecording();
-        } catch {
-          // Ignore - backend state is already being reset
+        } catch (err) {
+          logRecoverable("forceStopRecording after internal", err);
         }
         this.callbacks.onErrorChange("Hardware error: Recording reset");
         this.callbacks.onStateChange("idle");
@@ -242,10 +243,9 @@ export class PushToTalkController {
 
     this.recordingState = "idle";
     try {
-      // Call force_stop_recording to reset backend state even if stuck
       await this.dependencies.forceStopRecording();
-    } catch {
-      // Backend reset failed - state is already being reset
+    } catch (err) {
+      logRecoverable("forceStopRecording watchdog", err);
     }
     this.callbacks.onErrorChange("Hardware error: Recording reset");
     this.callbacks.onStateChange("idle");
@@ -557,8 +557,8 @@ export class PushToTalkController {
       this.callbacks.onRecordingStatusChange(
         await this.dependencies.getRecordingStatus(),
       );
-    } catch {
-      // Recording already stopped; status refresh should not block transcription.
+    } catch (err) {
+      logRecoverable("refreshRecordingStatus", err);
     }
   }
 
@@ -579,8 +579,9 @@ export class PushToTalkController {
       errorCode: errorCode ?? null,
       retryCount: null,
       pipelineTotalMs: pipelineTotalMs ?? null,
-    }).catch(() => {
+    }).catch((err) => {
       // Best-effort; never block the pipeline over diagnostics.
+      logRecoverable("logFrontendEvent", err);
     });
   }
 
@@ -591,10 +592,11 @@ export class PushToTalkController {
       const diagnostics = createPipelineDiagnostics(input);
       this.latestDiagnosticsJson = diagnosticsToJson(diagnostics);
       this.callbacks.onDiagnosticsChange?.(this.latestDiagnosticsJson);
-    } catch {
+    } catch (err) {
       // Diagnostics are best-effort and must never break the push-to-talk
       // pipeline. A safety-guard throw here means a contributor added a
       // forbidden key or pattern; the tests will catch it in CI.
+      logRecoverable("storeDiagnostics", err);
       this.latestDiagnosticsJson = null;
       this.callbacks.onDiagnosticsChange?.(null);
     }

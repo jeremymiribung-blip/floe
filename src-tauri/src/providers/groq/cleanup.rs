@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::prompts::cleanup::CLEANUP_SYSTEM_PROMPT;
 use crate::providers::cleanup::{CleanupError, CleanupProvider, CleanupSuccess, RateLimitMetadata};
+use serde_json::json;
 
 pub use super::types::{GroqCleanup, GroqCleanupError, GroqCleanupErrorCode, GROQ_CLEANUP_MODEL};
 use super::util::{elapsed_ms, rate_limit_metadata, retry_after, retry_count_for_attempt};
@@ -19,6 +20,8 @@ struct ChatCompletionRequest {
     messages: Vec<ChatMessage>,
     temperature: f32,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -231,6 +234,7 @@ fn cleanup_request_body(transcript: &str) -> ChatCompletionRequest {
         ],
         temperature: 0.0,
         max_tokens: cleanup_max_tokens_for(transcript),
+        chat_template_kwargs: Some(json!({"enable_thinking": false})),
     }
 }
 

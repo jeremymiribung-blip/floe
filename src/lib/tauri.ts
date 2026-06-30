@@ -16,7 +16,6 @@ import type {
   SttResult,
   TranscriptCleanupResult,
   UpdateInfo,
-  UpdateError,
   AudioDevice,
 } from "../types/app";
 
@@ -186,9 +185,12 @@ export function bubbleCancelRecording(): Promise<void> {
 // ── Diagnostics ──
 
 export function diagLog(line: string): void {
-  invoke(CMD_DIAG_LOG_STR, { line }).catch((err) =>
-    console.error("diagLog failed:", err),
-  );
+  invoke(CMD_DIAG_LOG_STR, { line }).catch((err: unknown) => {
+    // Telemetry channel itself is unavailable. We can't route through
+    // logRecoverable (that calls diagLog → infinite loop), so emit directly
+    // while preserving the original error object.
+    console.error("[Floe][recoverable] diagLog invoke failed:", err);
+  });
 }
 
 export interface DiagnosticsReport {
@@ -236,7 +238,6 @@ export interface DiagnosticsReport {
     stage_summary: Record<string, unknown>;
     stages: Record<string, Record<string, unknown>>;
     audio: Record<string, unknown> | null;
-    stt_provider: Record<string, unknown> | null;
     recovery_actions: Array<Record<string, unknown>>;
     rate_limit: Record<string, unknown> | null;
     retries: Record<string, number>;

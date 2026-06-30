@@ -6,6 +6,7 @@ import {
   emptyDiagnosticsReport,
   assertDiagnosticsReportSafe,
 } from "../lib/diagnosticsReport";
+import { logRecoverable, errorMessage } from "../lib/errorLog";
 import {
   getDiagnosticsReport,
   isTauriRuntime,
@@ -42,8 +43,7 @@ export function DiagnosticsSection({ appVersion }: DiagnosticsSectionProps) {
       assertDiagnosticsReportSafe(next);
       setReport(next);
     } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message : "Unknown error";
+      const message = errorMessage(caught);
       setError(message);
     } finally {
       setIsLoading(false);
@@ -69,7 +69,8 @@ export function DiagnosticsSection({ appVersion }: DiagnosticsSectionProps) {
     try {
       await copyDiagnosticsReportToClipboard(report);
       setCopyStatus("copied");
-    } catch {
+    } catch (err) {
+      logRecoverable("diagnostics copy to clipboard", err);
       setCopyStatus("failed");
     } finally {
       if (copyTimerRef.current !== null) {
@@ -227,4 +228,4 @@ export function DiagnosticsSection({ appVersion }: DiagnosticsSectionProps) {
   );
 }
 
-export default DiagnosticsSection;
+

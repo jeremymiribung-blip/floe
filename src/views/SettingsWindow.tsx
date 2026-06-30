@@ -16,6 +16,7 @@ import {
   getAppSettings,
   saveAppSettings,
 } from "../lib/tauri";
+import { logCritical, errorMessage } from "../lib/errorLog";
 import useFloeStore from "../stores/useFloeStore";
 import type { AudioDevice } from "../types/app";
 import { useReducedMotionPreference } from "../hooks/useReducedMotionPreference";
@@ -76,6 +77,7 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
   const setApiKey = useFloeStore((s) => s.setApiKey);
   const setApiKeyStatus = useFloeStore((s) => s.setApiKeyStatus);
   const setHotkey = useFloeStore((s) => s.setHotkey);
+  const setHotkeyStatus = useFloeStore((s) => s.setHotkeyStatus);
   const setLaunchOnStartup = useFloeStore((s) => s.setLaunchOnStartup);
   const setAudioDevices = useFloeStore((s) => s.setAudioDevices);
   const setSelectedAudioDeviceId = useFloeStore((s) => s.setSelectedAudioDeviceId);
@@ -87,10 +89,17 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
   const reducedMotion = useReducedMotionPreference();
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [isLoadingDevices, setIsLoadingDevices] = useState(false);
+  const [deviceLoadError, setDeviceLoadError] = useState<string | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const saveErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showSaveError = useCallback((message: string) => {
+    setSaveError(message);
+    if (saveErrorTimerRef.current) clearTimeout(saveErrorTimerRef.current);
+    saveErrorTimerRef.current = setTimeout(() => setSaveError(null), 6000);
+  }, []);
 
   const apiKeyRef = useRef(apiKey);
   apiKeyRef.current = apiKey;
@@ -113,7 +122,7 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
           );
         }
       } catch (err) {
-        console.error("validateApiKey failed:", err);
+        logCritical("settings validateApiKey", err);
         setValidationError(
           "Could not validate API key. Check your network connection.",
         );
@@ -142,23 +151,43 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
 
   // ── Keydown listener for hotkey capture ────────────────
   const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
+    async (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
 
       const combo = buildHotkeyString(e);
       if (!combo) return;
 
+      // Capture the previous state so we can roll back on backend failure.
+      const previousHotkey = useFloeStore.getState().hotkey;
+      const previousRegistered = useFloeStore.getState().hotkeyRegistered;
       setHotkey(combo);
       stopHotkeyCapture();
 
-      if (isTauriRuntime()) {
-        setHotkeyBackend(combo).catch((err) =>
-          console.error("setHotkeyBackend failed:", err),
+      if (!isTauriRuntime()) {
+        setHotkeyStatus(combo, true);
+        return;
+      }
+
+      try {
+        const status = await setHotkeyBackend(combo);
+        if (!status || !status.isRegistered) {
+          setHotkeyStatus(previousHotkey, previousRegistered);
+          showSaveError(
+            status?.error ?? `Could not register hotkey: ${combo}`,
+          );
+          return;
+        }
+        setHotkeyStatus(status.label || combo, status.isRegistered);
+      } catch (err) {
+        logCritical("settings setHotkeyBackend", err);
+        setHotkeyStatus(previousHotkey, previousRegistered);
+        showSaveError(
+          `Could not register hotkey: ${errorMessage(err)}`,
         );
       }
     },
-    [setHotkey, stopHotkeyCapture],
+    [setHotkey, setHotkeyStatus, showSaveError, stopHotkeyCapture],
   );
 
   useEffect(() => {
@@ -175,22 +204,23 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
   const setSkipCleanup = useFloeStore((s) => s.setSkipCleanup);
 
   const handleLaunchOnStartupChange = useCallback(
-    (checked: boolean) => {
+    async (checked: boolean) => {
+      const previous = useFloeStore.getState().launchOnStartup;
       setLaunchOnStartup(checked);
-      if (isTauriRuntime()) {
-        setStartAtLoginEnabled(checked).catch((err) =>
-          console.error("setStartAtLogin failed:", err),
+      if (!isTauriRuntime()) return;
+
+      try {
+        await setStartAtLoginEnabled(checked);
+      } catch (err) {
+        logCritical("settings setStartAtLoginEnabled", err);
+        setLaunchOnStartup(previous);
+        showSaveError(
+          `Could not ${checked ? "enable" : "disable"} start at login: ${errorMessage(err)}`,
         );
       }
     },
-    [setLaunchOnStartup],
+    [setLaunchOnStartup, showSaveError],
   );
-
-  const showSaveError = useCallback((message: string) => {
-    setSaveError(message);
-    if (saveErrorTimerRef.current) clearTimeout(saveErrorTimerRef.current);
-    saveErrorTimerRef.current = setTimeout(() => setSaveError(null), 6000);
-  }, []);
 
   useEffect(() => {
     return () => {
@@ -222,22 +252,27 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
     const loadDevices = async () => {
       if (!isTauriRuntime()) return;
       setIsLoadingDevices(true);
+      setDeviceLoadError(null);
       try {
         const devices = await getAudioDevices();
         if (mounted) {
           setAudioDevices(devices);
-          // If no device is selected yet, select the first one (default)
           if (!selectedAudioDeviceId && devices.length > 0) {
             setSelectedAudioDeviceId(devices[0].id);
           }
         }
       } catch (err) {
-        console.error("Failed to load audio devices:", err);
+        logCritical("settings getAudioDevices", err);
+        if (mounted) {
+          setDeviceLoadError(
+            `Could not load input devices: ${errorMessage(err)}`,
+          );
+        }
       } finally {
         if (mounted) setIsLoadingDevices(false);
       }
     };
-    loadDevices();
+    void loadDevices();
     return () => {
       mounted = false;
     };
@@ -451,7 +486,15 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
                   ))
                 )}
               </select>
-              {selectedAudioDeviceId && (
+              {deviceLoadError && (
+                <p
+                  role="alert"
+                  className="text-xs leading-relaxed text-red-400"
+                >
+                  {deviceLoadError}
+                </p>
+              )}
+              {!deviceLoadError && selectedAudioDeviceId && (
                 <p className="text-xs leading-relaxed text-white/40">
                   Floe will use this microphone for recording.
                 </p>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauriRuntime } from "../lib/tauri";
+import { logRecoverable } from "../lib/errorLog";
 import type { RecordingLevelPayload } from "../lib/contract";
 import {
   appendWaveformSample,
@@ -42,8 +43,10 @@ export function useRollingWaveform(active: boolean): number[] {
           unlisten = nextUnlisten;
         }
       })
-      .catch(() => {
+      .catch((err) => {
         // Level events are visual-only; failure leaves the bubble at silence.
+        // Log with context so we can debug stuck waveform issues.
+        logRecoverable("rolling waveform listen", err);
       });
 
     rafRef.current = requestAnimationFrame(tick);

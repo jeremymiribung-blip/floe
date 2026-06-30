@@ -28,14 +28,6 @@ pub fn normalize_rms(rms: f32) -> f32 {
     (normalized.clamp(0.0, 1.0) as f32).clamp(0.0, 1.0)
 }
 
-/// Identity pass-through: no backend smoothing.
-/// All smoothing is handled by the frontend envelope follower.
-/// This eliminates double-smoothing artifacts and gives the
-/// frontend full control over attack/release dynamics.
-pub fn fold_level(_previous: f32, next: f32) -> f32 {
-    next.clamp(0.0, 1.0)
-}
-
 pub struct LevelMeter {
     latest: AtomicU32,
 }
@@ -69,7 +61,7 @@ impl Default for LevelMeter {
 
 #[cfg(test)]
 mod tests {
-    use super::{fold_level, normalize_rms, NOISE_FLOOR};
+    use super::{normalize_rms, NOISE_FLOOR};
 
     #[test]
     fn normalize_returns_zero_for_silence() {
@@ -106,17 +98,4 @@ mod tests {
         assert_eq!(normalize_rms(f32::INFINITY), 0.0);
     }
 
-    #[test]
-    fn fold_passes_through_raw_value() {
-        // fold_level is now identity pass-through
-        assert_eq!(fold_level(0.1, 0.9), 0.9);
-        assert_eq!(fold_level(0.9, 0.1), 0.1);
-        assert_eq!(fold_level(0.5, 0.5), 0.5);
-    }
-
-    #[test]
-    fn fold_clamps_to_unit_range() {
-        assert_eq!(fold_level(0.0, 1.5), 1.0);
-        assert_eq!(fold_level(0.0, -0.5), 0.0);
-    }
 }

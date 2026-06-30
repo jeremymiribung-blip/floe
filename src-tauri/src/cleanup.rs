@@ -159,7 +159,7 @@ mod tests {
 
         assert_eq!(result.text, "Cleaned transcript.");
         assert_eq!(result.warning, None);
-        assert_eq!(result.model, "llama-3.3-70b-versatile");
+        assert_eq!(result.model, "qwen/qwen3.6-27b");
         assert_eq!(result.retry_count, 0);
         assert_eq!(result.validation_ms, 1);
         assert!(!result.fallback_used);
@@ -250,7 +250,7 @@ mod tests {
     fn test_success(text: &str) -> CleanupSuccess {
         CleanupSuccess {
             text: text.to_string(),
-            model: "llama-3.3-70b-versatile".to_string(),
+            model: "qwen/qwen3.6-27b".to_string(),
             retry_count: 0,
             validation_ms: 1,
             rate_limit: None,

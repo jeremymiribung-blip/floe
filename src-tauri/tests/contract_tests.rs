@@ -512,7 +512,7 @@ fn stt_result_shape_is_camel_case() {
 fn transcript_cleanup_result_shape_is_camel_case() {
     let json = serde_json::json!({
         "text": "cleaned text",
-        "model": "llama-3.3-70b-versatile",
+        "model": "qwen/qwen3.6-27b",
         "retryCount": 0,
         "validationMs": 1,
         "fallbackUsed": false,
@@ -844,7 +844,7 @@ fn transcript_cleanup_result_actual_serialization() {
     let result = TranscriptCleanupResult {
         text: "cleaned text".to_string(),
         warning: None,
-        model: "llama-3.3-70b-versatile".to_string(),
+        model: "qwen/qwen3.6-27b".to_string(),
         retry_count: 0,
         validation_ms: 1,
         fallback_used: false,
@@ -855,7 +855,7 @@ fn transcript_cleanup_result_actual_serialization() {
 
     let expected = serde_json::json!({
         "text": "cleaned text",
-        "model": "llama-3.3-70b-versatile",
+        "model": "qwen/qwen3.6-27b",
         "retryCount": 0,
         "validationMs": 1,
         "fallbackUsed": false,
