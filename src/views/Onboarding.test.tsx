@@ -41,7 +41,7 @@ function resetStore() {
     isSettingsOpen: false,
     isHotkeyCaptureActive: false,
     launchOnStartup: false,
-updateInfo: null,
+    updateInfo: null,
     updateCheckInProgress: false,
     lastStartupError: null,
   });
@@ -76,7 +76,7 @@ describe("Onboarding", () => {
       ).toBeDefined();
     });
 
-it("shows the API key input field", () => {
+    it("shows the API key input field", () => {
       render(<Onboarding />);
       expect(screen.getByPlaceholderText("gsk_…")).toBeDefined();
     });
@@ -124,7 +124,7 @@ it("shows the API key input field", () => {
       await waitFor(() => {
         expect(
           screen.getByText(
-            /could not validate api key\. check your network connection/i,
+            /could not validate or save your api key: network down\. check your network connection/i,
           ),
         ).toBeDefined();
       });
@@ -144,13 +144,63 @@ it("shows the API key input field", () => {
 
     it("trims whitespace before submitting the key", async () => {
       mockValidateApiKey.mockResolvedValue(true);
-      mockSaveApiKey.mockResolvedValue({ configured: true, maskedPreview: null });
+      mockSaveApiKey.mockResolvedValue({
+        configured: true,
+        maskedPreview: null,
+      });
       const user = userEvent.setup();
       render(<Onboarding />);
       await user.type(screen.getByPlaceholderText("gsk_…"), "  gsk_trim  ");
       await user.click(screen.getByRole("button", { name: /continue/i }));
       await waitFor(() => {
         expect(mockValidateApiKey).toHaveBeenCalledWith("gsk_trim");
+      });
+    });
+
+    it("stores the trimmed key in the global store on input change", async () => {
+      const user = userEvent.setup();
+      render(<Onboarding />);
+      await user.type(screen.getByPlaceholderText("gsk_…"), "  gsk_abc  ");
+
+      await waitFor(() => {
+        expect(useFloeStore.getState().apiKey).toBe("gsk_abc");
+      });
+    });
+
+    it("shows keychain error when saveApiKey rejects with secretStoreUnavailable", async () => {
+      mockValidateApiKey.mockResolvedValue(true);
+      mockSaveApiKey.mockRejectedValueOnce({
+        domain: "settings",
+        code: "secretStoreUnavailable",
+        message: "Secure key storage is unavailable.",
+      });
+      const user = userEvent.setup();
+      render(<Onboarding />);
+      await user.type(screen.getByPlaceholderText("gsk_…"), "gsk_abc");
+      await user.click(screen.getByRole("button", { name: /continue/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/your system.{0,5}s keychain is unavailable/i),
+        ).toBeDefined();
+      });
+      expect(mockSaveApiKey).toHaveBeenCalledWith("gsk_abc");
+    });
+
+    it("falls back to network-style message for unrelated save failures", async () => {
+      mockValidateApiKey.mockResolvedValue(true);
+      mockSaveApiKey.mockRejectedValueOnce(new Error("ipc disconnected"));
+      const user = userEvent.setup();
+      render(<Onboarding />);
+      await user.type(screen.getByPlaceholderText("gsk_…"), "gsk_abc");
+      await user.click(screen.getByRole("button", { name: /continue/i }));
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            /could not validate or save your api key: ipc disconnected\. check your network connection/i,
+          ),
+        ).toBeDefined();
       });
     });
 
@@ -174,12 +224,13 @@ it("shows the API key input field", () => {
 
       // Resolve to advance
       resolveValidate(true);
-      mockSaveApiKey.mockResolvedValue({ configured: true, maskedPreview: null });
+      mockSaveApiKey.mockResolvedValue({
+        configured: true,
+        maskedPreview: null,
+      });
 
-await waitFor(() => {
-        expect(
-          screen.queryByText(/validating/i),
-        ).toBeNull();
+      await waitFor(() => {
+        expect(screen.queryByText(/validating/i)).toBeNull();
       });
       // Should have advanced to the hotkey step
       await waitFor(() => {
@@ -191,7 +242,10 @@ await waitFor(() => {
 
     it("advances to Step 2 on a valid key and saves it to the store", async () => {
       mockValidateApiKey.mockResolvedValue(true);
-      mockSaveApiKey.mockResolvedValue({ configured: true, maskedPreview: "gsk_…****" });
+      mockSaveApiKey.mockResolvedValue({
+        configured: true,
+        maskedPreview: "gsk_…****",
+      });
       const user = userEvent.setup();
       render(<Onboarding />);
       await user.type(screen.getByPlaceholderText("gsk_…"), "gsk_valid");
@@ -246,7 +300,9 @@ await waitFor(() => {
     it("captures a hotkey when a modifier + key is pressed", () => {
       render(<Onboarding />);
       // Begin capture
-      fireEvent.click(screen.getByRole("button", { name: /capture new hotkey/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /capture new hotkey/i }),
+      );
       // Press Ctrl+Space
       fireEvent.keyDown(window, { key: " ", code: "Space", ctrlKey: true });
       // Now the captured combo should appear
@@ -257,7 +313,9 @@ await waitFor(() => {
 
     it("ignores key events that do not include a modifier", () => {
       render(<Onboarding />);
-      fireEvent.click(screen.getByRole("button", { name: /capture new hotkey/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /capture new hotkey/i }),
+      );
       // Press a bare key — no modifier
       fireEvent.keyDown(window, { key: "a", code: "KeyA" });
       // Continue should still be disabled
@@ -283,7 +341,9 @@ await waitFor(() => {
       });
       const user = userEvent.setup();
       render(<Onboarding />);
-      fireEvent.click(screen.getByRole("button", { name: /capture new hotkey/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /capture new hotkey/i }),
+      );
       fireEvent.keyDown(window, { key: " ", code: "Space", ctrlKey: true });
 
       await user.click(screen.getByRole("button", { name: /continue/i }));
@@ -311,7 +371,9 @@ await waitFor(() => {
       });
       const user = userEvent.setup();
       render(<Onboarding />);
-      fireEvent.click(screen.getByRole("button", { name: /capture new hotkey/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /capture new hotkey/i }),
+      );
       fireEvent.keyDown(window, { key: "h", code: "KeyH", ctrlKey: true });
       await user.click(screen.getByRole("button", { name: /continue/i }));
 
@@ -330,7 +392,9 @@ await waitFor(() => {
       mockSetHotkey.mockRejectedValue(new Error("ipc failure"));
       const user = userEvent.setup();
       render(<Onboarding />);
-      fireEvent.click(screen.getByRole("button", { name: /capture new hotkey/i }));
+      fireEvent.click(
+        screen.getByRole("button", { name: /capture new hotkey/i }),
+      );
       fireEvent.keyDown(window, { key: " ", code: "Space", ctrlKey: true });
       await user.click(screen.getByRole("button", { name: /continue/i }));
 
@@ -343,10 +407,10 @@ await waitFor(() => {
 
     it("Escape during capture cancels the capture flow", () => {
       render(<Onboarding />);
-      fireEvent.click(screen.getByRole("button", { name: /capture new hotkey/i }));
-      expect(
-        screen.getByText(/press any key combination/i),
-      ).toBeDefined();
+      fireEvent.click(
+        screen.getByRole("button", { name: /capture new hotkey/i }),
+      );
+      expect(screen.getByText(/press any key combination/i)).toBeDefined();
       fireEvent.keyDown(window, { key: "Escape", code: "Escape" });
       // After cancel, Continue should still be disabled
       expect(screen.getByRole("button", { name: /continue/i })).toBeDisabled();
@@ -364,7 +428,7 @@ await waitFor(() => {
       ).toBeDefined();
     });
 
-it("does not expose API key or hotkey capture controls on the done screen", () => {
+    it("does not expose API key or hotkey capture controls on the done screen", () => {
       setStoreReady();
       render(<Onboarding />);
       expect(screen.queryByPlaceholderText("gsk_…")).toBeNull();

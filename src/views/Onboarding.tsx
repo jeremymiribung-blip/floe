@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { AlertTriangle, ArrowLeft, ArrowRight, Check, KeyRound, Keyboard, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  KeyRound,
+  Keyboard,
+  Sparkles,
+} from "lucide-react";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import {
@@ -9,7 +17,12 @@ import {
   validateApiKey,
   setHotkey as setHotkeyBackend,
 } from "../lib/tauri";
-import { logCritical } from "../lib/errorLog";
+import {
+  errorMessage,
+  isKeychainError,
+  KEYCHAIN_UNAVAILABLE_MESSAGE,
+  logCritical,
+} from "../lib/errorLog";
 import useFloeStore from "../stores/useFloeStore";
 import { useReducedMotionPreference } from "../hooks/useReducedMotionPreference";
 import { cn } from "../lib/utils";
@@ -263,8 +276,14 @@ function GroqStep({ onContinue }: { onContinue: () => void }) {
       setShowSuccess(true);
       window.setTimeout(() => onContinue(), 450);
     } catch (err) {
-      logCritical("onboarding validateApiKey", err);
-      setError("Could not validate API key. Check your network connection.");
+      logCritical("onboarding validateAndSaveApiKey", err);
+      if (isKeychainError(err)) {
+        setError(KEYCHAIN_UNAVAILABLE_MESSAGE);
+      } else {
+        setError(
+          `Could not validate or save your API key: ${errorMessage(err)}. Check your network connection and try again.`,
+        );
+      }
     } finally {
       setIsValidating(false);
     }
@@ -296,10 +315,10 @@ function GroqStep({ onContinue }: { onContinue: () => void }) {
           Connect your Groq API key
         </h2>
         <p className="max-w-prose text-sm leading-relaxed text-white/50">
-          Floe uses Groq Whisper Turbo for speech-to-text and Groq Llama 3.3
+          Floe uses Groq Whisper Turbo for speech-to-text and Groq Qwen 3.6 27B
           for transcript cleanup. You can create a free API key in your{" "}
-          <span className="text-white/70">Groq console</span>. The key is
-          stored only in your system&rsquo;s keychain.
+          <span className="text-white/70">Groq console</span>. The key is stored
+          only in your system&rsquo;s keychain.
         </p>
       </div>
 
@@ -318,8 +337,11 @@ function GroqStep({ onContinue }: { onContinue: () => void }) {
           onChange={(e) => {
             setError(null);
             setShowSuccess(false);
-            setDraft(e.target.value);
-            setApiKey(e.target.value);
+            const next = e.target.value;
+            setDraft(next);
+            // Store the trimmed value so Settings never pre-fills an input
+            // with leading/trailing whitespace from this draft.
+            setApiKey(next.trim());
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -394,22 +416,25 @@ function HotkeyStep({
   const [error, setError] = useState<string | null>(null);
   const [captured, setCaptured] = useState<string | null>(null);
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
-        setIsCapturing(false);
-        setError(null);
-        return;
-      }
-      const combo = buildHotkeyString(e);
-      if (!combo) return;
-      setCaptured(combo);
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (
+      e.key === "Escape" &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      !e.metaKey
+    ) {
       setIsCapturing(false);
-    },
-    [],
-  );
+      setError(null);
+      return;
+    }
+    const combo = buildHotkeyString(e);
+    if (!combo) return;
+    setCaptured(combo);
+    setIsCapturing(false);
+  }, []);
 
   useEffect(() => {
     if (!isCapturing) return;
@@ -438,7 +463,9 @@ function HotkeyStep({
       onContinue();
     } catch (err) {
       logCritical("onboarding setHotkey", err);
-      setError("Could not register the hotkey. Please try a different combination.");
+      setError(
+        "Could not register the hotkey. Please try a different combination.",
+      );
     } finally {
       setIsSaving(false);
     }
@@ -504,10 +531,7 @@ function HotkeyStep({
         )}
       >
         <span
-          className={cn(
-            "text-sm",
-            isCapturing ? "font-medium" : "font-normal",
-          )}
+          className={cn("text-sm", isCapturing ? "font-medium" : "font-normal")}
         >
           {isCapturing
             ? "Press any key combination…"
@@ -589,16 +613,13 @@ function DoneStep() {
           You&rsquo;re all set
         </h2>
         <p className="max-w-prose text-sm leading-relaxed text-white/50">
-            Hold your push-to-talk hotkey anywhere on your computer to dictate. Floe
-          transcribes your speech, polishes it, and pastes the result where
+          Hold your push-to-talk hotkey anywhere on your computer to dictate.
+          Floe transcribes your speech, polishes it, and pastes the result where
           your cursor is.
         </p>
       </div>
       {showSettings && (
-        <p
-          className="text-xs leading-relaxed text-white/35"
-          role="status"
-        >
+        <p className="text-xs leading-relaxed text-white/35" role="status">
           Opening settings…
         </p>
       )}

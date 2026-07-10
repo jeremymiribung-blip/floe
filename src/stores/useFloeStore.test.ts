@@ -56,7 +56,10 @@ describe("useFloeStore – update state", () => {
   // ── setUpdateInfo ───────────────────────────────────────────────────
 
   it("setUpdateInfo stores the info and resets inProgress", () => {
-    const info = makeUpdateInfo({ status: "available", latestVersion: "v0.2.0" });
+    const info = makeUpdateInfo({
+      status: "available",
+      latestVersion: "v0.2.0",
+    });
 
     // Set inProgress true first
     useFloeStore.getState().setUpdateCheckInProgress(true);
@@ -116,9 +119,11 @@ describe("useFloeStore – update state", () => {
   });
 
   it("transitions available → downloading via setUpdateInfo", () => {
-    useFloeStore.getState().setUpdateInfo(
-      makeUpdateInfo({ status: "available", latestVersion: "v0.2.0" }),
-    );
+    useFloeStore
+      .getState()
+      .setUpdateInfo(
+        makeUpdateInfo({ status: "available", latestVersion: "v0.2.0" }),
+      );
 
     const downloadingInfo = makeUpdateInfo({
       status: "downloading",
@@ -133,21 +138,27 @@ describe("useFloeStore – update state", () => {
   });
 
   it("transitions downloading → downloaded via setUpdateInfo", () => {
-    useFloeStore.getState().setUpdateInfo(
-      makeUpdateInfo({ status: "downloading", downloadProgress: 100 }),
-    );
+    useFloeStore
+      .getState()
+      .setUpdateInfo(
+        makeUpdateInfo({ status: "downloading", downloadProgress: 100 }),
+      );
 
-    useFloeStore.getState().setUpdateInfo(
-      makeUpdateInfo({ status: "downloaded", downloadProgress: 100 }),
-    );
+    useFloeStore
+      .getState()
+      .setUpdateInfo(
+        makeUpdateInfo({ status: "downloaded", downloadProgress: 100 }),
+      );
 
     expect(useFloeStore.getState().updateInfo?.status).toBe("downloaded");
   });
 
   it("transitions any state → error via setUpdateInfo", () => {
-    useFloeStore.getState().setUpdateInfo(
-      makeUpdateInfo({ status: "available", latestVersion: "v0.2.0" }),
-    );
+    useFloeStore
+      .getState()
+      .setUpdateInfo(
+        makeUpdateInfo({ status: "available", latestVersion: "v0.2.0" }),
+      );
 
     useFloeStore.getState().setUpdateInfo(
       makeUpdateInfo({
@@ -163,9 +174,11 @@ describe("useFloeStore – update state", () => {
   });
 
   it("transitions error → idle via setUpdateInfo(null) (dismiss)", () => {
-    useFloeStore.getState().setUpdateInfo(
-      makeUpdateInfo({ status: "error", errorMessage: "Something broke" }),
-    );
+    useFloeStore
+      .getState()
+      .setUpdateInfo(
+        makeUpdateInfo({ status: "error", errorMessage: "Something broke" }),
+      );
     expect(useFloeStore.getState().updateInfo?.status).toBe("error");
 
     useFloeStore.getState().setUpdateInfo(null);
@@ -197,9 +210,9 @@ describe("useFloeStore – update state", () => {
 
     // Perform update actions
     useFloeStore.getState().setUpdateCheckInProgress(true);
-    useFloeStore.getState().setUpdateInfo(
-      makeUpdateInfo({ status: "available" }),
-    );
+    useFloeStore
+      .getState()
+      .setUpdateInfo(makeUpdateInfo({ status: "available" }));
 
     const state = useFloeStore.getState();
     expect(state.apiKey).toBe("gsk_test");

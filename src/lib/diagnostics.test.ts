@@ -45,7 +45,7 @@ function sampleInput(
     cleanupDurationMs: 300,
     cleanup: {
       text: "Hello world (cleaned)",
-      model: "llama-3.3-70b-versatile",
+      model: "qwen/qwen3.6-27b",
       retryCount: 0,
       validationMs: 12,
       fallbackUsed: false,
@@ -84,7 +84,7 @@ describe("createPipelineDiagnostics", () => {
 
     // Models
     expect(diag.models.stt).toBe("whisper-large-v3-turbo");
-    expect(diag.models.cleanup).toBe("llama-3.3-70b-versatile");
+    expect(diag.models.cleanup).toBe("qwen/qwen3.6-27b");
 
     // Audio
     expect(diag.audio.format).toBe("wav");
@@ -202,7 +202,7 @@ describe("createPipelineDiagnostics", () => {
     expect(parsed.trace_version).toBe(1);
     expect(parsed.pipeline.total_ms).toBe(2_737);
     expect(parsed.models.stt).toBe("whisper-large-v3-turbo");
-    expect(parsed.models.cleanup).toBe("llama-3.3-70b-versatile");
+    expect(parsed.models.cleanup).toBe("qwen/qwen3.6-27b");
     expect(parsed.result.stt_success).toBe(true);
     expect(parsed.result.cleanup_success).toBe(true);
     expect(parsed.bottleneck.stage).toBe("stt");

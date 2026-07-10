@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::{
     lifecycle::{log_lifecycle, LifecycleLevel},
@@ -16,6 +16,10 @@ pub fn log_primary_started() {
 
 pub fn handle_secondary_launch<R: Runtime>(app: &AppHandle<R>) {
     log_lifecycle(LifecycleLevel::Info, SECONDARY_LAUNCH_DETECTED_EVENT);
+
+    // Emit an event so the frontend can react (e.g. focus settings or show a toast)
+    // before or instead of the default window focus behavior.
+    let _ = app.emit("single-instance-triggered", ());
 
     let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         log_lifecycle(LifecycleLevel::Warn, FOCUS_FAILED_EVENT);

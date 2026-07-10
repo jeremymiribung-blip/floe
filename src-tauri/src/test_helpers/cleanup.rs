@@ -29,8 +29,6 @@ impl FakeCleanupProvider {
             latency_ms: 0,
         }
     }
-
-
 }
 
 #[async_trait]

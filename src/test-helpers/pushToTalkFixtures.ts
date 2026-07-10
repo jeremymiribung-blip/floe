@@ -89,9 +89,7 @@ export function makeRecordingInfo(
 
 // ── STT / cleanup ───────────────────────────────────────────────────────────
 
-export function makeSttResult(
-  overrides: Partial<SttResult> = {},
-): SttResult {
+export function makeSttResult(overrides: Partial<SttResult> = {}): SttResult {
   return {
     text: "Hello world",
     model: "whisper-large-v3-turbo",
@@ -105,7 +103,7 @@ export function makeCleanupResult(
 ): TranscriptCleanupResult {
   return {
     text: "Hello world.",
-    model: "llama-3.3-70b-versatile",
+    model: "qwen/qwen3.6-27b",
     retryCount: 0,
     validationMs: 12,
     fallbackUsed: false,
@@ -115,9 +113,7 @@ export function makeCleanupResult(
 
 // ── Domain error factories ──────────────────────────────────────────────────
 
-export type RecordingErrorCodeLike = Parameters<
-  typeof recordingDomainError
->[0];
+export type RecordingErrorCodeLike = Parameters<typeof recordingDomainError>[0];
 
 export function recordingDomainError(
   code:
@@ -176,9 +172,7 @@ export interface CreateFakeDepsOptions {
   forceStopRecording?: (...args: unknown[]) => Promise<void>;
   getRecordingStatus?: (...args: unknown[]) => Promise<RecordingStatus>;
   transcribeLatestRecording?: (...args: unknown[]) => Promise<SttResult>;
-  cleanupTranscript?: (
-    ...args: unknown[]
-  ) => Promise<TranscriptCleanupResult>;
+  cleanupTranscript?: (...args: unknown[]) => Promise<TranscriptCleanupResult>;
   copyTextToClipboard?: (...args: unknown[]) => Promise<void>;
   pasteClipboard?: (...args: unknown[]) => Promise<void>;
 }
@@ -192,8 +186,7 @@ export function createFakeDeps(
         (() => Promise.resolve(makeRecordingStatus())),
     ),
     stopRecording: vi.fn(
-      overrides.stopRecording ??
-        (() => Promise.resolve(makeRecordingInfo())),
+      overrides.stopRecording ?? (() => Promise.resolve(makeRecordingInfo())),
     ),
     forceStopRecording: vi.fn(
       overrides.forceStopRecording ?? (() => Promise.resolve()),
@@ -329,7 +322,8 @@ export function createController(
   let nowValue = 0;
   const nowFn = options.now ?? ((): number => nowValue);
   let createdAtValue = new Date("2026-06-18T00:00:00.000Z");
-  const createdAt = options.createdAt ?? ((): Date => new Date(createdAtValue.getTime()));
+  const createdAt =
+    options.createdAt ?? ((): Date => new Date(createdAtValue.getTime()));
 
   const controller = new PushToTalkController(
     deps as unknown as PushToTalkDependencies,

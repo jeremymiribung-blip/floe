@@ -26,9 +26,9 @@ pub struct AppSettings {
     pub hotkey: HotkeySettings,
     #[serde(default)]
     pub keyring_migrated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "deviceId", skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "skipCleanup")]
     pub skip_cleanup: bool,
 }
 
@@ -55,6 +55,20 @@ impl Default for HotkeySettings {
     fn default() -> Self {
         crate::system::hotkey::default_hotkey_settings()
     }
+}
+
+/// Intermediate DTO used during tolerant loading of legacy or partially-corrupt
+/// settings files. Allows serde to handle field mapping, defaults, and aliases
+/// while hotkey legacy coercion (string vs object) is handled separately.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawAppSettings {
+    #[serde(default, alias = "deviceId")]
+    device_id: Option<String>,
+    #[serde(default, alias = "skipCleanup")]
+    skip_cleanup: bool,
+    #[serde(default)]
+    keyring_migrated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -193,6 +207,9 @@ impl SettingsManager {
         }
     }
 
+    #[cfg(not(test))]
+    compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
+
     #[cfg(test)]
     pub(crate) fn with_secret_store(
         api_key_secret_store: Box<dyn SecretStore>,
@@ -302,22 +319,9 @@ impl AppSettingsStore {
 
         match serde_json::from_str::<serde_json::Value>(&raw) {
             Ok(value) => {
-                // JSON parsed successfully; validate hotkey content
-                let hotkey = load_hotkey_settings(value.get("hotkey"))?;
-                let device_id = value
-                    .get("deviceId")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let skip_cleanup = value
-                    .get("skipCleanup")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let settings = AppSettings {
-                    hotkey,
-                    device_id,
-                    skip_cleanup,
-                    ..Default::default()
-                };
+                // Valid JSON syntax. Use typed DTO deserialization for non-hotkey
+                // fields (with aliases for legacy) + preserved legacy hotkey coercion.
+                let settings = settings_from_value(value)?;
                 validate_app_settings(settings)
             }
             Err(_) => {
@@ -337,23 +341,24 @@ impl AppSettingsStore {
         let value: serde_json::Value =
             serde_json::from_str(&raw).map_err(log_then_settings_error)?;
 
-        let hotkey = load_hotkey_settings(value.get("hotkey"))?;
-        let device_id = value
-            .get("deviceId")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let skip_cleanup = value
-            .get("skipCleanup")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-
-        let settings = AppSettings {
-            hotkey,
-            device_id,
-            skip_cleanup,
-            ..Default::default()
-        };
+        let settings = settings_from_value(value)?;
         validate_app_settings(settings)
+    }
+
+    /// Builds AppSettings from a parsed JSON Value using an intermediate DTO
+    /// for device/skip_cleanup/keyring_migrated (tolerant deserialization with aliases)
+    /// while delegating hotkey to the existing legacy coercion logic.
+    fn settings_from_value(value: serde_json::Value) -> Result<AppSettings, SettingsError> {
+        let hotkey = load_hotkey_settings(value.get("hotkey"))?;
+
+        let raw: RawAppSettings = serde_json::from_value(value).unwrap_or_default();
+
+        Ok(AppSettings {
+            hotkey,
+            keyring_migrated: raw.keyring_migrated,
+            device_id: raw.device_id,
+            skip_cleanup: raw.skip_cleanup,
+        })
     }
 
     fn save(&self, settings: &AppSettings) -> Result<(), SettingsError> {

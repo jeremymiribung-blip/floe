@@ -51,9 +51,7 @@ export function createWindowStub(): WindowStub {
 
 // ── Event registry (listen + emit) ──────────────────────────────────────────
 
-export type EventListener<T = unknown> = (event: {
-  payload: T;
-}) => void;
+export type EventListener<T = unknown> = (event: { payload: T }) => void;
 
 export interface EventRegistry {
   reset(): void;

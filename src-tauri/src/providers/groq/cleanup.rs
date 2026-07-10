@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::prompts::cleanup::CLEANUP_SYSTEM_PROMPT;
 use crate::providers::cleanup::{CleanupError, CleanupProvider, CleanupSuccess, RateLimitMetadata};
-use serde_json::json;
 
 pub use super::types::{GroqCleanup, GroqCleanupError, GroqCleanupErrorCode, GROQ_CLEANUP_MODEL};
 use super::util::{elapsed_ms, rate_limit_metadata, retry_after, retry_count_for_attempt};
@@ -20,8 +19,6 @@ struct ChatCompletionRequest {
     messages: Vec<ChatMessage>,
     temperature: f32,
     max_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    chat_template_kwargs: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -85,6 +82,9 @@ impl GroqCleanupClient {
             retry_backoff,
         }
     }
+
+    #[cfg(not(test))]
+    compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
 
     #[cfg(test)]
     pub fn for_test(
@@ -234,7 +234,15 @@ fn cleanup_request_body(transcript: &str) -> ChatCompletionRequest {
         ],
         temperature: 0.0,
         max_tokens: cleanup_max_tokens_for(transcript),
-        chat_template_kwargs: Some(json!({"enable_thinking": false})),
+        // AGENTS.md pins cleanup to Groq Qwen 3.6 27B (currently
+        // Preview-tier on Groq). The Qwen-specific
+        // `chat_template_kwargs: {"enable_thinking": false}` payload is
+        // intentionally NOT set: the strict `validate_cleanup_output`
+        // validator in this file already rejects Markdown / JSON / YAML /
+        // commentary wrappers and would catch stray Qwen thinking tags,
+        // triggering the documented `Cleanup failed` + raw-paste fallback.
+        // If Qwen's output format ever forces it past the validator, add
+        // it back here and update AGENTS.md.
     }
 }
 

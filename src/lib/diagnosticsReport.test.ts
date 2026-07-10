@@ -102,7 +102,7 @@ function sampleReport(): DiagnosticsReport {
           status: "succeeded",
           duration_ms: 300,
           attempts: 1,
-          model: "llama-3.3-70b-versatile",
+          model: "qwen/qwen3.6-27b",
           error_code: null,
           skipped_reason: null,
         },

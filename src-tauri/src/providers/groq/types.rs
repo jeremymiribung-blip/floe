@@ -41,7 +41,6 @@ pub enum GroqTranscriptionErrorCode {
     ServerError,
 }
 
-
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GroqCleanup {
@@ -86,5 +85,3 @@ pub enum GroqCleanupErrorCode {
     ValidationFailed,
     ServerError,
 }
-
-

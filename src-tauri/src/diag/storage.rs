@@ -166,10 +166,7 @@ pub fn finalize_crashed_session(path: &Path) -> io::Result<Option<CrashedSession
     let finalized = persisted.with_clean_shutdown();
     write_persisted_session(path, &finalized)?;
 
-    log::info!(
-        "crashed_session_finalized trace_id={:?}",
-        info.trace_id
-    );
+    log::info!("crashed_session_finalized trace_id={:?}", info.trace_id);
 
     Ok(Some(info))
 }

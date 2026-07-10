@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
@@ -103,9 +96,7 @@ beforeEach(() => {
     lastCheckResult: "Up to date",
     errorMessage: null,
   });
-  mockGetAudioDevices.mockResolvedValue([
-    { id: "dev-1", name: "Default Mic" },
-  ]);
+  mockGetAudioDevices.mockResolvedValue([{ id: "dev-1", name: "Default Mic" }]);
 });
 
 afterEach(() => {
@@ -127,9 +118,7 @@ describe("SettingsWindow — error handling", () => {
           screen.getByText(/could not load input devices/i),
         ).toBeInTheDocument();
       });
-      expect(
-        screen.getByText(/audio backend offline/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/audio backend offline/i)).toBeInTheDocument();
     });
 
     it("renders the device dropdown when load succeeds", async () => {
@@ -231,9 +220,7 @@ describe("SettingsWindow — error handling", () => {
       });
 
       await waitFor(() => {
-        expect(
-          screen.getByText(/hotkey already in use/i),
-        ).toBeInTheDocument();
+        expect(screen.getByText(/hotkey already in use/i)).toBeInTheDocument();
       });
 
       expect(useFloeStore.getState().hotkey).toBe("Ctrl+Space");
@@ -254,7 +241,7 @@ describe("SettingsWindow — error handling", () => {
       await waitFor(() => {
         expect(
           screen.getByText(
-            /could not validate api key\. check your network connection/i,
+            /could not validate or save your api key: network down\. check your network connection/i,
           ),
         ).toBeInTheDocument();
       });
@@ -351,6 +338,45 @@ describe("SettingsWindow — error handling", () => {
 
       await waitFor(() => {
         expect(screen.queryByText(/validating…/i)).not.toBeInTheDocument();
+      });
+    });
+
+    it("shows a keychain-specific error when saveApiKey rejects with secretStoreUnavailable", async () => {
+      mockValidateApiKey.mockResolvedValueOnce(true);
+      mockSaveApiKey.mockRejectedValueOnce({
+        domain: "settings",
+        code: "secretStoreUnavailable",
+        message: "Secure key storage is unavailable.",
+      });
+      render(<SettingsWindow />);
+      const input = screen.getByPlaceholderText("Enter your API key");
+      fireEvent.change(input, { target: { value: "gsk_test" } });
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/your system.{0,5}s keychain is unavailable/i),
+        ).toBeInTheDocument();
+      });
+      // The store should NOT be marked configured: the key never actually
+      // reached the keychain.
+      expect(useFloeStore.getState().apiKeyConfigured).toBe(true); // prior state preserved
+      expect(mockSaveApiKey).toHaveBeenCalledWith("gsk_test");
+    });
+
+    it("falls back to a network-style message for non-keychain save failures", async () => {
+      mockValidateApiKey.mockRejectedValueOnce(new Error("ipc disconnected"));
+      render(<SettingsWindow />);
+      const input = screen.getByPlaceholderText("Enter your API key");
+      fireEvent.change(input, { target: { value: "gsk_test" } });
+      fireEvent.blur(input);
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            /could not validate or save your api key: ipc disconnected\. check your network connection/i,
+          ),
+        ).toBeInTheDocument();
       });
     });
   });
@@ -587,9 +613,7 @@ describe("SettingsWindow — audio device selection", () => {
       expect(useFloeStore.getState().selectedAudioDeviceId).toBe("dev-1");
     });
     await waitFor(() => {
-      expect(
-        screen.getByText(/failed to save settings/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/failed to save settings/i)).toBeInTheDocument();
     });
   });
 
@@ -646,9 +670,7 @@ describe("SettingsWindow — skip cleanup toggle", () => {
       expect(useFloeStore.getState().skipCleanup).toBe(true);
     });
     await waitFor(() => {
-      expect(
-        screen.getByText(/failed to save settings/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/failed to save settings/i)).toBeInTheDocument();
     });
   });
 
@@ -699,6 +721,35 @@ describe("SettingsWindow — close handler", () => {
     await waitFor(() => {
       expect(mockSaveApiKey).toHaveBeenCalledWith("gsk_unsaved");
     });
+  });
+
+  it("does not invoke onClose until the pending save resolves", async () => {
+    useFloeStore.setState({ apiKey: "gsk_unsaved" });
+    let resolveValidate: (value: boolean) => void = () => {};
+    mockValidateApiKey.mockReturnValueOnce(
+      new Promise<boolean>((resolve) => {
+        resolveValidate = resolve;
+      }),
+    );
+    const onClose = vi.fn();
+    mockSaveApiKey.mockResolvedValueOnce({
+      configured: true,
+      maskedPreview: "gsk_…****",
+    });
+
+    render(<SettingsWindow onClose={onClose} />);
+    fireEvent.click(screen.getByRole("button", { name: /close settings/i }));
+
+    // Wait long enough that any (incorrect) early onClose would have landed.
+    await flushMicrotasks();
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Drain.
+    resolveValidate(true);
+    await waitFor(() => {
+      expect(onClose).toHaveBeenCalled();
+    });
+    expect(useFloeStore.getState().isSettingsOpen).toBe(false);
   });
 });
 

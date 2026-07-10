@@ -20,10 +20,15 @@ pub struct RecordingBuffer {
     pub sample_rate: u32,
     pub input_channels: u16,
     max_samples: usize,
+    /// Hard byte ceiling as defense-in-depth (independent of duration).
+    /// Prevents unbounded memory growth if duration gates are bypassed.
+    max_bytes: usize,
     started_at_ms: u64,
     ended_at_ms: Option<u64>,
     end_reason: Option<RecordingEndReason>,
 }
+
+const MAX_BUFFER_BYTES: usize = 25 * 1024 * 1024; // 25 MiB hard cap (~25M f32 samples worst case)
 
 impl RecordingBuffer {
     pub fn new(
@@ -43,6 +48,7 @@ impl RecordingBuffer {
             sample_rate,
             input_channels,
             max_samples,
+            max_bytes: MAX_BUFFER_BYTES,
             started_at_ms,
             ended_at_ms: None,
             end_reason: None,
@@ -58,6 +64,12 @@ impl RecordingBuffer {
         let available_samples = self.max_samples.saturating_sub(self.samples.len());
         let available_frames = input.len() / channels;
         let frames_to_take = available_frames.min(available_samples);
+
+        // Hard byte ceiling defense (in addition to sample count)
+        let current_bytes = self.samples.len() * std::mem::size_of::<f32>();
+        let available_bytes = self.max_bytes.saturating_sub(current_bytes);
+        let max_samples_by_bytes = available_bytes / std::mem::size_of::<f32>();
+        let frames_to_take = frames_to_take.min(max_samples_by_bytes / channels.max(1));
 
         let mut sum_squares: f64 = 0.0;
         let mut frame_count: usize = 0;
@@ -77,6 +89,8 @@ impl RecordingBuffer {
 
         if self.samples.len() >= self.max_samples {
             self.finish(RecordingEndReason::MaxDuration);
+        } else if self.samples.len() * std::mem::size_of::<f32>() >= self.max_bytes {
+            self.finish(RecordingEndReason::MaxDuration);
         }
     }
 
@@ -87,6 +101,9 @@ impl RecordingBuffer {
     pub fn mark_watchdog_timeout(&mut self) {
         self.finish(RecordingEndReason::WatchdogTimeout);
     }
+
+    #[cfg(not(test))]
+    compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
 
     #[cfg(test)]
     pub fn reset_for_test(&mut self) {

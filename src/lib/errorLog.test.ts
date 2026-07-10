@@ -142,7 +142,9 @@ describe("logRecoverable / logCritical", () => {
 
   it("handles non-Error values without throwing", () => {
     expect(() => logRecoverable("ctx-non", "string error")).not.toThrow();
-    expect(() => logRecoverable("ctx-obj", { message: "obj error" })).not.toThrow();
+    expect(() =>
+      logRecoverable("ctx-obj", { message: "obj error" }),
+    ).not.toThrow();
     expect(() => logRecoverable("ctx-null", null)).not.toThrow();
     expect(() => logRecoverable("ctx-undef", undefined)).not.toThrow();
   });

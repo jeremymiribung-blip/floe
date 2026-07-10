@@ -99,9 +99,7 @@ function readBackendError(err: unknown): { message: string; code?: string } {
   if (err && typeof err === "object" && "message" in err) {
     const payload = err as { message: unknown; code?: unknown };
     const message =
-      typeof payload.message === "string"
-        ? payload.message
-        : errorMessage(err);
+      typeof payload.message === "string" ? payload.message : errorMessage(err);
     const code = typeof payload.code === "string" ? payload.code : undefined;
     return { message, code };
   }
@@ -145,7 +143,11 @@ export default function UpdateSection() {
       logCritical("update checkForUpdate", err);
       const { message } = readBackendError(err);
       setUpdateInfo(
-        errorUpdateInfo(updateInfo?.currentVersion, null, message || "Update check failed."),
+        errorUpdateInfo(
+          updateInfo?.currentVersion,
+          null,
+          message || "Update check failed.",
+        ),
       );
     }
   }, [setUpdateInfo, setUpdateCheckInProgress, updateInfo?.currentVersion]);
@@ -159,7 +161,11 @@ export default function UpdateSection() {
       logCritical("update downloadUpdate", err);
       const { message } = readBackendError(err);
       setUpdateInfo(
-        errorUpdateInfo(updateInfo?.currentVersion, updateInfo?.latestVersion, message || "Download failed."),
+        errorUpdateInfo(
+          updateInfo?.currentVersion,
+          updateInfo?.latestVersion,
+          message || "Download failed.",
+        ),
       );
     }
   }, [setUpdateInfo, updateInfo]);
@@ -172,7 +178,11 @@ export default function UpdateSection() {
       logCritical("update installUpdate", err);
       const { message } = readBackendError(err);
       setUpdateInfo(
-        errorUpdateInfo(updateInfo?.currentVersion, updateInfo?.latestVersion, message || "Installation failed."),
+        errorUpdateInfo(
+          updateInfo?.currentVersion,
+          updateInfo?.latestVersion,
+          message || "Installation failed.",
+        ),
       );
     }
   }, [setUpdateInfo, updateInfo?.currentVersion, updateInfo?.latestVersion]);
@@ -189,7 +199,11 @@ export default function UpdateSection() {
       logCritical("update resetUpdateState", err);
       const { message } = readBackendError(err);
       setUpdateInfo(
-        errorUpdateInfo(updateInfo?.currentVersion, updateInfo?.latestVersion, message || "Could not dismiss update."),
+        errorUpdateInfo(
+          updateInfo?.currentVersion,
+          updateInfo?.latestVersion,
+          message || "Could not dismiss update.",
+        ),
       );
     }
   }, [setUpdateInfo, updateInfo?.currentVersion, updateInfo?.latestVersion]);

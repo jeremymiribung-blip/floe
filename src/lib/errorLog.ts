@@ -116,7 +116,11 @@ function shouldEmit(context: string, message: string): boolean {
   return true;
 }
 
-function emit(context: string, err: unknown, tag: "recoverable" | "critical"): void {
+function emit(
+  context: string,
+  err: unknown,
+  tag: "recoverable" | "critical",
+): void {
   const error = toError(err);
   const message = errorMessage(err);
   if (!shouldEmit(context, message)) return;
@@ -137,6 +141,25 @@ export function logRecoverable(context: string, err: unknown): void {
 export function logCritical(context: string, err: unknown): void {
   emit(context, err, "critical");
 }
+
+/**
+ * Detect whether an error originated from a failed keychain save
+ * (`SettingsError.code === "secretStoreUnavailable"`).
+ *
+ * Rust serializes `Result<_, SettingsError>` rejections as plain
+ * `{ domain, code, message }` objects, so the frontend can branch on the
+ * structured code without relying on string-matching error messages.
+ */
+export function isKeychainError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const code = (err as { code?: unknown }).code;
+  return code === "secretStoreUnavailable";
+}
+
+/** User-facing message for a keychain storage failure. */
+export const KEYCHAIN_UNAVAILABLE_MESSAGE =
+  "Could not save your API key: your system’s keychain is unavailable. " +
+  "Check that your OS keychain is unlocked (or that no other app is locking it) and try again.";
 
 /** Test-only: clear the dedupe ring. */
 export function _resetErrorLogForTests(): void {

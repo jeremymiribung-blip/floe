@@ -9,9 +9,9 @@ pub use context::PipelineContext;
 pub use event::DiagEvent;
 pub use logger::init;
 pub use report::{
-    rate_limit_to_map, AudioSnapshot, DetailedEvent, DiagnosticsReport,
-    HotkeySnapshot, LastError, PlatformInfo, RateLimitSnapshot, RecoveryAction, ReportInputs,
-    SessionSnapshot, SettingsSnapshot, SttProviderSnapshot,
+    rate_limit_to_map, AudioSnapshot, DetailedEvent, DiagnosticsReport, HotkeySnapshot, LastError,
+    PlatformInfo, RateLimitSnapshot, RecoveryAction, ReportInputs, SessionSnapshot,
+    SettingsSnapshot, SttProviderSnapshot,
 };
 pub use storage::{default_diag_path, default_session_path, finalize_crashed_session};
 pub use tracer::{PipelineTrace, PipelineTracer};
@@ -135,12 +135,10 @@ impl LastSessionStore {
         // Use the current in-memory snapshot, or fall back to what's on disk.
         let snapshot = match self.get() {
             Some(s) => s,
-            None => {
-                match storage::read_persisted_session(&path) {
-                    Some(p) => p.snapshot,
-                    None => return,
-                }
-            }
+            None => match storage::read_persisted_session(&path) {
+                Some(p) => p.snapshot,
+                None => return,
+            },
         };
 
         let finalized = storage::PersistedSession::new(snapshot).with_clean_shutdown();

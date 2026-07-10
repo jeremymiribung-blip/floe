@@ -227,5 +227,3 @@ export function DiagnosticsSection({ appVersion }: DiagnosticsSectionProps) {
     </div>
   );
 }
-
-

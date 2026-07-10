@@ -175,8 +175,12 @@ describe("App — setup gating", () => {
 
     expect(await screen.findByText("Floe Settings")).toBeDefined();
     expect(screen.queryByText(/welcome to floe/i)).toBeNull();
-    expect(screen.getAllByLabelText("Close settings").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByPlaceholderText("Enter your API key").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByLabelText("Close settings").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByPlaceholderText("Enter your API key").length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
   it("renders at least one API key input field within SettingsWindow when ready", async () => {

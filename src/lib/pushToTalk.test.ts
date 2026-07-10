@@ -1,17 +1,10 @@
-import {
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock only external tauri dependencies used by pushToTalk itself.
 // The PushToTalkController is otherwise tested end-to-end against fake deps.
 vi.mock("../lib/tauri", async () => {
-  const actual = await vi.importActual<typeof import("../lib/tauri")>(
-    "../lib/tauri",
-  );
+  const actual =
+    await vi.importActual<typeof import("../lib/tauri")>("../lib/tauri");
   return {
     ...actual,
     diagLog: vi.fn(),
@@ -29,12 +22,17 @@ const flush = async () => {
 // Fresh per-test isolation: ensure tauri mocks don't carry state across tests.
 beforeEach(async () => {
   const tauri = await import("../lib/tauri");
-  (tauri.updateSessionHotkeyLatency as unknown as ReturnType<typeof vi.fn>).mockClear();
+  (
+    tauri.updateSessionHotkeyLatency as unknown as ReturnType<typeof vi.fn>
+  ).mockClear();
   (tauri.logFrontendEvent as unknown as ReturnType<typeof vi.fn>).mockClear();
   (tauri.diagLog as unknown as ReturnType<typeof vi.fn>).mockClear();
 });
 
-import { MAX_RECORDING_DURATION_SECS, WATCHDOG_GRACE_SECS } from "../lib/contract";
+import {
+  MAX_RECORDING_DURATION_SECS,
+  WATCHDOG_GRACE_SECS,
+} from "../lib/contract";
 import type { RecordingStatus } from "../types/app";
 import {
   createController,
@@ -119,7 +117,9 @@ describe("PushToTalkController — state transitions", () => {
     expect(handle.callbacks.stateChanges).toEqual(["starting"]);
 
     // Now resolve start — controller should auto-finish, calling stopRecording.
-    (resolveStart as unknown as ((value: RecordingStatus) => void))(makeRecordingStatus());
+    (resolveStart as unknown as (value: RecordingStatus) => void)(
+      makeRecordingStatus(),
+    );
     await startPromise;
     await flush();
 
@@ -150,7 +150,7 @@ describe("PushToTalkController — syncRecordingState", () => {
           Promise.resolve(
             makeCleanupResult({
               text: "",
-              model: "llama-3.3-70b-versatile",
+              model: "qwen/qwen3.6-27b",
               validationMs: 0,
               fallbackUsed: false,
             }),
@@ -164,7 +164,9 @@ describe("PushToTalkController — syncRecordingState", () => {
 
     // Empty-cleanup path → state goes to "ready", not "preview".
     // Verify that the controller ends in `idle` with no preview.
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("ready");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "ready",
+    );
     expect(controller.isRecording()).toBe(false);
   });
 
@@ -228,7 +230,9 @@ describe("PushToTalkController — recording lifecycle (happy path)", () => {
 
     expect(callbacks.latestRecordings.length).toBe(1);
     expect(callbacks.recordingStatuses.length).toBeGreaterThanOrEqual(2);
-    expect(callbacks.transcripts[callbacks.transcripts.length - 1]).toBe("Hello world.");
+    expect(callbacks.transcripts[callbacks.transcripts.length - 1]).toBe(
+      "Hello world.",
+    );
 
     expect(callbacks.errors[callbacks.errors.length - 1]).toBeNull();
   });
@@ -253,7 +257,9 @@ describe("PushToTalkController — recording lifecycle (happy path)", () => {
     await flush();
 
     const { updateSessionHotkeyLatency } = await import("../lib/tauri");
-    const fn = updateSessionHotkeyLatency as unknown as ReturnType<typeof vi.fn>;
+    const fn = updateSessionHotkeyLatency as unknown as ReturnType<
+      typeof vi.fn
+    >;
     const calls = fn.mock.calls.filter((c) => c[0] === trace);
     expect(calls.length).toBe(1);
     expect(calls[0]).toEqual([trace, 50]);
@@ -276,7 +282,9 @@ describe("PushToTalkController — recording lifecycle (happy path)", () => {
     await flush();
 
     const { updateSessionHotkeyLatency } = await import("../lib/tauri");
-    const fn = updateSessionHotkeyLatency as unknown as ReturnType<typeof vi.fn>;
+    const fn = updateSessionHotkeyLatency as unknown as ReturnType<
+      typeof vi.fn
+    >;
     expect(fn).not.toHaveBeenCalled();
   });
 
@@ -293,7 +301,9 @@ describe("PushToTalkController — recording lifecycle (happy path)", () => {
     await controller.handleShortcutState("Released");
     await flush();
 
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("ready");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "ready",
+    );
     expect(deps.copyTextToClipboard).not.toHaveBeenCalled();
     expect(deps.pasteClipboard).not.toHaveBeenCalled();
   });
@@ -306,12 +316,16 @@ describe("PushToTalkController — cancellation / discard", () => {
     await flush();
     await controller.handleShortcutState("Released");
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("preview");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "preview",
+    );
 
     await controller.discardPreview();
     await flush();
 
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("idle");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "idle",
+    );
     expect(callbacks.transcripts[callbacks.transcripts.length - 1]).toBeNull();
   });
 
@@ -328,7 +342,9 @@ describe("PushToTalkController — cancellation / discard", () => {
     await flush();
     await controller.handleShortcutState("Released");
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("preview");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "preview",
+    );
 
     deps.startRecording.mockClear();
     await controller.handleShortcutState("Pressed");
@@ -358,8 +374,12 @@ describe("PushToTalkController — failures", () => {
     await controller.handleShortcutState("Pressed");
     await flush();
 
-    expect(callbacks.errors[callbacks.errors.length - 1]).toBe("friendly:permissionDenied:mic denied");
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("error");
+    expect(callbacks.errors[callbacks.errors.length - 1]).toBe(
+      "friendly:permissionDenied:mic denied",
+    );
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "error",
+    );
     expect(deps.forceStopRecording).not.toHaveBeenCalled();
   });
 
@@ -375,9 +395,15 @@ describe("PushToTalkController — failures", () => {
     await flush();
 
     expect(deps.forceStopRecording).toHaveBeenCalled();
-    expect(callbacks.errors[callbacks.errors.length - 1]).toBe("Hardware error: Recording reset");
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("idle");
-    expect(callbacks.toasts[callbacks.toasts.length - 1]).toMatch(/hardware error/i);
+    expect(callbacks.errors[callbacks.errors.length - 1]).toBe(
+      "Hardware error: Recording reset",
+    );
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "idle",
+    );
+    expect(callbacks.toasts[callbacks.toasts.length - 1]).toMatch(
+      /hardware error/i,
+    );
   });
 
   it("startRecording rejects with internal — tolerates forceStop failure", async () => {
@@ -391,15 +417,23 @@ describe("PushToTalkController — failures", () => {
     await controller.handleShortcutState("Pressed");
     await flush();
 
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("idle");
-    expect(callbacks.errors[callbacks.errors.length - 1]).toBe("Hardware error: Recording reset");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "idle",
+    );
+    expect(callbacks.errors[callbacks.errors.length - 1]).toBe(
+      "Hardware error: Recording reset",
+    );
   });
 
   it("stopRecording rejects → error state with diagnostics recorded", async () => {
     const { controller, callbacks } = createController({
       deps: {
         stopRecording: () =>
-          Promise.reject({ domain: "recording", code: "stopFailed", message: "stop failed" }),
+          Promise.reject({
+            domain: "recording",
+            code: "stopFailed",
+            message: "stop failed",
+          }),
       },
     });
 
@@ -408,7 +442,9 @@ describe("PushToTalkController — failures", () => {
     await controller.handleShortcutState("Released");
     await flush();
 
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("error");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "error",
+    );
     expect(callbacks.diagnostics.length).toBeGreaterThan(0);
   });
 
@@ -425,8 +461,12 @@ describe("PushToTalkController — failures", () => {
     await controller.handleShortcutState("Released");
     await flush();
 
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("error");
-    expect(callbacks.errors[callbacks.errors.length - 1]).toBe("friendly:timeout:took too long");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "error",
+    );
+    expect(callbacks.errors[callbacks.errors.length - 1]).toBe(
+      "friendly:timeout:took too long",
+    );
     expect(deps.cleanupTranscript).not.toHaveBeenCalled();
     expect(deps.copyTextToClipboard).not.toHaveBeenCalled();
   });
@@ -445,8 +485,12 @@ describe("PushToTalkController — failures", () => {
     await controller.handleShortcutState("Released");
     await flush();
 
-    expect(callbacks.transcripts[callbacks.transcripts.length - 1]).toBe("raw transcript here");
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("preview");
+    expect(callbacks.transcripts[callbacks.transcripts.length - 1]).toBe(
+      "raw transcript here",
+    );
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "preview",
+    );
     expect(callbacks.errors).toContain("Cleanup failed");
   });
 
@@ -503,7 +547,9 @@ describe("PushToTalkController — failures", () => {
     // State path includes pasting (the first onStateChange on the way in).
     expect(callbacks.stateChanges[0]).toBe("pasting");
     // Diagnostics were stored with errorStage=clipboard.
-    const json = callbacks.diagnostics[callbacks.diagnostics.length - 1] as string;
+    const json = callbacks.diagnostics[
+      callbacks.diagnostics.length - 1
+    ] as string;
     expect(json).toBeTruthy();
     const parsed = JSON.parse(json);
     expect(parsed.result.error_stage).toBe("clipboard");
@@ -531,7 +577,9 @@ describe("PushToTalkController — failures", () => {
     await flush();
 
     expect(callbacks.stateChanges).toContain("copied");
-    expect(callbacks.toasts[callbacks.toasts.length - 1]).toMatch(/automatic paste failed/i);
+    expect(callbacks.toasts[callbacks.toasts.length - 1]).toMatch(
+      /automatic paste failed/i,
+    );
 
     const json = callbacks.diagnostics[callbacks.diagnostics.length - 1];
     const parsed = JSON.parse(json as string);
@@ -574,9 +622,15 @@ describe("PushToTalkController — backend disconnect / recovery", () => {
       await vi.advanceTimersByTimeAsync(WATCHDOG_TIMEOUT_MS + 1);
 
       expect(deps.forceStopRecording).toHaveBeenCalledTimes(1);
-      expect(callbacks.errors[callbacks.errors.length - 1]).toBe("Hardware error: Recording reset");
-      expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("idle");
-      expect(callbacks.toasts[callbacks.toasts.length - 1]).toMatch(/hardware error/i);
+      expect(callbacks.errors[callbacks.errors.length - 1]).toBe(
+        "Hardware error: Recording reset",
+      );
+      expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+        "idle",
+      );
+      expect(callbacks.toasts[callbacks.toasts.length - 1]).toMatch(
+        /hardware error/i,
+      );
       expect(controller.isRecording()).toBe(false);
     } finally {
       vi.useRealTimers();
@@ -676,7 +730,9 @@ describe("PushToTalkController — backend disconnect / recovery", () => {
     await controller.handleShortcutState("Released");
     await flush();
 
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("preview");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "preview",
+    );
     expect(deps.cleanupTranscript).toHaveBeenCalled();
   });
 });
@@ -689,7 +745,9 @@ describe("PushToTalkController — preview & confirm", () => {
     await flush();
     await controller.handleShortcutState("Released");
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("preview");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "preview",
+    );
 
     callbacks.stateChanges.length = 0;
 
@@ -698,14 +756,15 @@ describe("PushToTalkController — preview & confirm", () => {
 
     // pasting, pasted
     expect(callbacks.stateChanges).toContain("pasting");
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("pasted");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "pasted",
+    );
   });
 
   it("confirmPreview resets recordingState and finishing even when an exception is thrown", async () => {
     const { controller, deps, callbacks } = createController({
       deps: {
-        copyTextToClipboard: () =>
-          Promise.reject(new Error("clipboard dead")),
+        copyTextToClipboard: () => Promise.reject(new Error("clipboard dead")),
       },
     });
 
@@ -763,11 +822,15 @@ describe("PushToTalkController — preview & confirm", () => {
     await flush();
     await controller.handleShortcutState("Released");
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("preview");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "preview",
+    );
 
     await controller.confirmPreview();
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("pasted");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "pasted",
+    );
   });
 });
 
@@ -782,7 +845,9 @@ describe("PushToTalkController — diagnostics emission", () => {
     await controller.confirmPreview();
     await flush();
 
-    const last = callbacks.diagnostics[callbacks.diagnostics.length - 1] as string;
+    const last = callbacks.diagnostics[
+      callbacks.diagnostics.length - 1
+    ] as string;
     const parsed = JSON.parse(last);
     expect(parsed.app).toBe("Floe");
     expect(parsed.result.stt_success).toBe(true);
@@ -814,7 +879,9 @@ describe("PushToTalkController — diagnostics emission", () => {
     await controller.confirmPreview();
     await flush();
 
-    const last = callbacks.diagnostics[callbacks.diagnostics.length - 1] as string;
+    const last = callbacks.diagnostics[
+      callbacks.diagnostics.length - 1
+    ] as string;
     expect(last).toBeTruthy();
     const parsed = JSON.parse(last);
     expect(parsed.result.cleanup_fallback_used).toBe(true);
@@ -851,24 +918,30 @@ describe("PushToTalkController — error path: alreadyRecording", () => {
     await controller.handleShortcutState("Pressed");
     await flush();
 
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("error");
-    expect(callbacks.errors[callbacks.errors.length - 1]).toBe("friendly:alreadyRecording:in progress");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "error",
+    );
+    expect(callbacks.errors[callbacks.errors.length - 1]).toBe(
+      "friendly:alreadyRecording:in progress",
+    );
   });
 
   it("permission-denied error path uses no forceStop", async () => {
     const { controller, deps, callbacks } = createController({
       deps: {
         startRecording: () =>
-          Promise.reject(
-            recordingDomainError("permissionDenied", "denied"),
-          ),
+          Promise.reject(recordingDomainError("permissionDenied", "denied")),
       },
     });
     await controller.handleShortcutState("Pressed");
     await flush();
     expect(deps.forceStopRecording).not.toHaveBeenCalled();
-    expect(callbacks.errors[callbacks.errors.length - 1]).toBe("friendly:permissionDenied:denied");
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("error");
+    expect(callbacks.errors[callbacks.errors.length - 1]).toBe(
+      "friendly:permissionDenied:denied",
+    );
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "error",
+    );
   });
 });
 
@@ -928,7 +1001,9 @@ describe("PushToTalkController — non-FloeError thrown values", () => {
     });
     await controller.handleShortcutState("Pressed");
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("error");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "error",
+    );
     expect(callbacks.errors[callbacks.errors.length - 1]).toBeTruthy();
   });
 
@@ -941,8 +1016,12 @@ describe("PushToTalkController — non-FloeError thrown values", () => {
     });
     await controller.handleShortcutState("Pressed");
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("error");
-    expect(callbacks.errors[callbacks.errors.length - 1]).toMatch(/uncaught sync failure/);
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "error",
+    );
+    expect(callbacks.errors[callbacks.errors.length - 1]).toMatch(
+      /uncaught sync failure/,
+    );
   });
 });
 
@@ -954,12 +1033,16 @@ describe("PushToTalkController — final state resets", () => {
     await flush();
     await controller.handleShortcutState("Released");
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("preview");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "preview",
+    );
     expect(controller.isRecording()).toBe(false);
 
     await controller.confirmPreview();
     await flush();
-    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe("pasted");
+    expect(callbacks.stateChanges[callbacks.stateChanges.length - 1]).toBe(
+      "pasted",
+    );
 
     // After complete pipeline, deps copies are done — controller is fully idle.
     deps.copyTextToClipboard.mockClear();

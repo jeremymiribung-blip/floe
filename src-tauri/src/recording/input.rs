@@ -47,18 +47,16 @@ impl RecordingInput for CpalInputBackend {
         max_duration: std::time::Duration,
     ) -> Result<StartedRecording, RecordingError> {
         let host = cpal::default_host();
-        
+
         // Try to use the configured device_id if available
         let device = if let Some(device_id) = &self.device_id {
-            host.input_devices()
-                .ok()
-                .and_then(|mut devices| {
-                    devices.find(|d| {
-                        d.id()
-                            .map(|id| id.to_string() == *device_id)
-                            .unwrap_or(false)
-                    })
+            host.input_devices().ok().and_then(|mut devices| {
+                devices.find(|d| {
+                    d.id()
+                        .map(|id| id.to_string() == *device_id)
+                        .unwrap_or(false)
                 })
+            })
         } else {
             None
         }

@@ -35,7 +35,9 @@ function makeInfo(overrides: Partial<UpdateInfo> = {}): UpdateInfo {
   };
 }
 
-function setStoreState(overrides: Partial<ReturnType<typeof useFloeStore.getState>> = {}) {
+function setStoreState(
+  overrides: Partial<ReturnType<typeof useFloeStore.getState>> = {},
+) {
   useFloeStore.setState({
     updateInfo: null,
     updateCheckInProgress: false,
@@ -67,10 +69,14 @@ describe("UpdateSection", () => {
   });
 
   it("shows current version when idle", () => {
-    setStoreState({ updateInfo: makeInfo({ status: "idle", currentVersion: "1.0.0" }) });
+    setStoreState({
+      updateInfo: makeInfo({ status: "idle", currentVersion: "1.0.0" }),
+    });
     renderUpdateSection();
 
-    expect(screen.getByText((content) => content.includes("1.0.0"))).toBeDefined();
+    expect(
+      screen.getByText((content) => content.includes("1.0.0")),
+    ).toBeDefined();
   });
 
   // ── Checking state ───────────────────────────────────────────────────
@@ -114,7 +120,9 @@ describe("UpdateSection", () => {
     renderUpdateSection();
 
     expect(screen.getByText("Available")).toBeDefined();
-    expect(screen.getByText((content) => content.includes("0.2.0"))).toBeDefined();
+    expect(
+      screen.getByText((content) => content.includes("0.2.0")),
+    ).toBeDefined();
   });
 
   it('shows "Dismiss" button when update is available', () => {
@@ -135,7 +143,11 @@ describe("UpdateSection", () => {
     renderUpdateSection();
 
     expect(screen.getByText(/Downloading/)).toBeDefined();
-    expect(screen.getByText((content) => content.includes("45") && content.includes("%"))).toBeDefined();
+    expect(
+      screen.getByText(
+        (content) => content.includes("45") && content.includes("%"),
+      ),
+    ).toBeDefined();
   });
 
   it('shows "Dismiss" when downloading', () => {

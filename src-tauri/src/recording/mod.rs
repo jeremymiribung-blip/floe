@@ -1,7 +1,8 @@
+use parking_lot::Mutex;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -26,11 +27,7 @@ pub use self::{
 };
 
 #[cfg(test)]
-pub use self::{
-    buffer::RecordingBuffer,
-    input::StartedRecording,
-    wav::encode_pcm16_wav,
-};
+pub use self::{buffer::RecordingBuffer, input::StartedRecording, wav::encode_pcm16_wav};
 
 type SharedLevelEmitter = Arc<Mutex<LevelEmitterFn>>;
 type LevelEmitterFn = Box<dyn Fn(f32) + Send + Sync>;
@@ -42,40 +39,29 @@ type StateEmitterFn = Box<dyn Fn(types::RecordingState) + Send + Sync>;
 ///
 /// # Watchdog/Stop Race Condition
 ///
-/// There is a known race between [`stop_recording`](RecordingManager::stop_recording) and the
-/// watchdog thread. When `stop_recording` calls [`stop_watchdog`] (which sets the `stop` flag
-/// and aborts the watchdog join handle), the watchdog thread may already be past its
-/// [`stop.load()`](std::sync::atomic::AtomicBool::load) check and blocked on
-/// [`state.lock()`](std::sync::Mutex::lock). In that window the watchdog can mark the
-/// recording buffer as finished (via `mark_watchdog_timeout`) after
-/// [`stop_recording`](RecordingManager::stop_recording) has already taken ownership of the
-/// `active` recording with `Option::take`.
+/// There is a potential race between [`stop_recording`](RecordingManager::stop_recording)
+/// (and its internal `try_finalize_if_finished`) and the watchdog thread around ownership
+/// of `active` and marking the buffer finished.
 ///
-/// ## Current Mitigation
+/// ## Mitigation (strengthened)
 ///
-/// Both [`start_recording`](RecordingManager::start_recording) and
-/// [`stop_recording`](RecordingManager::stop_recording) call
-/// [`try_finalize_if_finished`](RecordingManager::try_finalize_if_finished) as their first
-/// action. This ensures that if the watchdog has already marked the buffer as finished, the
-/// recording is finalized before the rest of the stop logic proceeds. Additionally, the
-/// watchdog always checks `state.active.as_mut()` after acquiring the lock and returns
-/// early when the active recording has already been taken.
+/// - `stop_watchdog` (sets stop flag + aborts) is now called *before* the try_finalize guard
+///   and manual take in `stop_recording`, shrinking the window.
+/// - The check for `is_finished()` + `Option::take()` of active inside `try_finalize_if_finished`
+///   is performed under a single held `parking_lot::Mutex` guard (serialized/atomic w.r.t.
+///   other threads).
+/// - The watchdog always re-checks `state.active.as_mut()` *after* acquiring the lock and
+///   bails if the active has been taken by a stop path.
+/// - `finalize_active` consumes the `ActiveRecording` by value; only one path can ever
+///   obtain it thanks to `take()`. The buffer's own `is_finished()` / `finish()` is
+///   idempotent (first setter wins).
+/// - We use `parking_lot::Mutex` (no poisoning). Previous poison-recovery paths that
+///   forcibly nulled `active` (risking loss of a just-taken buffer during finalize) have
+///   been removed.
 ///
-/// ## Consequence
-///
-/// In the worst case, both the watchdog path and `stop_recording` could attempt to finalize
-/// the same recording (a double-finalize). This is mitigated by `Option::take` which
-/// moves the `Option<ActiveRecording>` out, and by the fact that
-/// [`finalize_active`] consumes the recording by value. If the active has already been taken,
-/// any subsequent attempt to finalize it is a no-op because the buffer is still accessible
-/// through the shared `Arc` and its `is_finished()` flag is idempotent.
-///
-/// ## Known Limitation
-///
-/// This is a known limitation of the current synchronous architecture. The long-term fix
-/// (see prompt 5 in the design spec) is to convert the recording lifecycle to an async
-/// state machine where the watchdog and stop logic are serialised through a single async
-/// task, eliminating the race entirely.
+/// These changes ensure `try_finalize_if_finished` and the ownership extraction are
+/// strictly serialized under the state mutex so we never lose or double-finalize the
+/// captured audio buffer.
 pub struct RecordingManager {
     backend: Box<dyn RecordingInput>,
     state: Arc<Mutex<ManagerState>>,
@@ -177,22 +163,19 @@ impl RecordingManager {
     }
 
     pub fn set_level_emitter(&self, emit_level: LevelEmitterFn) {
-        if let Ok(mut slot) = self.emit_level.lock() {
-            *slot = emit_level;
-        }
+        let mut slot = self.emit_level.lock();
+        *slot = emit_level;
     }
 
     pub fn set_state_emitter(&self, emit_state_fn: StateEmitterFn) {
-        if let Ok(mut slot) = self.emit_state.lock() {
-            *slot = emit_state_fn;
-        }
+        let mut slot = self.emit_state.lock();
+        *slot = emit_state_fn;
     }
 
     /// Emit without taking the state lock. Call when state lock is already held.
     fn emit_only(&self, new_state: types::RecordingState) {
-        if let Ok(emit) = self.emit_state.lock() {
-            (emit)(new_state);
-        }
+        let emit = self.emit_state.lock();
+        (emit)(new_state);
     }
 
     pub fn start_recording(&self) -> Result<RecordingStatus, RecordingError> {
@@ -246,10 +229,19 @@ impl RecordingManager {
     }
 
     pub fn stop_recording(&self) -> Result<RecordingInfo, RecordingError> {
-        // Guard: finalize any finished recording before checking can_stop
+        // Stop the watchdog as early as possible to reduce the race window with
+        // its timeout logic. The try_finalize below will also stop it (idempotent).
+        {
+            let mut state = self.lock_state()?;
+            stop_watchdog(&mut state);
+        }
+
+        // Guard: finalize any finished recording (from max duration or prior watchdog)
+        // before doing manual stop extraction. This check+take is serialized under
+        // the state lock.
         let did_finalize = self.try_finalize_if_finished()?;
 
-        // If try_finalize_if_finished already finalized (e.g. max duration),
+        // If try_finalize_if_finished already finalized (e.g. max duration or watchdog),
         // return the result directly
         if did_finalize {
             let state = self.lock_state()?;
@@ -261,7 +253,7 @@ impl RecordingManager {
         let (active, meter) = {
             let mut state = self.lock_state()?;
 
-            stop_watchdog(&mut state);
+            // watchdog already stopped above
 
             if let Err(code) = state.recording_state.can_stop() {
                 let error = RecordingError {
@@ -298,9 +290,8 @@ impl RecordingManager {
             stop_emitter(&mut state);
         }
         meter.store(0.0);
-        if let Ok(emit_slot) = self.emit_level.lock() {
-            (emit_slot)(0.0);
-        }
+        let emit_slot = self.emit_level.lock();
+        (emit_slot)(0.0);
 
         let result = finalize_active(active, RecordingEndReason::Manual);
 
@@ -356,9 +347,8 @@ impl RecordingManager {
             stop_emitter(&mut state);
         }
         meter.store(0.0);
-        if let Ok(emit_slot) = self.emit_level.lock() {
-            (emit_slot)(0.0);
-        }
+        let emit_slot = self.emit_level.lock();
+        (emit_slot)(0.0);
 
         let result = finalize_active(active, RecordingEndReason::Shutdown);
 
@@ -405,37 +395,26 @@ impl RecordingManager {
         Ok(state.latest.as_ref().map(|latest| latest.wav_bytes.clone()))
     }
 
-    fn lock_state(&self) -> Result<std::sync::MutexGuard<'_, ManagerState>, RecordingError> {
-        self.state.lock().map_err(|poison| {
-            // Recover from poisoned mutex by extracting and resetting the inner state
-            let mut state = poison.into_inner();
-            state.recording_state = types::RecordingState::Idle;
-            if let Some(mut handle) = state.emitter_handle.take() {
-                handle.stop_and_join();
+    /// Clears the WAV bytes for the latest recording to release memory.
+    /// Called after successful transcription or when the recording is discarded.
+    pub fn clear_latest_recording(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            if let Some(latest) = &mut state.latest {
+                // Use mem::take + shrink_to_fit to release the allocation promptly
+                let _ = std::mem::take(&mut latest.wav_bytes);
+                latest.wav_bytes.shrink_to_fit();
             }
-            if let Some(mut handle) = state.watchdog_handle.take() {
-                handle.stop_and_join();
-            }
-            state.active = None;
-            RecordingError {
-                domain: "recording",
-                code: RecordingErrorCode::Internal,
-                message: "Recording state could not be locked.".to_string(),
-            }
-        })
+        }
+    }
+
+    fn lock_state(&self) -> Result<parking_lot::MutexGuard<'_, ManagerState>, RecordingError> {
+        Ok(self.state.lock())
     }
 
     /// Forcibly stop recording and reset internal state.
-    /// This is used to recover from stuck states when the audio thread is hanging
-    /// or when mutex poisoning has occurred.
+    /// This is used to recover from stuck states when the audio thread is hanging.
     pub fn force_stop_recording(&self) -> Result<(), RecordingError> {
-        let mut state = match self.state.lock() {
-            Ok(guard) => guard,
-            Err(poison) => {
-                // Mutex is poisoned - recover by taking the inner state
-                poison.into_inner()
-            }
-        };
+        let mut state = self.state.lock();
 
         // Stop watchdog and emitter threads
         stop_watchdog(&mut state);
@@ -457,15 +436,14 @@ impl RecordingManager {
         self.emit_only(types::RecordingState::Idle);
 
         // Clear level meter
-        if let Ok(emit_slot) = self.emit_level.lock() {
-            (emit_slot)(0.0);
-        }
+        let emit_slot = self.emit_level.lock();
+        (emit_slot)(0.0);
 
         Ok(())
     }
 
     #[cfg(test)]
-    fn state_arc(&self) -> Arc<Mutex<ManagerState>> {
+    fn state_arc(&self) -> Arc<parking_lot::Mutex<ManagerState>> {
         Arc::clone(&self.state)
     }
 
@@ -671,9 +649,8 @@ fn level_emitter_loop(
     while !stop.load(Ordering::SeqCst) {
         let value = normalize_rms(meter.load());
 
-        if let Ok(emit) = emit_level.lock() {
-            (emit)(value);
-        }
+        let emit = emit_level.lock();
+        (emit)(value);
 
         std::thread::sleep(Duration::from_millis(EMIT_INTERVAL_MS));
     }
@@ -685,16 +662,16 @@ fn watchdog_loop(state: Arc<Mutex<ManagerState>>, stop: Arc<AtomicBool>, timeout
     }
 
     let poll_interval = Duration::from_millis(100);
-    let mut elapsed = Duration::ZERO;
+    let start = std::time::Instant::now();
 
-    while elapsed < timeout {
+    while start.elapsed() < timeout {
         if stop.load(Ordering::SeqCst) {
             return;
         }
-        let remaining = timeout - elapsed;
-        let sleep_duration = remaining.min(poll_interval);
-        std::thread::sleep(sleep_duration);
-        elapsed += sleep_duration;
+        // Cap the sleep at the remaining budget so a single long sleep can't
+        // overshoot `timeout` and skip the post-loop "did we stop?" check.
+        let remaining = timeout.saturating_sub(start.elapsed());
+        std::thread::sleep(remaining.min(poll_interval));
     }
 
     if stop.load(Ordering::SeqCst) {
@@ -897,7 +874,7 @@ mod tests {
             2000,
         )));
         let manager = test_manager(Arc::clone(&empty_buffer), Arc::new(LevelMeter::new()));
-        manager.state.lock().unwrap().latest = Some(previous_latest);
+        manager.state.lock().latest = Some(previous_latest);
 
         manager.start_recording().expect("start succeeds");
         let error = manager
@@ -1068,7 +1045,7 @@ mod tests {
             .expect("latest fixture should complete");
         let buffer = Arc::new(Mutex::new(latest));
         let manager = test_manager(Arc::clone(&buffer), Arc::new(LevelMeter::new()));
-        manager.state.lock().unwrap().latest = Some(completed);
+        manager.state.lock().latest = Some(completed);
 
         manager.start_recording().expect("start succeeds");
 

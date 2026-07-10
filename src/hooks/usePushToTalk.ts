@@ -31,25 +31,21 @@ import {
 } from "../lib/contract";
 import useFloeStore from "../stores/useFloeStore";
 
+import { normalizeError } from "../utils/errors";
+
 function pushToTalkErrorMessage(caught: unknown): string {
-  const maybeClipboardError = caught as { domain?: string; code?: string };
+  const normalized = normalizeError(caught);
+
   if (
-    maybeClipboardError.domain === "clipboard" ||
-    maybeClipboardError.code === "clipboardUnavailable" ||
-    maybeClipboardError.code === "pasteUnavailable"
+    normalized.domain === "clipboard" ||
+    normalized.code === "clipboardUnavailable" ||
+    normalized.code === "pasteUnavailable"
   ) {
     return clipboardErrorMessage(caught);
   }
 
-  const maybeSttError = caught as { domain?: string; code?: string };
-  if (
-    maybeSttError.domain === "stt" ||
-    typeof maybeSttError.code === "string"
-  ) {
-    const sttError = caught as { message?: string };
-    return typeof sttError.message === "string"
-      ? sttError.message
-      : "Transcription failed";
+  if (normalized.domain === "stt" || typeof normalized.code === "string") {
+    return normalized.message || "Transcription failed";
   }
 
   return recordingErrorMessage(caught);
@@ -82,10 +78,17 @@ export function usePushToTalk(): UsePushToTalkResult {
   );
 
   const controllerRef = useRef<PushToTalkController | null>(null);
+  const skipCleanupRef = useRef(useFloeStore.getState().skipCleanup);
   const syncFromPipeline = useFloeStore((s) => s.syncFromPipeline);
   const setRecordingStartedAt = useFloeStore((s) => s.setRecordingStartedAt);
-  const skipCleanupRef = useRef(useFloeStore.getState().skipCleanup);
-  skipCleanupRef.current = useFloeStore.getState().skipCleanup;
+  // Keep the ref in sync with the live `skipCleanup` value. The controller's
+  // `cleanupTranscript` closure is created once and outlasts any single render,
+  // so we mirror the store value into the ref via Zustand's plain subscribe API.
+  useEffect(() => {
+    return useFloeStore.subscribe((state) => {
+      skipCleanupRef.current = state.skipCleanup;
+    });
+  }, []);
 
   if (controllerRef.current === null) {
     controllerRef.current = new PushToTalkController(

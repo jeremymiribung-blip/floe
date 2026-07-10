@@ -867,9 +867,11 @@ pub fn contains_secret_marker(value: &str) -> bool {
     SECRET_MARKERS.iter().any(|m| lowered.contains(m))
 }
 
-/// Redact free-form text fields before they enter the report.
+/// Redact free-form text fields before they enter the report, and is also
+/// reused by the diag `cmd_log_str` Tauri command to scrub frontend log lines
+/// before they hit disk.
+///
 /// Returns the original string when it is safe; otherwise returns `"redacted"`.
-#[cfg(test)]
 pub fn redact_string_for_report(value: &str) -> String {
     redact_string(value)
 }

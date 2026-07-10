@@ -4,9 +4,12 @@ const RECORDING_ALREADY_ACTIVE = "Recording is already active";
 const NO_INPUT_DEVICE = "No microphone found";
 const RECORDING_TOO_SHORT = "Recording too short";
 const PERMISSION_DENIED_FALLBACK = "Microphone access denied";
-const PERMISSION_DENIED_MACOS = "Open System Settings > Privacy & Security > Microphone";
-const PERMISSION_DENIED_WINDOWS = "Go to Settings > Privacy & Security > Microphone";
-const PERMISSION_DENIED_LINUX = "Check your system sound settings to enable microphone access";
+const PERMISSION_DENIED_MACOS =
+  "Open System Settings > Privacy & Security > Microphone";
+const PERMISSION_DENIED_WINDOWS =
+  "Go to Settings > Privacy & Security > Microphone";
+const PERMISSION_DENIED_LINUX =
+  "Check your system sound settings to enable microphone access";
 
 const MICROPHONE_UNAVAILABLE_CODES: ReadonlySet<RecordingError["code"]> =
   new Set([
@@ -59,4 +62,3 @@ function getPermissionDeniedMessage(): string {
   }
   return PERMISSION_DENIED_FALLBACK;
 }
-

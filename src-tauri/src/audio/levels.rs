@@ -97,5 +97,4 @@ mod tests {
         assert_eq!(normalize_rms(f32::NAN), 0.0);
         assert_eq!(normalize_rms(f32::INFINITY), 0.0);
     }
-
 }

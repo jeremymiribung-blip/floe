@@ -74,6 +74,7 @@ pub const CMD_REGISTER_GLOBAL_HOTKEY: &str = "register_global_hotkey";
 pub const CMD_UNREGISTER_GLOBAL_HOTKEY: &str = "unregister_global_hotkey";
 pub const CMD_START_RECORDING: &str = "start_recording";
 pub const CMD_STOP_RECORDING: &str = "stop_recording";
+pub const CMD_FORCE_STOP_RECORDING: &str = "force_stop_recording";
 pub const CMD_GET_RECORDING_STATUS: &str = "get_recording_status";
 pub const CMD_GET_LATEST_RECORDING_INFO: &str = "get_latest_recording_info";
 pub const CMD_TRANSCRIBE_LATEST_RECORDING: &str = "transcribe_latest_recording";
@@ -130,6 +131,7 @@ pub const ALL_COMMANDS: &[&str] = &[
     CMD_SET_START_AT_LOGIN_ENABLED,
     CMD_START_RECORDING,
     CMD_STOP_RECORDING,
+    CMD_FORCE_STOP_RECORDING,
     CMD_TRANSCRIBE_LATEST_RECORDING,
     CMD_UNREGISTER_GLOBAL_HOTKEY,
     CMD_UPDATE_SESSION_HOTKEY_LATENCY,

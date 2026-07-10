@@ -151,7 +151,10 @@ export function cleanupTranscript(
   transcript: string,
   skipCleanup: boolean = false,
 ): Promise<TranscriptCleanupResult> {
-  return invoke(CMD_CLEANUP_TRANSCRIPT, { transcript, skip_cleanup: skipCleanup });
+  return invoke(CMD_CLEANUP_TRANSCRIPT, {
+    transcript,
+    skip_cleanup: skipCleanup,
+  });
 }
 
 // ── Clipboard commands ──

@@ -64,6 +64,23 @@ pub fn is_main_window<R: Runtime>(window: &Window<R>) -> bool {
     window.label() == MAIN_WINDOW_LABEL
 }
 
+/// Returns true if the main window or the recording bubble overlay is visible.
+/// Used by recording emitters to avoid unnecessary IPC event emission
+/// when the UI is hidden (e.g. to tray) or no relevant windows are open.
+pub fn is_any_recording_window_visible<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let main_visible = app
+        .get_webview_window(MAIN_WINDOW_LABEL)
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+
+    let bubble_visible = app
+        .get_webview_window(super::overlay::OVERLAY_WINDOW_LABEL)
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false);
+
+    main_visible || bubble_visible
+}
+
 #[cfg(test)]
 mod tests {
     use super::should_hide_on_close;

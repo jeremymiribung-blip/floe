@@ -55,5 +55,4 @@ describe("waveform helpers", () => {
     expect(silent).toBeGreaterThan(0);
     expect(silent).toBeLessThan(0.2);
   });
-
 });

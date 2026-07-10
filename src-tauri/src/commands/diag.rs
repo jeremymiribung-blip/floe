@@ -194,11 +194,15 @@ fn chrono_now_iso() -> String {
     format!("{:02}:{:02}:{:02}.{:03}", hours, minutes, seconds, millis)
 }
 
-/// Append a raw string line to the diagnostics log file.
-/// This is privacy-safe: the frontend sends a plain string, not a DiagEntry.
+/// Append a string line to the diagnostics log file.
+///
+/// Privacy-safe: every line is scrubbed through `redact_string_for_report`
+/// before writing, so accidental inclusion of bearer tokens, API keys,
+/// transcripts, clipboard text, or other secret-shaped content from the
+/// frontend gets replaced with `"redacted"` rather than persistent disk write.
 #[tauri::command]
 pub fn diag_log_str(diag: tauri::State<'_, DiagLog>, line: String) {
-    diag.append_str(&line);
+    diag.append_str(&crate::diag::report::redact_string_for_report(&line));
 }
 
 #[tauri::command]

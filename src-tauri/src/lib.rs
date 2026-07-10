@@ -20,12 +20,14 @@ pub use recording::{
     RecordingStatePayload, RecordingStatus,
 };
 pub use settings::{ApiKeyStatus, SettingsError, SettingsErrorCode};
-pub use update::{UpdateError, UpdateErrorCode, UpdateInfo, UpdateStatusLabel};
 pub use system::autostart::{StartAtLoginError, StartAtLoginErrorCode, StartAtLoginStatus};
 pub use system::hotkey::{HotkeyError, HotkeyErrorCode, HotkeyStatus};
+pub use update::{UpdateError, UpdateErrorCode, UpdateInfo, UpdateStatusLabel};
 
 #[cfg(test)]
 mod integration_tests;
+#[cfg(not(test))]
+compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
 #[cfg(test)]
 mod test_helpers;
 
@@ -94,12 +96,10 @@ pub fn run() {
             }
 
             // Get app_settings before moving settings_manager
-            let app_settings = settings_manager
-                .get_app_settings()
-                .unwrap_or_else(|e| {
-                    log::warn!("app_settings_load_failed error=\"{:?}\"", e);
-                    settings::AppSettings::default()
-                });
+            let app_settings = settings_manager.get_app_settings().unwrap_or_else(|e| {
+                log::warn!("app_settings_load_failed error=\"{:?}\"", e);
+                settings::AppSettings::default()
+            });
 
             app.manage(settings_manager);
 
@@ -123,21 +123,25 @@ pub fn run() {
             if let Some(manager) = app.try_state::<recording::RecordingManager>() {
                 let emit_app = app.handle().clone();
                 manager.set_level_emitter(Box::new(move |level: f32| {
-                    let _ = emit_app.emit(
-                        audio::RECORDING_LEVEL_EVENT,
-                        audio::RecordingLevelPayload { level },
-                    );
+                    if system::window::is_any_recording_window_visible(&emit_app) {
+                        let _ = emit_app.emit(
+                            audio::RECORDING_LEVEL_EVENT,
+                            audio::RecordingLevelPayload { level },
+                        );
+                    }
                 }));
 
                 let state_app = app.handle().clone();
                 manager.set_state_emitter(Box::new(move |state: recording::RecordingState| {
-                    let _ = state_app.emit(
-                        audio::RECORDING_STATE_EVENT,
-                        recording::RecordingStatePayload {
-                            state,
-                            is_recording: state.is_active(),
-                        },
-                    );
+                    if system::window::is_any_recording_window_visible(&state_app) {
+                        let _ = state_app.emit(
+                            audio::RECORDING_STATE_EVENT,
+                            recording::RecordingStatePayload {
+                                state,
+                                is_recording: state.is_active(),
+                            },
+                        );
+                    }
                 }));
             }
 

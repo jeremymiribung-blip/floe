@@ -183,12 +183,12 @@ For desktop integration, use a tool like `appimaged` or extract the AppImage wit
 
 Tauri writes artifacts under `src-tauri/target/release/bundle/` for native builds on the current host:
 
-| Platform            | Command                                         | Output directory                         |
-| ------------------- | ----------------------------------------------- | ---------------------------------------- |
-| Windows NSIS `.exe` | `corepack pnpm exec tauri build --bundles nsis` | `src-tauri/target/release/bundle/nsis/`  |
-| Windows MSI `.msi`  | `corepack pnpm exec tauri build --bundles msi`  | `src-tauri/target/release/bundle/msi/`   |
-| macOS `.app`        | `corepack pnpm exec tauri build --bundles app`  | `src-tauri/target/release/bundle/macos/` |
-| macOS `.dmg`        | `corepack pnpm exec tauri build --bundles dmg`  | `src-tauri/target/release/bundle/dmg/`   |
+| Platform            | Command                                             | Output directory                            |
+| ------------------- | --------------------------------------------------- | ------------------------------------------- |
+| Windows NSIS `.exe` | `corepack pnpm exec tauri build --bundles nsis`     | `src-tauri/target/release/bundle/nsis/`     |
+| Windows MSI `.msi`  | `corepack pnpm exec tauri build --bundles msi`      | `src-tauri/target/release/bundle/msi/`      |
+| macOS `.app`        | `corepack pnpm exec tauri build --bundles app`      | `src-tauri/target/release/bundle/macos/`    |
+| macOS `.dmg`        | `corepack pnpm exec tauri build --bundles dmg`      | `src-tauri/target/release/bundle/dmg/`      |
 | Linux `.AppImage`   | `corepack pnpm exec tauri build --bundles appimage` | `src-tauri/target/release/bundle/appimage/` |
 
 When cross-compiling with an explicit Rust target, Tauri may place bundle output below `src-tauri/target/<target-triple>/release/bundle/`.
@@ -300,5 +300,3 @@ References:
 - Tauri prerequisites: https://v2.tauri.app/start/prerequisites/
 - Tauri app icons: https://v2.tauri.app/develop/icons/
 - Arch User Repository: https://wiki.archlinux.org/title/Arch_User_Repository
-
-

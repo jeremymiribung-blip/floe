@@ -47,6 +47,7 @@ const ALL_COMMANDS: &[&str] = &[
     "set_start_at_login_enabled",
     "start_recording",
     "stop_recording",
+    "force_stop_recording",
     "transcribe_latest_recording",
     "unregister_global_hotkey",
     "update_session_hotkey_latency",
@@ -93,7 +94,7 @@ fn command_names_are_snake_case() {
 
 #[test]
 fn all_commands_length_is_stable() {
-    assert_eq!(ALL_COMMANDS.len(), 37,
+    assert_eq!(ALL_COMMANDS.len(), 38,
         "Command count changed.\nIf you added/removed a command, update ALL_COMMANDS in contract.rs, contract.ts, AND this file.");
 }
 

@@ -9,7 +9,9 @@ use tauri_plugin_updater::UpdaterExt;
 /// On success, the app automatically restarts.
 #[tauri::command]
 pub async fn check_and_install_update(app: AppHandle) -> Result<UpdateInfo, UpdateError> {
-    let updater = app.updater().map_err(|e| UpdateError::internal(e.to_string()))?;
+    let updater = app
+        .updater()
+        .map_err(|e| UpdateError::internal(e.to_string()))?;
 
     // Check for update
     let update = match updater.check().await {

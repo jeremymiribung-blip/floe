@@ -16,7 +16,12 @@ import {
   getAppSettings,
   saveAppSettings,
 } from "../lib/tauri";
-import { logCritical, errorMessage } from "../lib/errorLog";
+import {
+  errorMessage,
+  isKeychainError,
+  KEYCHAIN_UNAVAILABLE_MESSAGE,
+  logCritical,
+} from "../lib/errorLog";
 import useFloeStore from "../stores/useFloeStore";
 import type { AudioDevice } from "../types/app";
 import { useReducedMotionPreference } from "../hooks/useReducedMotionPreference";
@@ -80,7 +85,9 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
   const setHotkeyStatus = useFloeStore((s) => s.setHotkeyStatus);
   const setLaunchOnStartup = useFloeStore((s) => s.setLaunchOnStartup);
   const setAudioDevices = useFloeStore((s) => s.setAudioDevices);
-  const setSelectedAudioDeviceId = useFloeStore((s) => s.setSelectedAudioDeviceId);
+  const setSelectedAudioDeviceId = useFloeStore(
+    (s) => s.setSelectedAudioDeviceId,
+  );
   const startHotkeyCapture = useFloeStore((s) => s.startHotkeyCapture);
   const stopHotkeyCapture = useFloeStore((s) => s.stopHotkeyCapture);
   const closeSettings = useFloeStore((s) => s.closeSettings);
@@ -122,10 +129,17 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
           );
         }
       } catch (err) {
-        logCritical("settings validateApiKey", err);
-        setValidationError(
-          "Could not validate API key. Check your network connection.",
-        );
+        logCritical("settings validateAndSaveApiKey", err);
+        // Differentiate a keyring storage failure from a generic network
+        // error so users with a locked/unavailable keychain don't go chasing
+        // a network problem that doesn't exist.
+        if (isKeychainError(err)) {
+          setValidationError(KEYCHAIN_UNAVAILABLE_MESSAGE);
+        } else {
+          setValidationError(
+            `Could not validate or save your API key: ${errorMessage(err)}. Check your network connection and try again.`,
+          );
+        }
       } finally {
         setIsValidating(false);
       }
@@ -133,10 +147,13 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
     [setApiKeyStatus],
   );
 
-  const handleClose = () => {
+  const handleClose = async () => {
     const key = apiKeyRef.current;
+    // Drain any pending unsaved draft before hiding the window so a save
+    // failure isn't silently dropped. The await is bounded by the
+    // validate_api_key HTTP timeout (currently 10s on the backend).
     if (key) {
-      validateAndSaveApiKey(key);
+      await validateAndSaveApiKey(key);
     }
     closeSettings();
     onClose?.();
@@ -173,18 +190,14 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
         const status = await setHotkeyBackend(combo);
         if (!status || !status.isRegistered) {
           setHotkeyStatus(previousHotkey, previousRegistered);
-          showSaveError(
-            status?.error ?? `Could not register hotkey: ${combo}`,
-          );
+          showSaveError(status?.error ?? `Could not register hotkey: ${combo}`);
           return;
         }
         setHotkeyStatus(status.label || combo, status.isRegistered);
       } catch (err) {
         logCritical("settings setHotkeyBackend", err);
         setHotkeyStatus(previousHotkey, previousRegistered);
-        showSaveError(
-          `Could not register hotkey: ${errorMessage(err)}`,
-        );
+        showSaveError(`Could not register hotkey: ${errorMessage(err)}`);
       }
     },
     [setHotkey, setHotkeyStatus, showSaveError, stopHotkeyCapture],
@@ -276,7 +289,12 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
     return () => {
       mounted = false;
     };
-  }, [isTauriRuntime, setAudioDevices, setSelectedAudioDeviceId, selectedAudioDeviceId]);
+  }, [
+    isTauriRuntime,
+    setAudioDevices,
+    setSelectedAudioDeviceId,
+    selectedAudioDeviceId,
+  ]);
 
   const handleAudioDeviceChange = useCallback(
     async (deviceId: string) => {
@@ -426,7 +444,7 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
                   Skip AI text cleanup (output raw transcript only)
                 </Label>
                 <p className="text-xs leading-relaxed text-white/40">
-                  Bypass the Llama 3.3 cleanup step and paste the raw Whisper
+                  Bypass the Qwen 3.6 27B cleanup step and paste the raw Whisper
                   transcription directly.
                 </p>
               </div>

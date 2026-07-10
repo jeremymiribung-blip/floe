@@ -34,5 +34,3 @@ pub fn recording_error(code: RecordingErrorCode, message: &'static str) -> Recor
         message: message.to_string(),
     }
 }
-
-

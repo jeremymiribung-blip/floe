@@ -2,14 +2,7 @@
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { cleanup } from "@testing-library/react";
 
@@ -77,7 +70,9 @@ const {
     ),
     copyTextToClipboard: mk(() => Promise.resolve()),
     pasteClipboard: mk(() => Promise.resolve()),
-    saveApiKey: mk(() => Promise.resolve({ configured: true, maskedPreview: null })),
+    saveApiKey: mk(() =>
+      Promise.resolve({ configured: true, maskedPreview: null }),
+    ),
     validateApiKey: mk(() => Promise.resolve(true)),
     setHotkey: mk(() =>
       Promise.resolve({
@@ -158,9 +153,15 @@ const {
     resetUpdateState: mk(() => Promise.resolve()),
     getDiagnosticsReport: mk(() => Promise.resolve({})),
     bubbleCancelRecording: mk(() => Promise.resolve()),
-    clearApiKey: mk(() => Promise.resolve({ configured: false, maskedPreview: null })),
-    getApiKeyStatus: mk(() => Promise.resolve({ configured: false, maskedPreview: null })),
-    getStartAtLoginStatus: mk(() => Promise.resolve({ enabled: false, available: true })),
+    clearApiKey: mk(() =>
+      Promise.resolve({ configured: false, maskedPreview: null }),
+    ),
+    getApiKeyStatus: mk(() =>
+      Promise.resolve({ configured: false, maskedPreview: null }),
+    ),
+    getStartAtLoginStatus: mk(() =>
+      Promise.resolve({ enabled: false, available: true }),
+    ),
     diagLog: mk(() => undefined),
     logFrontendEvent: mk(() => Promise.resolve()),
     updateSessionHotkeyLatency: mk(() => Promise.resolve()),
@@ -203,29 +204,38 @@ vi.mock("../lib/tauri", () => ({
   updateSessionHotkeyLatency,
 }));
 
-const { listenMock, unlistenSpy, hotkeyListeners, recordingListeners } = vi.hoisted(() => {
-  const hotkeyListenersRef: { current: Array<(event: { payload: { state: "Pressed" | "Released" } }) => void> } = { current: [] };
-  const recordingListenersRef: { current: Array<(event: { payload: RecordingStatePayload }) => void> } = { current: [] };
-  const listenMock = vi.fn();
-  const unlistenSpy = vi.fn();
-  return {
-    listenMock,
-    unlistenSpy,
-    hotkeyListeners: hotkeyListenersRef,
-    recordingListeners: recordingListenersRef,
-  };
-});
+const { listenMock, unlistenSpy, hotkeyListeners, recordingListeners } =
+  vi.hoisted(() => {
+    const hotkeyListenersRef: {
+      current: Array<
+        (event: { payload: { state: "Pressed" | "Released" } }) => void
+      >;
+    } = { current: [] };
+    const recordingListenersRef: {
+      current: Array<(event: { payload: RecordingStatePayload }) => void>;
+    } = { current: [] };
+    const listenMock = vi.fn();
+    const unlistenSpy = vi.fn();
+    return {
+      listenMock,
+      unlistenSpy,
+      hotkeyListeners: hotkeyListenersRef,
+      recordingListeners: recordingListenersRef,
+    };
+  });
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: listenMock,
 }));
 
-const { windowShow, windowHide, windowSetFocus, windowClose } = vi.hoisted(() => ({
-  windowShow: vi.fn(() => Promise.resolve()),
-  windowHide: vi.fn(() => Promise.resolve()),
-  windowSetFocus: vi.fn(() => Promise.resolve()),
-  windowClose: vi.fn(() => Promise.resolve()),
-}));
+const { windowShow, windowHide, windowSetFocus, windowClose } = vi.hoisted(
+  () => ({
+    windowShow: vi.fn(() => Promise.resolve()),
+    windowHide: vi.fn(() => Promise.resolve()),
+    windowSetFocus: vi.fn(() => Promise.resolve()),
+    windowClose: vi.fn(() => Promise.resolve()),
+  }),
+);
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -237,7 +247,10 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 import { usePushToTalk } from "../hooks/usePushToTalk";
-import { EVENT_HOTKEY_STATE, EVENT_RECORDING_STATE_CHANGED } from "../lib/contract";
+import {
+  EVENT_HOTKEY_STATE,
+  EVENT_RECORDING_STATE_CHANGED,
+} from "../lib/contract";
 import * as tauri from "../lib/tauri";
 import useFloeStore from "../stores/useFloeStore";
 import type { RecordingStatePayload } from "../types/app";
@@ -249,32 +262,35 @@ beforeEach(() => {
   recordingListeners.current = [];
   vi.clearAllMocks();
   // Re-apply listenMock mock implementation AFTER clearAllMocks:
-  listenMock.mockImplementation((
-    event: string,
-    cb: (e: { payload: unknown }) => void,
-  ) => {
-    if (event === EVENT_HOTKEY_STATE) {
-      hotkeyListeners.current.push(
-        cb as (e: { payload: HotkeyPayload }) => void,
-      );
+  listenMock.mockImplementation(
+    (event: string, cb: (e: { payload: unknown }) => void) => {
+      if (event === EVENT_HOTKEY_STATE) {
+        hotkeyListeners.current.push(
+          cb as (e: { payload: HotkeyPayload }) => void,
+        );
+        return Promise.resolve(() => {
+          hotkeyListeners.current = hotkeyListeners.current.filter(
+            (l) => l !== cb,
+          );
+          unlistenSpy(event);
+        });
+      }
+      if (event === EVENT_RECORDING_STATE_CHANGED) {
+        recordingListeners.current.push(
+          cb as (e: { payload: RecordingStatePayload }) => void,
+        );
+        return Promise.resolve(() => {
+          recordingListeners.current = recordingListeners.current.filter(
+            (l) => l !== cb,
+          );
+          unlistenSpy(event);
+        });
+      }
       return Promise.resolve(() => {
-        hotkeyListeners.current = hotkeyListeners.current.filter((l) => l !== cb);
         unlistenSpy(event);
       });
-    }
-    if (event === EVENT_RECORDING_STATE_CHANGED) {
-      recordingListeners.current.push(
-        cb as (e: { payload: RecordingStatePayload }) => void,
-      );
-      return Promise.resolve(() => {
-        recordingListeners.current = recordingListeners.current.filter((l) => l !== cb);
-        unlistenSpy(event);
-      });
-    }
-    return Promise.resolve(() => {
-      unlistenSpy(event);
-    });
-  });
+    },
+  );
 
   windowShow.mockClear();
   windowHide.mockClear();
@@ -390,13 +406,14 @@ describe("usePushToTalk — hotkey events", () => {
 
     // Force the controller to throw by replacing stopRecording with one that
     // throws an Error (not a FloeError). We swap this BEFORE the release event.
-    (tauri.stopRecording as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
-      () =>
-        Promise.reject({
-          domain: "recording",
-          code: "stopFailed",
-          message: "boom",
-        }),
+    (
+      tauri.stopRecording as unknown as ReturnType<typeof vi.fn>
+    ).mockImplementationOnce(() =>
+      Promise.reject({
+        domain: "recording",
+        code: "stopFailed",
+        message: "boom",
+      }),
     );
 
     emitHotkey("Pressed");
@@ -559,7 +576,9 @@ describe("usePushToTalk — race conditions", () => {
   });
 
   it("emitting backend 'idle' while not recording does NOT trigger status fetch", async () => {
-    const getStatus = tauri.getRecordingStatus as unknown as ReturnType<typeof vi.fn>;
+    const getStatus = tauri.getRecordingStatus as unknown as ReturnType<
+      typeof vi.fn
+    >;
     getStatus.mockClear();
 
     useHook();
@@ -668,7 +687,8 @@ describe("usePushToTalk — triggerStart / triggerStop", () => {
     await flush();
 
     expect(result.current.appState).toBe("preview");
-    const copyTextToClipboard = tauri.copyTextToClipboard as unknown as ReturnType<typeof vi.fn>;
+    const copyTextToClipboard =
+      tauri.copyTextToClipboard as unknown as ReturnType<typeof vi.fn>;
     copyTextToClipboard.mockClear();
 
     act(() => {
@@ -702,9 +722,7 @@ describe("usePushToTalk — non-Tauri runtime", () => {
   it("does NOT register any listeners when isTauriRuntime() is false", async () => {
     // Override the mock's isTauriRuntime after the fact. The hook reads it on
     // mount, so this is sufficient for this branch.
-    const isTauriSpy = vi
-      .spyOn(tauri, "isTauriRuntime")
-      .mockReturnValue(false);
+    const isTauriSpy = vi.spyOn(tauri, "isTauriRuntime").mockReturnValue(false);
     listenMock.mockClear();
 
     const { result } = useHook();
@@ -727,12 +745,16 @@ describe("usePushToTalk — non-Tauri runtime", () => {
 
 describe("usePushToTalk — listen() failures", () => {
   it("surfaces an error message when hotkey listen() rejects", async () => {
-    listenMock.mockImplementationOnce(() => Promise.reject(new Error("listen failed")));
+    listenMock.mockImplementationOnce(() =>
+      Promise.reject(new Error("listen failed")),
+    );
 
     const { result } = useHook();
     await flush();
 
-    expect(result.current.error).toMatch(/could not listen for the global hotkey/i);
+    expect(result.current.error).toMatch(
+      /could not listen for the global hotkey/i,
+    );
     expect(tauri.bubbleHide).toHaveBeenCalled();
   });
 
@@ -744,9 +766,13 @@ describe("usePushToTalk — listen() failures", () => {
     const prev = listenMock.getMockImplementation();
     listenMock.mockImplementation((event: string, cb: unknown) => {
       if (event === EVENT_HOTKEY_STATE) {
-        hotkeyListeners.current.push(cb as (e: { payload: HotkeyPayload }) => void);
+        hotkeyListeners.current.push(
+          cb as (e: { payload: HotkeyPayload }) => void,
+        );
         return Promise.resolve(() => {
-          hotkeyListeners.current = hotkeyListeners.current.filter((l) => l !== cb);
+          hotkeyListeners.current = hotkeyListeners.current.filter(
+            (l) => l !== cb,
+          );
         });
       }
       return Promise.reject(new Error("recording-state listen failed"));
@@ -791,4 +817,3 @@ describe("usePushToTalk — listen() failures", () => {
     }
   });
 });
-

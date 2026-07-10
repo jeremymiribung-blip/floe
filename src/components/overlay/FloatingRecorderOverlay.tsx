@@ -253,8 +253,8 @@ export default function FloatingRecorderOverlay({
         borderColor: isError
           ? "var(--floe-error-border)"
           : isRecording()
-          ? "var(--floe-border-focus)"
-          : "var(--floe-border-subtle)",
+            ? "var(--floe-border-focus)"
+            : "var(--floe-border-subtle)",
         boxShadow: isError
           ? "inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px var(--floe-error-border)"
           : "inset 0 1px 0 rgba(255, 255, 255, 0.05)",

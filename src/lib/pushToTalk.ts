@@ -186,7 +186,7 @@ export class PushToTalkController {
       const error = parseFloeError(caught);
       this.recordingState = "idle";
       this.releaseAfterStart = false;
-      
+
       // Check for Internal error - indicates mutex poison or stuck state
       if (error.code === "internal") {
         try {
@@ -196,7 +196,9 @@ export class PushToTalkController {
         }
         this.callbacks.onErrorChange("Hardware error: Recording reset");
         this.callbacks.onStateChange("idle");
-        this.callbacks.showToast?.("Recording reset due to hardware error. Try again.");
+        this.callbacks.showToast?.(
+          "Recording reset due to hardware error. Try again.",
+        );
       } else {
         this.callbacks.onErrorChange(this.callbacks.errorMessage(error));
         this.callbacks.onStateChange("error");
@@ -249,7 +251,9 @@ export class PushToTalkController {
     }
     this.callbacks.onErrorChange("Hardware error: Recording reset");
     this.callbacks.onStateChange("idle");
-    this.callbacks.showToast?.("Recording reset due to hardware error. Try again.");
+    this.callbacks.showToast?.(
+      "Recording reset due to hardware error. Try again.",
+    );
   }
 
   private async finishRecording(): Promise<void> {
@@ -307,7 +311,9 @@ export class PushToTalkController {
         sanitizedErrorCode = floeErrorCode(transcriptionError);
         this.pushEvent("stt", "failed", sttDurationMs, sanitizedErrorCode);
         // Explicitly surface the error via callbacks so it's not silently swallowed
-        this.callbacks.onErrorChange(this.callbacks.errorMessage(transcriptionError));
+        this.callbacks.onErrorChange(
+          this.callbacks.errorMessage(transcriptionError),
+        );
         this.callbacks.onStateChange("error");
         throw transcriptionError;
       }
@@ -375,42 +381,45 @@ export class PushToTalkController {
       this.callbacks.onStateChange("error");
     } finally {
       // When in preview mode, the pipeline is paused and will be
-      // completed by confirmPreview or discardPreview. Don't reset yet.
-      if (this.previewMode) return;
-
-      if (errorStage !== null) {
-        this.pushEvent(
+      // completed by confirmPreview or discardPreview. Skip the cleanup
+      // block instead of returning: `return` inside a `finally` override
+      // any prior return from the `try` or `catch`, which is the unsafe
+      // pattern flagged by `@typescript-eslint/no-unsafe-finally`.
+      if (!this.previewMode) {
+        if (errorStage !== null) {
+          this.pushEvent(
+            errorStage,
+            "failed",
+            this.nowMs() - this.activeTraceStartedAt,
+            sanitizedErrorCode,
+          );
+        }
+        this.storeDiagnostics({
+          createdAt: this.createdAt(),
+          platform: this.platform,
+          appVersion: this.appVersion,
+          totalMs: this.nowMs() - totalStartedAt,
+          hotkeyToRecordingStartMs: this.hotkeyToRecordingStartMs,
+          recordingInfo: latestRecording,
+          sttDurationMs,
+          stt: transcription,
+          sttError: transcriptionError,
+          cleanupDurationMs,
+          cleanup,
+          cleanupFallbackUsed,
+          cleanupErrorCode: cleanup?.errorCode ?? null,
+          cleanupValidationMs,
+          clipboardWriteMs,
+          pasteAttemptMs,
+          clipboardSuccess,
+          pasteSuccess,
+          copiedOnly,
           errorStage,
-          "failed",
-          this.nowMs() - this.activeTraceStartedAt,
           sanitizedErrorCode,
-        );
+        });
+        this.recordingState = "idle";
+        this.finishing = false;
       }
-      this.storeDiagnostics({
-        createdAt: this.createdAt(),
-        platform: this.platform,
-        appVersion: this.appVersion,
-        totalMs: this.nowMs() - totalStartedAt,
-        hotkeyToRecordingStartMs: this.hotkeyToRecordingStartMs,
-        recordingInfo: latestRecording,
-        sttDurationMs,
-        stt: transcription,
-        sttError: transcriptionError,
-        cleanupDurationMs,
-        cleanup,
-        cleanupFallbackUsed,
-        cleanupErrorCode: cleanup?.errorCode ?? null,
-        cleanupValidationMs,
-        clipboardWriteMs,
-        pasteAttemptMs,
-        clipboardSuccess,
-        pasteSuccess,
-        copiedOnly,
-        errorStage,
-        sanitizedErrorCode,
-      });
-      this.recordingState = "idle";
-      this.finishing = false;
     }
   }
 
@@ -469,7 +478,9 @@ export class PushToTalkController {
         this.callbacks.onErrorChange(null);
         this.callbacks.onStateChange("copied");
         copiedOnly = true;
-        this.callbacks.showToast?.("Copied to clipboard (automatic paste failed)");
+        this.callbacks.showToast?.(
+          "Copied to clipboard (automatic paste failed)",
+        );
         return;
       }
       clipboardWriteMs = this.nowMs() - clipboardWriteMs;

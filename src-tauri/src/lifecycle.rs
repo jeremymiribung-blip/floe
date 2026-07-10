@@ -31,12 +31,23 @@ pub fn log_lifecycle(level: LifecycleLevel, event: &'static str) {
 }
 
 pub fn current_lifecycle() -> AppLifecycle {
-    match LIFECYCLE.load(Ordering::Acquire) {
+    u8_to_lifecycle(LIFECYCLE.load(Ordering::Acquire))
+}
+
+/// Converts a raw atomic u8 value into AppLifecycle.
+/// Unknown values (corruption, future states, or direct mutation in tests)
+/// are treated as Exited. This prevents panics and ensures commands are
+/// safely rejected in terminal/unknown states.
+fn u8_to_lifecycle(value: u8) -> AppLifecycle {
+    match value {
         0 => AppLifecycle::Running,
         1 => AppLifecycle::Quitting,
         2 => AppLifecycle::ShuttingDown,
         3 => AppLifecycle::Exited,
-        _ => unreachable!(),
+        _ => {
+            log::error!("lifecycle_unknown_atomic_value value={value}; treating as Exited");
+            AppLifecycle::Exited
+        }
     }
 }
 
@@ -60,6 +71,9 @@ pub fn is_quitting_or_shutdown() -> bool {
 pub fn is_quitting() -> bool {
     is_quitting_or_shutdown()
 }
+
+#[cfg(not(test))]
+compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
 
 #[cfg(test)]
 pub fn reset_lifecycle_for_test() {
@@ -238,6 +252,16 @@ mod tests {
         reset_lifecycle_for_test();
         LIFECYCLE.store(AppLifecycle::Exited as u8, Ordering::Release);
         assert!(!can_accept_commands());
+    }
+
+    #[test]
+    fn unknown_atomic_value_falls_back_to_exited_safely() {
+        reset_lifecycle_for_test();
+        // Simulate corruption, direct store of invalid value, or future state
+        LIFECYCLE.store(99, Ordering::Release);
+        assert_eq!(current_lifecycle(), AppLifecycle::Exited);
+        assert!(!can_accept_commands());
+        assert!(is_quitting_or_shutdown());
     }
 
     #[test]

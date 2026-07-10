@@ -194,7 +194,7 @@ mod tests {
             cleanup_transcript_with_closure(&manager, "fallback text".to_string(), |_, _| async {
                 Err(CleanupError {
                     message: "cleanup failed".to_string(),
-                    model: String::new(),
+                    model: String::from("qwen/qwen3.6-27b"),
                     retry_count: 0,
                     validation_ms: 0,
                     rate_limit: None,
@@ -250,7 +250,7 @@ mod tests {
     fn test_success(text: &str) -> CleanupSuccess {
         CleanupSuccess {
             text: text.to_string(),
-            model: "qwen/qwen3.6-27b".to_string(),
+            model: String::from("qwen/qwen3.6-27b"),
             retry_count: 0,
             validation_ms: 1,
             rate_limit: None,

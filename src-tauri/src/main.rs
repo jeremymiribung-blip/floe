@@ -15,9 +15,7 @@ fn main() {
         // Safety: FreeConsole is a safe Win32 call that detaches this
         // process from its console.  It returns zero if there is no
         // console to detach from, which we treat as success.
-        let _ = unsafe {
-            windows::Win32::System::Console::FreeConsole()
-        };
+        let _ = unsafe { windows::Win32::System::Console::FreeConsole() };
     }
 
     std::panic::set_hook(Box::new(|panic_info| {

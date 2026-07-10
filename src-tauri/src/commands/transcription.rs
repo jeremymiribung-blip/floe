@@ -111,9 +111,15 @@ pub async fn transcribe_latest_recording(
                 }
             });
 
+            // Release the raw audio bytes from memory now that STT has consumed them
+            recording_manager.clear_latest_recording();
+
             Ok(transcription)
         }
         Err(err) => {
+            // Release memory even on error path
+            recording_manager.clear_latest_recording();
+
             let duration_ms = start.elapsed().as_millis() as u64;
 
             log::error!(
