@@ -289,12 +289,7 @@ export default function SettingsWindow({ onClose }: SettingsWindowProps) {
     return () => {
       mounted = false;
     };
-  }, [
-    isTauriRuntime,
-    setAudioDevices,
-    setSelectedAudioDeviceId,
-    selectedAudioDeviceId,
-  ]);
+  }, [setAudioDevices, setSelectedAudioDeviceId, selectedAudioDeviceId]);
 
   const handleAudioDeviceChange = useCallback(
     async (deviceId: string) => {

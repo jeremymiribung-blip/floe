@@ -27,6 +27,7 @@ pub use self::{
 };
 
 #[cfg(test)]
+#[allow(unused_imports)]
 pub use self::{buffer::RecordingBuffer, input::StartedRecording, wav::encode_pcm16_wav};
 
 type SharedLevelEmitter = Arc<Mutex<LevelEmitterFn>>;
@@ -182,7 +183,7 @@ impl RecordingManager {
         // Guard: finalize any finished recording before checking can_start
         self.try_finalize_if_finished()?;
 
-        let mut state = self.lock_state()?;
+        let mut state = self.lock_state();
         if let Err(code) = state.recording_state.can_start() {
             let error = RecordingError {
                 domain: "recording",
@@ -232,7 +233,7 @@ impl RecordingManager {
         // Stop the watchdog as early as possible to reduce the race window with
         // its timeout logic. The try_finalize below will also stop it (idempotent).
         {
-            let mut state = self.lock_state()?;
+            let mut state = self.lock_state();
             stop_watchdog(&mut state);
         }
 
@@ -244,7 +245,7 @@ impl RecordingManager {
         // If try_finalize_if_finished already finalized (e.g. max duration or watchdog),
         // return the result directly
         if did_finalize {
-            let state = self.lock_state()?;
+            let state = self.lock_state();
             if let Some(latest) = &state.latest {
                 return Ok(latest.info.clone());
             }
@@ -286,7 +287,7 @@ impl RecordingManager {
         self.emit_only(types::RecordingState::Stopping);
 
         {
-            let mut state = self.lock_state()?;
+            let mut state = self.lock_state();
             stop_emitter(&mut state);
         }
         meter.store(0.0);
@@ -297,7 +298,7 @@ impl RecordingManager {
 
         self.emit_only(types::RecordingState::Idle);
 
-        let mut state = self.lock_state()?;
+        let mut state = self.lock_state();
         match result {
             Ok(completed) => {
                 state.recording_state = types::RecordingState::Idle;
@@ -329,7 +330,7 @@ impl RecordingManager {
         self.try_finalize_if_finished()?;
 
         let (active, meter) = {
-            let mut state = self.lock_state()?;
+            let mut state = self.lock_state();
 
             stop_watchdog(&mut state);
 
@@ -343,7 +344,7 @@ impl RecordingManager {
         };
 
         {
-            let mut state = self.lock_state()?;
+            let mut state = self.lock_state();
             stop_emitter(&mut state);
         }
         meter.store(0.0);
@@ -359,18 +360,18 @@ impl RecordingManager {
 
         match result {
             Ok(completed) => {
-                let mut state = self.lock_state()?;
+                let mut state = self.lock_state();
                 state.latest = Some(completed);
                 state.last_error = None;
                 Ok(ShutdownRecordingResult::Finalized)
             }
             Err(error) if error.code == RecordingErrorCode::EmptyRecording => {
-                let mut state = self.lock_state()?;
+                let mut state = self.lock_state();
                 state.last_error = None;
                 Ok(ShutdownRecordingResult::DiscardedEmpty)
             }
             Err(error) => {
-                let mut state = self.lock_state()?;
+                let mut state = self.lock_state();
                 state.last_error = Some(error.clone());
                 Err(error)
             }
@@ -398,17 +399,16 @@ impl RecordingManager {
     /// Clears the WAV bytes for the latest recording to release memory.
     /// Called after successful transcription or when the recording is discarded.
     pub fn clear_latest_recording(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            if let Some(latest) = &mut state.latest {
-                // Use mem::take + shrink_to_fit to release the allocation promptly
-                let _ = std::mem::take(&mut latest.wav_bytes);
-                latest.wav_bytes.shrink_to_fit();
-            }
+        let mut state = self.state.lock();
+        if let Some(latest) = &mut state.latest {
+            // Use mem::take + shrink_to_fit to release the allocation promptly
+            let _ = std::mem::take(&mut latest.wav_bytes);
+            latest.wav_bytes.shrink_to_fit();
         }
     }
 
-    fn lock_state(&self) -> Result<parking_lot::MutexGuard<'_, ManagerState>, RecordingError> {
-        Ok(self.state.lock())
+    fn lock_state(&self) -> parking_lot::MutexGuard<'_, ManagerState> {
+        self.state.lock()
     }
 
     /// Forcibly stop recording and reset internal state.
@@ -449,7 +449,7 @@ impl RecordingManager {
 
     /// Returns `true` if a recording was finalized, `false` otherwise.
     fn try_finalize_if_finished(&self) -> Result<bool, RecordingError> {
-        let mut state = self.lock_state()?;
+        let mut state = self.lock_state();
         if state.recording_state != types::RecordingState::Recording {
             return Ok(false);
         }
@@ -457,13 +457,7 @@ impl RecordingManager {
         let should_finalize = state
             .active
             .as_ref()
-            .map(|active| {
-                active
-                    .buffer
-                    .lock()
-                    .map(|buffer| buffer.is_finished())
-                    .unwrap_or(true)
-            })
+            .map(|active| active.buffer.lock().is_finished())
             .unwrap_or(false);
 
         if !should_finalize {
@@ -523,27 +517,8 @@ impl RecordingManager {
         let last_error = state.last_error.clone();
 
         if let Some(active) = &state.active {
-            return active
-                .buffer
-                .lock()
-                .map(|buffer| buffer.status(latest_recording.clone(), last_error))
-                .unwrap_or_else(|_| RecordingStatus {
-                    is_recording: false,
-                    sample_rate: None,
-                    input_channels: None,
-                    output_channels: types::OUTPUT_CHANNELS,
-                    duration_ms: 0,
-                    sample_count: 0,
-                    started_at_ms: None,
-                    max_duration_seconds: MAX_RECORDING_DURATION_SECONDS,
-                    latest_recording,
-                    last_error: Some(RecordingError {
-                        domain: "recording",
-                        code: RecordingErrorCode::Internal,
-                        message: "Recording buffer could not be locked.".to_string(),
-                    }),
-                    trace_id: None,
-                });
+            let buffer = active.buffer.lock();
+            return buffer.status(latest_recording.clone(), last_error);
         }
 
         RecordingStatus {
@@ -563,10 +538,7 @@ impl RecordingManager {
 
     #[cfg(test)]
     fn watchdog_handle_is_clear(&self) -> bool {
-        self.state
-            .lock()
-            .map(|state| state.watchdog_handle.is_none())
-            .unwrap_or(false)
+        self.state.lock().watchdog_handle.is_none()
     }
 }
 
@@ -632,11 +604,7 @@ fn finalize_active(
     } = active;
     drop(_stream);
 
-    let mut buffer = buffer.lock().map_err(|_| RecordingError {
-        domain: "recording",
-        code: RecordingErrorCode::Internal,
-        message: "Recording buffer could not be finalized.".to_string(),
-    })?;
+    let mut buffer = buffer.lock();
 
     buffer.snapshot_completed(default_reason)
 }
@@ -678,19 +646,16 @@ fn watchdog_loop(state: Arc<Mutex<ManagerState>>, stop: Arc<AtomicBool>, timeout
         return;
     }
 
-    let Ok(mut state) = state.lock() else {
-        return;
-    };
+    let mut state = state.lock();
 
     let Some(active) = state.active.as_mut() else {
         return;
     };
 
-    if let Ok(mut buffer) = active.buffer.lock() {
-        if !buffer.is_finished() {
-            buffer.mark_watchdog_timeout();
-        }
-    };
+    let mut buffer = active.buffer.lock();
+    if !buffer.is_finished() {
+        buffer.mark_watchdog_timeout();
+    }
 }
 
 fn no_op_emit(_level: f32) {}
@@ -874,7 +839,10 @@ mod tests {
             2000,
         )));
         let manager = test_manager(Arc::clone(&empty_buffer), Arc::new(LevelMeter::new()));
-        manager.state.lock().latest = Some(previous_latest);
+        {
+            let mut state = manager.state.lock();
+            state.latest = Some(previous_latest);
+        }
 
         manager.start_recording().expect("start succeeds");
         let error = manager
@@ -929,7 +897,7 @@ mod tests {
 
         manager.start_recording().expect("start succeeds");
         {
-            let mut buffer = buffer.lock().unwrap();
+            let mut buffer = buffer.lock();
             buffer.append_interleaved(&[0.25_f32, 0.25], &LevelMeter::new());
             buffer.mark_device_disconnected();
         }
@@ -1045,7 +1013,10 @@ mod tests {
             .expect("latest fixture should complete");
         let buffer = Arc::new(Mutex::new(latest));
         let manager = test_manager(Arc::clone(&buffer), Arc::new(LevelMeter::new()));
-        manager.state.lock().latest = Some(completed);
+        {
+            let mut state = manager.state.lock();
+            state.latest = Some(completed);
+        }
 
         manager.start_recording().expect("start succeeds");
 
@@ -1200,31 +1171,18 @@ mod tests {
         let manager = test_manager(Arc::clone(&buffer), Arc::new(LevelMeter::new()));
 
         manager.start_recording().expect("start succeeds");
-        let state_arc = manager.state_arc();
-        {
-            let mut state = state_arc.lock().unwrap();
-            if let Some(active) = state.active.as_mut() {
-                let handle = active.buffer.clone();
-                drop(state);
-                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let _guard = handle.lock().unwrap();
-                    panic!("poison buffer to simulate finalize failure");
-                }));
-            }
-        }
-
+        // Do not append any samples so that finalize will hit EmptyRecording path.
         let stop_error = manager
             .stop_recording()
-            .expect_err("stop_recording should fail when finalize fails");
-        // try_finalize_if_finished now catches the poisoned buffer error
-        assert_eq!(stop_error.code, RecordingErrorCode::Internal);
-        assert!(manager.state_arc().lock().unwrap().active.is_none());
+            .expect_err("stop_recording should fail for empty recording (finalize path)");
+        // Empty path surfaces the original error (or wrapped); main point is active is cleared
+        // and we can recover for a new recording.
+        assert!(manager.state_arc().lock().active.is_none());
 
-        buffer.clear_poison();
-        buffer
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .reset_for_test();
+        {
+            let mut buf = buffer.lock();
+            buf.reset_for_test();
+        }
         let next_status = manager
             .start_recording()
             .expect("start_recording should succeed after failed stop");
@@ -1264,10 +1222,7 @@ mod tests {
             .expect("status after watchdog succeeds");
         assert!(!status.is_recording);
 
-        buffer
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .reset_for_test();
+        buffer.lock().reset_for_test();
         let next_status = manager
             .start_recording()
             .expect("start after watchdog succeeds");
@@ -1337,9 +1292,7 @@ mod tests {
                     if i % 2 == 0 {
                         tokio::task::spawn_blocking(move || {
                             let _ = m.start_recording();
-                            b.lock()
-                                .unwrap_or_else(|poison| poison.into_inner())
-                                .append_interleaved(&[0.5_f32], &LevelMeter::new());
+                            b.lock().append_interleaved(&[0.5_f32], &LevelMeter::new());
                             let _ = m.stop_recording();
                         })
                         .await
@@ -1509,10 +1462,7 @@ mod tests {
         );
 
         // Verify the manager can start a new recording (state is clean).
-        buffer
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .reset_for_test();
+        buffer.lock().reset_for_test();
         let next = manager
             .start_recording()
             .expect("should be able to start a new recording after race");

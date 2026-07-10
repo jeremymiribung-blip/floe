@@ -253,7 +253,7 @@ export function usePushToTalk(): UsePushToTalkResult {
       isActive = false;
       unlisten?.();
     };
-  }, []);
+  }, [syncFromPipeline]);
   // Show/hide bubble overlay based on recording state
   useEffect(() => {
     if (

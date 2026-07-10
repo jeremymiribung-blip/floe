@@ -207,9 +207,6 @@ impl SettingsManager {
         }
     }
 
-    #[cfg(not(test))]
-    compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
-
     #[cfg(test)]
     pub(crate) fn with_secret_store(
         api_key_secret_store: Box<dyn SecretStore>,

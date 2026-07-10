@@ -72,9 +72,6 @@ pub fn is_quitting() -> bool {
     is_quitting_or_shutdown()
 }
 
-#[cfg(not(test))]
-compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
-
 #[cfg(test)]
 pub fn reset_lifecycle_for_test() {
     LIFECYCLE.store(AppLifecycle::Running as u8, Ordering::Release);

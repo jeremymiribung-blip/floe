@@ -276,9 +276,6 @@ pub fn paste_clipboard(
     result
 }
 
-#[cfg(not(test))]
-compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
-
 pub(crate) fn copy_text_to_clipboard_with(
     clipboard: &impl TextClipboard,
     text: &str,
@@ -314,9 +311,6 @@ fn paste_text_with(
         }
     }
 }
-
-#[cfg(not(test))]
-compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
 
 pub(crate) fn paste_clipboard_with(
     paste_simulator: &impl PasteSimulator,

@@ -68,9 +68,6 @@ impl GroqTranscriptionClient {
         }
     }
 
-    #[cfg(not(test))]
-    compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
-
     #[cfg(test)]
     pub fn for_test(
         base_url: String,

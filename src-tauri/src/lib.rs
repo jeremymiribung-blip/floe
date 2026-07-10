@@ -26,8 +26,6 @@ pub use update::{UpdateError, UpdateErrorCode, UpdateInfo, UpdateStatusLabel};
 
 #[cfg(test)]
 mod integration_tests;
-#[cfg(not(test))]
-compile_error!("Test helpers and mocks are strictly forbidden in release builds!");
 #[cfg(test)]
 mod test_helpers;
 
