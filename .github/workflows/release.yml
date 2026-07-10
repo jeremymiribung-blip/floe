@@ -24,10 +24,10 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            bundles: nsis,msi
+            bundles: nsis
             name: Windows
           - os: ubuntu-latest
-            bundles: deb,appimage,rpm
+            bundles: appimage
             name: Linux
           - os: macos-latest
             bundles: dmg
@@ -60,14 +60,21 @@ jobs:
       - name: Install Linux system dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
+          # Disable Microsoft + Azure apt sources whose InRelease is currently
+          # broken on `noble` (Ubuntu 24.04) runners (`Clearsigned file isn't
+          # valid, got 'NOSPLIT'`). They are not needed for the Tauri build.
+          # Files are moved to *.disabled so future restores are lossless.
+          for f in /etc/apt/sources.list.d/azure-cli.list \
+                   /etc/apt/sources.list.d/microsoft-prod.list; do
+            [ -f "$f" ] && sudo mv "$f" "$f.disabled"
+          done
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
             libasound2-dev \
-            libdbus-1-dev \
-            rpm
+            libdbus-1-dev
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -100,8 +107,8 @@ jobs:
         run: |
           mkdir -p artifacts
           find src-tauri/target/release/bundle -type f \( \
-            -name "*.exe" -o -name "*.msi" -o -name "*.dmg" -o \
-            -name "*.deb" -o -name "*.AppImage" -o -name "*.rpm" \
+            -name "*.exe" -o -name "*.dmg" -o \
+            -name "*.AppImage" \
           \) -exec cp {} artifacts/ \;
 
       - uses: actions/upload-artifact@v4
