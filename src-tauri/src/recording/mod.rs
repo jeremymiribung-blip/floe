@@ -680,10 +680,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use parking_lot::Mutex;
-
     use super::{
-        buffer::RecordingBuffer,
+        buffer::{RecordingBuffer, SharedBuffer},
         error::RecordingErrorCode,
         input::{RecordingInput, RecordingStream, StartedRecording},
         types::{
@@ -708,7 +706,7 @@ mod tests {
     impl RecordingStream for FakeStream {}
 
     struct FakeBackend {
-        buffer: Arc<Mutex<RecordingBuffer>>,
+        buffer: SharedBuffer,
         meter: Arc<LevelMeter>,
     }
 
@@ -725,10 +723,7 @@ mod tests {
         }
     }
 
-    fn test_manager(
-        buffer: Arc<Mutex<RecordingBuffer>>,
-        meter: Arc<LevelMeter>,
-    ) -> RecordingManager {
+    fn test_manager(buffer: SharedBuffer, meter: Arc<LevelMeter>) -> RecordingManager {
         RecordingManager::new_with_options(
             Box::new(FakeBackend { buffer, meter }),
             Box::new(super::no_op_emit),
@@ -741,7 +736,7 @@ mod tests {
     fn manager_returns_latest_wav_bytes_without_disk_export() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             8_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -752,7 +747,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.0_f32, 1.0], &LevelMeter::new());
         let info = manager.stop_recording().expect("stop succeeds");
         let wav = manager
@@ -775,7 +769,7 @@ mod tests {
     fn manager_rejects_already_recording_and_not_recording() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -791,7 +785,6 @@ mod tests {
 
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32], &LevelMeter::new());
         manager.stop_recording().expect("stop succeeds");
         let stop_error = manager
@@ -804,7 +797,7 @@ mod tests {
     fn manager_rejects_empty_recording() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -834,7 +827,7 @@ mod tests {
         let previous_latest = latest_buffer
             .into_completed(RecordingEndReason::Manual)
             .expect("latest fixture should complete");
-        let empty_buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let empty_buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -864,7 +857,7 @@ mod tests {
     fn stop_returns_info_after_max_duration_is_reached() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             2,
             1,
             Duration::from_secs(1),
@@ -875,7 +868,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.25_f32, 0.25, 0.25], &LevelMeter::new());
 
         let info = manager.stop_recording().expect("stop succeeds");
@@ -889,7 +881,7 @@ mod tests {
     fn device_disconnect_finalizes_status_without_microphone() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -920,7 +912,7 @@ mod tests {
 
     #[test]
     fn shutdown_when_idle_is_idempotent() {
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -942,7 +934,7 @@ mod tests {
     fn shutdown_discards_empty_active_recording_without_error() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -966,7 +958,7 @@ mod tests {
     fn shutdown_finalizes_captured_samples_with_shutdown_reason() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -977,7 +969,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
 
         assert_eq!(
@@ -1013,7 +1004,7 @@ mod tests {
         let completed = active
             .into_completed(RecordingEndReason::Manual)
             .expect("latest fixture should complete");
-        let buffer = Arc::new(Mutex::new(latest));
+        let buffer = Arc::new(parking_lot::Mutex::new(latest));
         let manager = test_manager(Arc::clone(&buffer), Arc::new(LevelMeter::new()));
         {
             let mut state = manager.state.lock();
@@ -1039,7 +1030,7 @@ mod tests {
     fn watchdog_finalizes_recording_when_sample_cap_is_unreached() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1058,7 +1049,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
         std::thread::sleep(Duration::from_millis(80));
 
@@ -1078,7 +1068,7 @@ mod tests {
     fn watchdog_does_not_fire_when_stop_completes_normally() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1097,7 +1087,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32, 0.5], &LevelMeter::new());
         let info = manager.stop_recording().expect("stop succeeds");
 
@@ -1111,7 +1100,7 @@ mod tests {
     fn watchdog_is_cleared_after_normal_stop() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1122,7 +1111,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32], &LevelMeter::new());
         manager.stop_recording().expect("stop succeeds");
 
@@ -1133,7 +1121,7 @@ mod tests {
     fn watchdog_is_not_duplicated_across_repeated_recordings() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1145,7 +1133,6 @@ mod tests {
             manager.start_recording().expect("start succeeds");
             buffer
                 .lock()
-                .unwrap()
                 .append_interleaved(&[0.5_f32], &LevelMeter::new());
             manager.stop_recording().expect("stop succeeds");
             assert!(manager.watchdog_handle_is_clear());
@@ -1154,7 +1141,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32], &LevelMeter::new());
         manager.stop_recording().expect("stop succeeds");
         assert!(manager.watchdog_handle_is_clear());
@@ -1164,7 +1150,7 @@ mod tests {
     fn stop_recording_clears_active_state_when_finalize_fails() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1195,7 +1181,7 @@ mod tests {
     fn next_recording_can_start_after_watchdog_timeout() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1214,7 +1200,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
         std::thread::sleep(Duration::from_millis(80));
 
@@ -1238,7 +1223,7 @@ mod tests {
     fn stop_recording_returns_quickly_even_with_long_watchdog_timeout() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1257,7 +1242,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
 
         let started = std::time::Instant::now();
@@ -1276,7 +1260,7 @@ mod tests {
     fn concurrent_start_stop_does_not_deadlock() {
         let rt = create_test_runtime();
 
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1329,7 +1313,7 @@ mod tests {
     fn shutdown_during_recording_is_safe() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1343,7 +1327,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32], &LevelMeter::new());
 
         let m = Arc::clone(&manager);
@@ -1358,7 +1341,7 @@ mod tests {
     fn status_query_during_recording_does_not_panic() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1372,7 +1355,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32], &LevelMeter::new());
 
         let mut handles = Vec::new();
@@ -1398,7 +1380,7 @@ mod tests {
     fn watchdog_stop_race_does_not_corrupt_state() {
         let _rt = create_test_runtime();
         let _guard = _rt.enter();
-        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(parking_lot::Mutex::new(RecordingBuffer::new(
             48_000,
             1,
             Duration::from_secs(MAX_RECORDING_DURATION_SECONDS),
@@ -1417,7 +1399,6 @@ mod tests {
         manager.start_recording().expect("start succeeds");
         buffer
             .lock()
-            .unwrap()
             .append_interleaved(&[0.5_f32, 0.25], &LevelMeter::new());
 
         // Wait for the watchdog to fire and mark the buffer as finished.

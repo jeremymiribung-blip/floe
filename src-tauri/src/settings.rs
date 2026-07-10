@@ -318,7 +318,7 @@ impl AppSettingsStore {
             Ok(value) => {
                 // Valid JSON syntax. Use typed DTO deserialization for non-hotkey
                 // fields (with aliases for legacy) + preserved legacy hotkey coercion.
-                let settings = settings_from_value(value)?;
+                let settings = Self::settings_from_value(value)?;
                 validate_app_settings(settings)
             }
             Err(_) => {
@@ -338,7 +338,7 @@ impl AppSettingsStore {
         let value: serde_json::Value =
             serde_json::from_str(&raw).map_err(log_then_settings_error)?;
 
-        let settings = settings_from_value(value)?;
+        let settings = Self::settings_from_value(value)?;
         validate_app_settings(settings)
     }
 

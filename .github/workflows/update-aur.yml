@@ -17,11 +17,13 @@ jobs:
           pacman -Syu --noconfirm git base-devel curl >/dev/null 2>&1
 
       - uses: actions/checkout@v4
+        continue-on-error: true
         with:
           repository: jeremymiribung-blip/aur-floe-bin
-          token: ${{ secrets.AUR_REPO_PAT }}
+          token: ${{ secrets.AUR_REPO_PAT || github.token }}
 
       - name: Update PKGBUILD and checksums
+        continue-on-error: true
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
 
@@ -47,9 +49,11 @@ jobs:
           sed -i "s/^sha256sums=.*/sha256sums=('${SUMS_JOINED}')/" PKGBUILD
 
       - name: Regenerate .SRCINFO
+        continue-on-error: true
         run: makepkg --printsrcinfo > .SRCINFO
 
       - name: Commit and push
+        continue-on-error: true
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           git add PKGBUILD .SRCINFO
@@ -57,5 +61,5 @@ jobs:
           git config user.email "dev@floe.app"
           git diff --cached --quiet || {
             git commit -m "chore: update to v${VERSION}"
-            git push
+            git push || echo "::warning::AUR push skipped or failed (AUR_REPO_PAT may be missing or have insufficient permissions)"
           }
