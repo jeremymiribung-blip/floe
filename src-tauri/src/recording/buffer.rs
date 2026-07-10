@@ -88,9 +88,9 @@ impl RecordingBuffer {
             level_meter.store(rms);
         }
 
-        if self.samples.len() >= self.max_samples {
-            self.finish(RecordingEndReason::MaxDuration);
-        } else if self.samples.len() * std::mem::size_of::<f32>() >= self.max_bytes {
+        if self.samples.len() >= self.max_samples
+            || self.samples.len() * std::mem::size_of::<f32>() >= self.max_bytes
+        {
             self.finish(RecordingEndReason::MaxDuration);
         }
     }

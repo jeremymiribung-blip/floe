@@ -1160,7 +1160,7 @@ mod tests {
 
         manager.start_recording().expect("start succeeds");
         // Do not append any samples so that finalize will hit EmptyRecording path.
-        let stop_error = manager
+        let _stop_error = manager
             .stop_recording()
             .expect_err("stop_recording should fail for empty recording (finalize path)");
         // Empty path surfaces the original error (or wrapped); main point is active is cleared
