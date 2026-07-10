@@ -111,7 +111,7 @@ jobs:
             -name "*.AppImage" \
           \) -exec cp {} artifacts/ \;
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: floe-${{ matrix.name }}
           path: artifacts/
