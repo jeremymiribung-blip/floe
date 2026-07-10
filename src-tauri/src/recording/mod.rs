@@ -200,7 +200,7 @@ impl RecordingManager {
         let started = self.backend.start_recording(self.max_duration)?;
         let meter = Arc::clone(&started.meter);
 
-        let mut state = self.lock_state()?;
+        let mut state = self.lock_state();
         state.last_error = None;
         state.active = Some(ActiveRecording {
             _stream: started.stream,
@@ -252,7 +252,7 @@ impl RecordingManager {
         }
 
         let (active, meter) = {
-            let mut state = self.lock_state()?;
+            let mut state = self.lock_state();
 
             // watchdog already stopped above
 
@@ -354,7 +354,7 @@ impl RecordingManager {
         let result = finalize_active(active, RecordingEndReason::Shutdown);
 
         {
-            let mut state = self.lock_state()?;
+            let mut state = self.lock_state();
             state.recording_state = types::RecordingState::Idle;
         }
 
@@ -379,19 +379,19 @@ impl RecordingManager {
     }
 
     pub fn get_recording_status(&self) -> Result<RecordingStatus, RecordingError> {
-        let state = self.lock_state()?;
+        let state = self.lock_state();
 
         Ok(self.status_from_state(&state))
     }
 
     pub fn get_latest_recording_info(&self) -> Result<Option<RecordingInfo>, RecordingError> {
-        let state = self.lock_state()?;
+        let state = self.lock_state();
 
         Ok(state.latest.as_ref().map(|latest| latest.info.clone()))
     }
 
     pub fn get_latest_recording_wav_bytes(&self) -> Result<Option<Vec<u8>>, RecordingError> {
-        let state = self.lock_state()?;
+        let state = self.lock_state();
 
         Ok(state.latest.as_ref().map(|latest| latest.wav_bytes.clone()))
     }
@@ -1222,7 +1222,10 @@ mod tests {
             .expect("status after watchdog succeeds");
         assert!(!status.is_recording);
 
-        buffer.lock().reset_for_test();
+        {
+            let mut buf = buffer.lock();
+            buf.reset_for_test();
+        }
         let next_status = manager
             .start_recording()
             .expect("start after watchdog succeeds");
@@ -1292,7 +1295,10 @@ mod tests {
                     if i % 2 == 0 {
                         tokio::task::spawn_blocking(move || {
                             let _ = m.start_recording();
-                            b.lock().append_interleaved(&[0.5_f32], &LevelMeter::new());
+                            {
+                                let mut buf = b.lock();
+                                buf.append_interleaved(&[0.5_f32], &LevelMeter::new());
+                            }
                             let _ = m.stop_recording();
                         })
                         .await
@@ -1462,7 +1468,10 @@ mod tests {
         );
 
         // Verify the manager can start a new recording (state is clean).
-        buffer.lock().reset_for_test();
+        {
+            let mut buf = buffer.lock();
+            buf.reset_for_test();
+        }
         let next = manager
             .start_recording()
             .expect("should be able to start a new recording after race");
