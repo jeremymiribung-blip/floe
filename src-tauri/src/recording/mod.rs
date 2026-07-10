@@ -677,8 +677,10 @@ fn elapsed_ms(started: Instant) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use std::time::Duration;
+
+    use parking_lot::Mutex;
 
     use super::{
         buffer::RecordingBuffer,
