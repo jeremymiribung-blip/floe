@@ -1,5 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
+
+use parking_lot::Mutex;
 
 use crate::cleanup::cleanup_transcript_with;
 use crate::commands::clipboard::{copy_text_to_clipboard_with, paste_clipboard_with};
@@ -81,7 +83,7 @@ impl PipeHarness {
 
     /// Injects sample audio data into the recording buffer.
     fn inject_samples(&self, samples: &[f32]) {
-        let mut buf = self.buffer.lock().unwrap();
+        let mut buf = self.buffer.lock();
         buf.append_interleaved(samples, &self.meter);
     }
 
@@ -412,7 +414,7 @@ async fn device_disconnect_finalizes_recording() {
     h.recording.start_recording().unwrap();
     h.inject_samples(&[0.5_f32; 480]);
     {
-        let mut buf = h.buffer.lock().unwrap();
+        let mut buf = h.buffer.lock();
         buf.mark_device_disconnected();
     }
 

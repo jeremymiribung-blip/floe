@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use parking_lot::Mutex;
 
 use crate::audio::LevelMeter;
 
@@ -72,7 +73,7 @@ impl RecordingInput for CpalInputBackend {
         let sample_rate = supported_config.sample_rate();
         let input_channels = supported_config.channels();
         let meter = Arc::new(LevelMeter::new());
-        let buffer = Arc::new(std::sync::Mutex::new(RecordingBuffer::new(
+        let buffer = Arc::new(Mutex::new(RecordingBuffer::new(
             sample_rate,
             input_channels,
             max_duration,
@@ -82,7 +83,7 @@ impl RecordingInput for CpalInputBackend {
         let stream_config = supported_config.config();
         let err_buffer = Arc::clone(&buffer);
         let err_fn = move |_error| {
-            if let Ok(mut buffer) = err_buffer.lock() {
+            if let Some(mut buffer) = err_buffer.try_lock() {
                 buffer.mark_device_disconnected();
             }
         };
@@ -183,7 +184,7 @@ where
         .build_input_stream(
             config,
             move |data: &[T], _info: &cpal::InputCallbackInfo| {
-                if let Ok(mut buffer) = data_buffer.try_lock() {
+                if let Some(mut buffer) = data_buffer.try_lock() {
                     buffer.append_interleaved(data, &data_meter);
                 }
             },
