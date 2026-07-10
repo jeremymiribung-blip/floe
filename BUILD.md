@@ -2,7 +2,7 @@
 
 This guide explains how to build release installers for Floe, a Tauri 2 desktop app with a React, TypeScript, Vite frontend and a Rust backend.
 
-Floe keeps audio in memory by default, converts recordings to 16 kHz mono 16-bit PCM WAV, and sends one complete Groq Whisper Turbo (`whisper-large-v3-turbo`) Speech-to-Text request only after recording stops. The transcript text is then sent to Groq Llama 3.3 70B Versatile (`llama-3.3-70b-versatile`) for cleanup using the same Groq API key. Installer builds must not add Cerebras, Qwen cleanup, GPT-OSS cleanup, provider switching, cleanup modes, streaming, transcript chunking, transcript merging, realtime partials, or any behavior that sends audio for cleanup.
+Floe keeps audio in memory by default, converts recordings to 16 kHz mono 16-bit PCM WAV, and sends one complete Groq Whisper Turbo (`whisper-large-v3-turbo`) Speech-to-Text request only after recording stops. The transcript text is then sent to Groq Qwen 3.6 27B (`qwen/qwen3.6-27b`) for cleanup using the same Groq API key. Installer builds must not add Cerebras, GPT-OSS cleanup, provider switching, cleanup modes, streaming, transcript chunking, transcript merging, realtime partials, or any behavior that sends audio for cleanup.
 
 The packaged app registers a configurable global push-to-talk hotkey through the Tauri 2 global shortcut plugin. The default is `Alt+Space` (shown as `Option + Space`) on macOS and `Control+Space` (shown as `Ctrl + Space`) on Windows/Linux.
 
@@ -20,18 +20,15 @@ flowchart LR
   tauri["Tauri Build"]
   win["Windows Bundler"]
   mac["macOS Bundler"]
-  deb["Debian Bundler"]
-  rpm["RPM Bundler"]
+  linux["Linux Bundler"]
   exe["Windows .exe"]
   macArtifact["macOS .app / .dmg"]
-  debArtifact["Debian .deb"]
-  rpmArtifact["Fedora/RHEL .rpm"]
+  appimage["Linux .AppImage"]
 
   source --> tauri
   tauri --> win --> exe
   tauri --> mac --> macArtifact
-  tauri --> deb --> debArtifact
-  tauri --> rpm --> rpmArtifact
+  tauri --> linux --> appimage
 ```
 
 Verified project configuration:
@@ -50,7 +47,7 @@ Verified project configuration:
 | Autostart launch arg     | `--background`                                                                                                                                        |
 | Windows installer target | `nsis` for `.exe`, optional `msi`                                                                                                                     |
 | macOS targets            | `app`, `dmg`                                                                                                                                          |
-| Linux targets            | `deb`, `rpm`                                                                                                                                          |
+| Linux targets            | `appimage`                                                                                                                                            |
 
 ## Required Build Dependencies
 
@@ -135,9 +132,9 @@ src-tauri/target/release/bundle/dmg/
 
 Release distribution outside the Mac App Store should use Apple code signing and notarization. Unsigned local builds are useful for smoke testing but are not release-ready.
 
-## Debian .deb Build Instructions
+## Linux AppImage Build Instructions
 
-Build Debian packages on a Debian or Ubuntu host. Tauri packages the desktop file, app icons, and Linux runtime dependencies for the generated package.
+Build the AppImage on any Linux host with Tauri's Linux dependencies installed. The AppImage bundles all runtime dependencies, so it runs on any modern Linux distribution without additional package installation.
 
 Install system dependencies:
 
@@ -157,55 +154,30 @@ sudo apt install -y \
   libdbus-1-dev
 ```
 
-Build the `.deb`:
+Build the AppImage:
 
 ```bash
-corepack pnpm exec tauri build --bundles deb
+corepack pnpm exec tauri build --bundles appimage
 ```
 
 Expected output location:
 
 ```text
-src-tauri/target/release/bundle/deb/
+src-tauri/target/release/bundle/appimage/
 ```
 
 Build on the oldest supported base OS practical for the release. Building on a newer Linux distribution can raise the minimum glibc version required by Floe.
 
-## Fedora/RHEL .rpm Build Instructions
+### Running the AppImage
 
-Build RPM packages on Fedora, RHEL, or a compatible host. Install Tauri's Linux dependencies plus audio and D-Bus development headers used by Floe's Rust dependencies.
-
-Install system dependencies:
+The AppImage needs `fuse2` or `fuse3` to run:
 
 ```bash
-sudo dnf check-update
-sudo dnf install -y \
-  webkit2gtk4.1-devel \
-  openssl-devel \
-  curl \
-  wget \
-  file \
-  libappindicator-gtk3-devel \
-  librsvg2-devel \
-  libxdo-devel \
-  alsa-lib-devel \
-  dbus-devel
-sudo dnf group install -y "c-development"
+chmod +x Floe-*.AppImage
+./Floe-*.AppImage
 ```
 
-Build the `.rpm`:
-
-```bash
-corepack pnpm exec tauri build --bundles rpm
-```
-
-Expected output location:
-
-```text
-src-tauri/target/release/bundle/rpm/
-```
-
-RPM signing is optional for local builds and recommended for published releases. Keep GPG private keys out of the repository and CI logs.
+For desktop integration, use a tool like `appimaged` or extract the AppImage with `--appimage-extract`.
 
 ## Artifact Output Locations
 
@@ -217,8 +189,7 @@ Tauri writes artifacts under `src-tauri/target/release/bundle/` for native build
 | Windows MSI `.msi`  | `corepack pnpm exec tauri build --bundles msi`  | `src-tauri/target/release/bundle/msi/`   |
 | macOS `.app`        | `corepack pnpm exec tauri build --bundles app`  | `src-tauri/target/release/bundle/macos/` |
 | macOS `.dmg`        | `corepack pnpm exec tauri build --bundles dmg`  | `src-tauri/target/release/bundle/dmg/`   |
-| Debian `.deb`       | `corepack pnpm exec tauri build --bundles deb`  | `src-tauri/target/release/bundle/deb/`   |
-| Fedora/RHEL `.rpm`  | `corepack pnpm exec tauri build --bundles rpm`  | `src-tauri/target/release/bundle/rpm/`   |
+| Linux `.AppImage`   | `corepack pnpm exec tauri build --bundles appimage` | `src-tauri/target/release/bundle/appimage/` |
 
 When cross-compiling with an explicit Rust target, Tauri may place bundle output below `src-tauri/target/<target-triple>/release/bundle/`.
 
@@ -226,7 +197,7 @@ Installer artifacts are ignored by Git because `src-tauri/target/` is ignored.
 
 ## Release Builds via CI
 
-The release pipeline lives in `.github/workflows/release.yml` and produces the Windows NSIS installer that is attached to each GitHub release. The pipeline is intentionally narrow in the first cut and only builds the platform the maintainer can smoke-test on a Windows host. macOS `.app`/`.dmg`, Linux `.deb` and Fedora/RHEL `.rpm` can be added later as additional matrix jobs; the `tauri.conf.json` bundle metadata is already prepared for them.
+The release pipeline lives in `.github/workflows/release.yml` and builds platform-specific artifacts attached to each GitHub release. The matrix currently covers Windows (`.exe`/`.msi`), macOS (`.dmg`), and Linux (`.AppImage`).
 
 **Triggers**
 
@@ -302,65 +273,32 @@ A test in `settings.rs` (`keyring_service_matches_documented_bundle_identifier`)
 
 ## Future Release Automation
 
-The Windows-NSIS job in `.github/workflows/release.yml` is the first matrix entry. To expand to other platforms, add additional jobs to the same workflow and run them on native runners:
-
-- `macos-latest` for `.app` and `.dmg`, with signing and notarization secrets configured as GitHub Actions secrets.
-- `ubuntu-latest` (or an older supported Ubuntu image) for `.deb`.
-- A Fedora or RHEL-compatible container/runner for `.rpm`.
+The release matrix in `.github/workflows/release.yml` currently covers all three platforms. To add or change targets, edit the `bundles` values in the matrix include section and update the `tauri.conf.json` `"targets"` list accordingly.
 
 Each additional job should follow the same pattern: install pnpm/Node/Rust, run the pre-build quality checks, warn on missing signing secrets, and invoke `tauri-apps/tauri-action@v0` with the platform-specific `--bundles` value. Keep signing keys, Apple credentials, GPG keys, and Windows certificates in GitHub Actions secrets only, and publish artifacts to a draft GitHub Release for manual verification before making the release public.
+
+## Arch Linux (AUR)
+
+Floe is available on the AUR as `floe-bin`. It downloads the pre-built AppImage from GitHub Releases and installs it with proper desktop integration:
+
+```bash
+# Using yay
+yay -S floe-bin
+
+# Using paru
+paru -S floe-bin
+```
+
+The AUR repository is maintained at `jeremymiribung-blip/aur-floe-bin` and is automatically updated by CI whenever a new release tag is pushed. Submit any packaging issues there.
 
 References:
 
 - Tauri Windows installer: https://v2.tauri.app/distribute/windows-installer/
 - Tauri macOS app bundle: https://v2.tauri.app/distribute/macos-application-bundle/
 - Tauri macOS DMG: https://v2.tauri.app/distribute/dmg/
-- Tauri Debian package: https://v2.tauri.app/distribute/debian/
-- Tauri RPM package: https://v2.tauri.app/distribute/rpm/
+- Tauri AppImage: https://v2.tauri.app/distribute/appimage/
 - Tauri prerequisites: https://v2.tauri.app/start/prerequisites/
 - Tauri app icons: https://v2.tauri.app/develop/icons/
+- Arch User Repository: https://wiki.archlinux.org/title/Arch_User_Repository
 
-## Fedora Quickstart (dieser Rechner)
 
-Auf diesem System ist `pnpm` nicht verfügbar — es wird `npm` verwendet. Das `.rpm` kann nicht gebaut werden, da die Tauri-Systembibliotheken für Linux fehlen (kein `sudo` auf diesem Rechner).
-
-**Frontend-only testen:**
-
-```bash
-npm run dev            # Vite-Dev-Server (http://localhost:1420)
-npm run build          # Produktions-Build → dist/
-npm test               # Vitest (50 Tests)
-npx tsc --noEmit       # TypeScript-Check
-```
-
-**RPM bauen (auf einem System mit sudo):**
-
-```bash
-# 1. Systemdeps installieren
-sudo dnf install -y \
-  webkit2gtk4.1-devel \
-  libsoup3-devel \
-  dbus-devel \
-  pkgconf-pkg-config \
-  libappindicator-gtk3-devel \
-  librsvg2-devel \
-  patchelf \
-  openssl-devel \
-  gcc \
-  glib2-devel \
-  cairo-gobject-devel \
-  gdk-pixbuf2-devel \
-  at-spi2-core-devel \
-  alsa-lib-devel \
-  rpm-build
-
-# 2. Rust installieren (falls nicht vorhanden)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-# 3. Bauen
-npm ci
-npm run tauri:build
-
-# → src-tauri/target/release/bundle/rpm/floe-*.rpm
-```

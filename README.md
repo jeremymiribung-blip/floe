@@ -16,7 +16,7 @@ Floe aims to feel fast, private by default, and boringly reliable. The STT path 
 - `cpal` microphone recording
 - In-memory 16 kHz mono 16-bit PCM WAV generation
 - Groq Speech-to-Text with `whisper-large-v3-turbo`
-- Groq transcript cleanup with `llama-3.3-70b-versatile`
+- Groq transcript cleanup with `qwen/qwen3.6-27b` (Preview-tier on Groq)
 - OS keychain storage for the Groq API key
 - Tauri autostart integration for optional start-at-login
 
@@ -151,7 +151,7 @@ The frontend never receives the full API key. It only receives whether a key is 
 
 If the native keychain is unavailable in the current environment, Floe does not fall back to plaintext secret files. Saving or clearing a secret returns a sanitized error, and the API key status remains unconfigured until OS keychain access works.
 
-Transcription is fixed: Floe sends optimized WAV audio to Groq Whisper Turbo (`whisper-large-v3-turbo`) once after recording stops. Cleanup is fixed: after Groq STT, Floe sends the transcript text to Groq Llama 3.3 70B Versatile (`llama-3.3-70b-versatile`) using the same API key. Only transcript text is sent for cleanup; audio is never sent. There are no cleanup modes, no Cerebras, no Qwen cleanup model, no GPT-OSS cleanup model, and no provider switching. If Groq cleanup fails (for example, missing or invalid key, network error, rate limit, malformed response), Floe pastes the raw Groq transcript and surfaces a short `Cleanup failed` warning. The flow does not block on cleanup success.
+Transcription is fixed: Floe sends optimized WAV audio to Groq Whisper Turbo (`whisper-large-v3-turbo`) once after recording stops. Cleanup is fixed: after Groq STT, Floe sends the transcript text to Groq Qwen 3.6 27B (`qwen/qwen3.6-27b`, currently Preview-tier on Groq) using the same API key. Only transcript text is sent for cleanup; audio is never sent. There are no cleanup modes, no Cerebras, no GPT-OSS cleanup model, and no provider switching. If Groq cleanup fails (for example, missing or invalid key, network error, rate limit, malformed response), Floe pastes the raw Groq transcript and surfaces a short `Cleanup failed` warning. The flow does not block on cleanup success.
 
 ## Troubleshooting
 

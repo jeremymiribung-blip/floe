@@ -55,7 +55,7 @@ Treat any finding as sensitive until it has been reviewed and rotated if needed.
 
 Floe uses exactly one Groq Speech-to-Text request after recording stops. Do not add streaming, chunking, realtime partial transcripts, or transcript merging.
 
-Floe uses Groq for both STT and transcript cleanup. STT uses Groq Whisper Turbo (`whisper-large-v3-turbo`), and cleanup uses Groq Llama 3.3 70B Versatile (`llama-3.3-70b-versatile`). The same Groq API key handles both steps; there is no provider switching and no cleanup modes. Audio is sent only to Groq for STT. Only transcript text is sent to Groq for cleanup. If cleanup fails, Floe pastes the raw Groq transcript and surfaces a `Cleanup failed` warning. There is no user-selectable cleanup provider or mode, no Cerebras, no Qwen cleanup model, and no GPT-OSS cleanup model.
+Floe uses Groq for both STT and transcript cleanup. STT uses Groq Whisper Turbo (`whisper-large-v3-turbo`), and cleanup uses Groq Qwen 3.6 27B (`qwen/qwen3.6-27b`, currently Preview-tier on Groq). The same Groq API key handles both steps; there is no provider switching and no cleanup modes. Audio is sent only to Groq for STT. Only transcript text is sent to Groq for cleanup. If cleanup fails, Floe pastes the raw Groq transcript and surfaces a `Cleanup failed` warning. There is no user-selectable cleanup provider or mode, no Cerebras, and no GPT-OSS cleanup model.
 
 ## Pull Requests
 

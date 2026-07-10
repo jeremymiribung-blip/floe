@@ -1,6 +1,30 @@
 # Changelog
 
-All notable changes to Floe will be documented in this file.
+All notable changes to Floe will be documented in this file.## [1.3.0] - 2026-07-07
+
+### Note
+
+- Both v1.1.1 and v1.2.0 are intentionally bypassed — neither was tagged or published. The queued fixes (cleanup-model migration, keychain error UX, watchdog timing fix, diagnostics-log redaction, usePushToTalk refactor) ship together here as v1.3.0. The migration lands now because Groq is deprecating the previously planned `llama-3.3-70b-versatile` cleanup model on 2026-08-16 and the rest of the Llama Production family is being retired on the same date, so Floe moves to `qwen/qwen3.6-27b` (Preview-tier) before that deadline rather than ship a release that would 400 on cleanup calls the day it installs. One coordinated update for users instead of two.
+- The Windows installer (`Floe_1.3.0_x64-setup.exe` / `.msi`) is **unsigned** in this release. The GitHub Actions release pipeline does not yet have `WINDOWS_CERTIFICATE` or `TAURI_SIGNING_PRIVATE_KEY` secrets configured, so Microsoft SmartScreen may surface a warning on first run. Linux `.deb` / `.AppImage` / `.rpm` and macOS `.dmg` packages are unaffected.
+- The new cleanup model `qwen/qwen3.6-27b` is currently **Preview-tier** on Groq. Preview models can be retired on short notice. Track Groq's deprecation page before any future release that touches the cleanup pipeline; if Groq ships this model as Production, keep it; if Groq retires it, migrate to the next Production-tier chat model.
+
+### Changed
+
+- Groq transcript cleanup model is now `qwen/qwen3.6-27b` (Preview-tier). Floe still talks to the same Groq Chat Completions endpoint with the same keychain-stored API key; there is no provider switching, no cleanup modes, no behaviour toggles, no Cerebras. AGENTS.md is updated to lift the prior "no Qwen cleanup" rule; the "no GPT-OSS cleanup" rule remains in force.
+- Cleanup HTTP request body: the Qwen-inference `chat_template_kwargs` payload is intentionally still **not** sent. The strict `validate_cleanup_output` validator in `src-tauri/src/providers/groq/cleanup.rs` already rejects Markdown / JSON / YAML / commentary wrappers and would catch stray Qwen thinking tags, triggering the documented `Cleanup failed` + raw-paste fallback. If the Qwen model on Groq starts returning thinking tokens in normal output, the validator gets a tighter heuristic before Floe re-introduces model-specific request parameters; AGENTS.md would be updated accordingly.
+- `usePushToTalk` no longer reads `skipCleanup` from the store on each render. Instead, the controller mounts one Zustand `subscribe` inside a `useEffect` and mirrors the latest `skipCleanup` into a ref, so the controller's long-lived `cleanupTranscript` closure reacts to in-app "skip cleanup" toggles across the controller's full lifetime.
+- Settings window now awaits the in-flight API-key save before hiding, so a save failure isn't silently dropped when the user closes mid-save.
+- Onboarding stores the trimmed API-key value in the global store on every keystroke, so settings never pre-fill an input with leading or trailing whitespace from this draft.
+
+### Added
+
+- User-facing differentiation for keychain storage failures in onboarding and settings. A failing `saveApiKey` rejection with `code === "secretStoreUnavailable"` now surfaces a dedicated message ("Could not save your API key: your system's keychain is unavailable. Check that your OS keychain is unlocked …") instead of the previous generic network-error copy. New helpers in `src/lib/errorLog.ts`: `isKeychainError(err)` recognises the structured Rust `SettingsError` code, and `KEYCHAIN_UNAVAILABLE_MESSAGE` carries the user-facing string. Both the `GroqStep` (onboarding) and `SettingsWindow` (key-validation rejection) branches independently branch on the helper so users with a locked or inaccessible OS keychain are not sent chasing a network problem that does not exist.
+- Diagnostics-log redaction surfaced across the IPC boundary. The `diag_log_str` Tauri command now scrubs every incoming frontend line through `diag::report::redact_string_for_report` before writing to the diagnostics log. Accidentally-logged bearer tokens, API keys, transcripts, clipboard snippets, or other secret-shaped content from the frontend land as `"redacted"` on disk instead of the raw value. `redact_string_for_report` has been promoted from `#[cfg(test)]` to a public function on `crate::diag::report` so production callers no longer need the test-only carve-out.
+
+### Fixed
+
+- Recording watchdog overshoot. The watchdog loop in `src-tauri/src/recording/mod.rs` now records its start time as a `std::time::Instant` and recomputes the sleep cap each iteration as `timeout.saturating_sub(start.elapsed()).min(poll_interval)`. The previous `elapsed += sleep_duration` accumulator could drift over a long single sleep and silently overshoot the timeout, skipping the post-loop "did the manager ever call stop?" check.
+- `CleanupError.model` is now asserted non-empty in tests. Previously the field was an empty `String`, so a cleanup failure whose originating-model context was lost would not be caught in CI. Tests now pin the model name (`qwen/qwen3.6-27b`) so future regressions are caught immediately.
 
 ## [1.1.0] - 2026-06-30
 

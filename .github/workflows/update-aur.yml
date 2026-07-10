@@ -1,0 +1,61 @@
+name: Update AUR
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  update-aur:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    permissions:
+      contents: read
+    steps:
+      - name: Install system dependencies
+        run: |
+          pacman -Syu --noconfirm git base-devel curl >/dev/null 2>&1
+
+      - uses: actions/checkout@v4
+        with:
+          repository: jeremymiribung-blip/aur-floe-bin
+          token: ${{ secrets.AUR_REPO_PAT }}
+
+      - name: Update PKGBUILD and checksums
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+
+          . PKGBUILD
+          for src in "${source[@]}"; do
+            curl -sL "$src" -o "/tmp/$(basename "$src")"
+          done
+
+          SUMS=()
+          for src in "${source[@]}"; do
+            f="/tmp/$(basename "$src")"
+            SUMS+=("$(sha256sum "$f" | cut -d' ' -f1)")
+          done
+
+          # Write sha256sums as single-line array
+          SUMS_JOINED=$(
+            IFS=' '
+            echo "${SUMS[*]}"
+          )
+          sed -i "s/^sha256sums=.*/sha256sums=('${SUMS_JOINED}')/" PKGBUILD
+
+      - name: Regenerate .SRCINFO
+        run: makepkg --printsrcinfo > .SRCINFO
+
+      - name: Commit and push
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git add PKGBUILD .SRCINFO
+          git config user.name "floe-bot"
+          git config user.email "dev@floe.app"
+          git diff --cached --quiet || {
+            git commit -m "chore: update to v${VERSION}"
+            git push
+          }

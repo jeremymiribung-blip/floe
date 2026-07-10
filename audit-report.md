@@ -17,24 +17,25 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 
 ## Previous Findings — Validation
 
-| # | Finding | Status | Evidence |
-|---|---------|--------|----------|
-| 1 | ASR abstraction layer dead weight (~4,000 lines) | **Fixed** | `asr/` directory tree deleted entirely. No `asr/mod.rs`, no `asr/traits.rs`, no `asr/registry.rs`, no `asr/fallback.rs`, no `asr/policy.rs`, no `asr/backend.rs`, no `asr/adapters/`, no `asr/tests/`. |
-| 2 | `#![allow(dead_code)]` in 3 modules | **Partially Fixed** | Down from 3 module-level + 7 function-level to 1 module-level (`contract.rs:12`) + 23 item-level annotations across `diag/`, `recording/`, `commands/diag.rs`, `providers/groq/types.rs`, `test_helpers/`, `settings.rs` (now uses `#[expect]`). Still 24 total — significant reduction, but not eliminated. |
-| 3 | `unwrap()` calls in `lib.rs` startup | **Fixed** | Zero `unwrap()`, `unwrap_or_default()`, or `expect()` calls remain. Uses `unwrap_or_else()` and `?` operator. |
-| 4 | Error context discarded via `map_err(\|_\| ...)` | **Fixed** | Zero `map_err(\|_\|` patterns remain. All use named functions like `map_keyring_error` and `log_then_settings_error`. |
-| 5 | Frontend error swallowing | **Partially Fixed** | Previously identified locations in `tauri.ts` and `App.tsx` removed/changed. However, 12+ `.catch(() => {})` or `console.error`-only swallow sites remain across `usePushToTalk.ts`, `pushToTalk.ts`, `tauri.ts`, `UpdateSection.tsx`. |
-| 6 | Orphaned `asr::adapters` layer | **Fixed** | Module deleted. No `GroqAdapter` type exists. |
-| 7 | Dead `src/stores/settings.ts` | **Fixed** | File deleted. Zero references to `useSettingsStore` or `settingsStore` exist. |
-| 8 | Runtime artifacts in project root | **Mostly Fixed** | `nul` file no longer present on disk. `diag.txt`, `diag_stderr.log`, `fe_diag.log`, `inventory.ndjson`, `libpolicy.rlib` all cleaned up. `.gitignore` updated with all artifact entries (lines 39–46). |
-| 9 | `async-trait` Cargo dependency for dead code | **No Longer Relevant** | `async-trait` remains in Cargo.toml (line 23) but is now **actively used** by the `CleanupProvider` trait and its implementations. Not dead. |
-| 10 | `ASR_ARCHITECTURE.md` documents features that don't exist | **Fixed** | Document deleted. Entire `docs/` directory removed. |
+| #   | Finding                                                   | Status                 | Evidence                                                                                                                                                                                                                                                                                                     |
+| --- | --------------------------------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | ASR abstraction layer dead weight (~4,000 lines)          | **Fixed**              | `asr/` directory tree deleted entirely. No `asr/mod.rs`, no `asr/traits.rs`, no `asr/registry.rs`, no `asr/fallback.rs`, no `asr/policy.rs`, no `asr/backend.rs`, no `asr/adapters/`, no `asr/tests/`.                                                                                                       |
+| 2   | `#![allow(dead_code)]` in 3 modules                       | **Partially Fixed**    | Down from 3 module-level + 7 function-level to 1 module-level (`contract.rs:12`) + 23 item-level annotations across `diag/`, `recording/`, `commands/diag.rs`, `providers/groq/types.rs`, `test_helpers/`, `settings.rs` (now uses `#[expect]`). Still 24 total — significant reduction, but not eliminated. |
+| 3   | `unwrap()` calls in `lib.rs` startup                      | **Fixed**              | Zero `unwrap()`, `unwrap_or_default()`, or `expect()` calls remain. Uses `unwrap_or_else()` and `?` operator.                                                                                                                                                                                                |
+| 4   | Error context discarded via `map_err(\|_\| ...)`          | **Fixed**              | Zero `map_err(\|_\|` patterns remain. All use named functions like `map_keyring_error` and `log_then_settings_error`.                                                                                                                                                                                        |
+| 5   | Frontend error swallowing                                 | **Partially Fixed**    | Previously identified locations in `tauri.ts` and `App.tsx` removed/changed. However, 12+ `.catch(() => {})` or `console.error`-only swallow sites remain across `usePushToTalk.ts`, `pushToTalk.ts`, `tauri.ts`, `UpdateSection.tsx`.                                                                       |
+| 6   | Orphaned `asr::adapters` layer                            | **Fixed**              | Module deleted. No `GroqAdapter` type exists.                                                                                                                                                                                                                                                                |
+| 7   | Dead `src/stores/settings.ts`                             | **Fixed**              | File deleted. Zero references to `useSettingsStore` or `settingsStore` exist.                                                                                                                                                                                                                                |
+| 8   | Runtime artifacts in project root                         | **Mostly Fixed**       | `nul` file no longer present on disk. `diag.txt`, `diag_stderr.log`, `fe_diag.log`, `inventory.ndjson`, `libpolicy.rlib` all cleaned up. `.gitignore` updated with all artifact entries (lines 39–46).                                                                                                       |
+| 9   | `async-trait` Cargo dependency for dead code              | **No Longer Relevant** | `async-trait` remains in Cargo.toml (line 23) but is now **actively used** by the `CleanupProvider` trait and its implementations. Not dead.                                                                                                                                                                 |
+| 10  | `ASR_ARCHITECTURE.md` documents features that don't exist | **Fixed**              | Document deleted. Entire `docs/` directory removed.                                                                                                                                                                                                                                                          |
 
 ---
 
 ## New Findings
 
 ### Finding 1: Missing Onboarding Flow
+
 **Severity:** High  
 **Category:** Feature Completeness  
 **Files:** `src/views/SettingsWindow.tsx`, `src/types/app.ts:22-26`, `src/Root.tsx`  
@@ -44,9 +45,11 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 **Effort:** Medium
 
 ### Finding 2: Frontend Error Swallowing
+
 **Severity:** High  
 **Category:** Error Handling  
-**Files:** 
+**Files:**
+
 - `src/hooks/usePushToTalk.ts:115,118` — `.catch(() => {})` on window show/focus
 - `src/hooks/usePushToTalk.ts:172` — `.catch(() => { ... setError })` no catch argument
 - `src/hooks/usePushToTalk.ts:232` — same pattern for recording events
@@ -64,16 +67,19 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 
 **Evidence:** 22 distinct .catch() sites. Of these, 5 use completely empty handlers (`catch {}` / `.catch(() => {})`), 10 log to `diagLog` or `console.error` without user feedback, and 7 show error state but lose the error object. Startup failures (`getHotkeySettings`, `getApiKeyStatus`, `getUpdateInfo`) are silently logged — if a keychain error prevents loading the API key, the app shows "no key configured" with no indication of the underlying problem.  
 **Why it matters:** Silent failures hide real problems — keychain corruption, missing permissions, network errors — making debugging nearly impossible for end users.  
-**Suggested fix:** 
+**Suggested fix:**
+
 1. Never use empty `.catch(() => {})` — at minimum log with `console.error`.
 2. Surface startup failures to the user via store state (e.g., `setApiKeyError` action).
 3. For non-critical operations (diagLog, bubble show/hide), log is acceptable; for critical operations (hotkey registration, recording control), propagate errors.  
-**Effort:** Medium
+   **Effort:** Medium
 
 ### Finding 3: Dead UI Components
+
 **Severity:** Medium  
 **Category:** Dead Code / Technical Debt  
 **Files:**
+
 - `src/components/ui/button.tsx` — never imported
 - `src/components/ui/card.tsx` — never imported
 - `src/components/ui/tabs.tsx` — never imported
@@ -86,10 +92,12 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 **Effort:** Small
 
 ### Finding 4: `#[allow(dead_code)]` Proliferation
+
 **Severity:** Medium  
 **Category:** Code Hygiene / Technical Debt  
 **Files:** 24 occurrences across:
-- `src-tauri/src/contract.rs:12` — `#![allow(dead_code)]` (module-level, justified for CMD_* constants)
+
+- `src-tauri/src/contract.rs:12` — `#![allow(dead_code)]` (module-level, justified for CMD\_\* constants)
 - `src-tauri/src/commands/diag.rs:45,99` — `#[allow(dead_code)]` on `set_path`, `new`
 - `src-tauri/src/recording/mod.rs:467,537` — `#[allow(dead_code)]` on `state_arc`, `poll_finalize`
 - `src-tauri/src/diag/report.rs:182,374,873` — `#[allow(dead_code)]`
@@ -102,22 +110,25 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 
 **Evidence:** 1 module-level + 23 item-level annotations. The diag/tracer.rs file alone has 8 annotations, suggesting code that was written speculatively. The `settings.rs` file has been upgraded to `#[expect(dead_code)]` (the better form) on 2 functions, but the rest still uses the suppress-everything `#[allow]` form.  
 **Why it matters:** Each `#[allow(dead_code)]` is a documented admission that code exists without being used. This makes refactoring harder (you can't tell if removing something breaks a "dead" function that's actually called dynamically) and signals uncertainty about what's needed.  
-**Suggested fix:** 
+**Suggested fix:**
+
 1. Convert `#[allow(dead_code)]` → `#[expect(dead_code)]` where the code is intentionally dead (test helpers, pub API surface for future use).
 2. Where possible, gate with `#[cfg(test)]` instead of suppressing warnings.
 3. Remove genuinely unused code.  
-**Effort:** Medium
+   **Effort:** Medium
 
 ### Finding 5: `CleanupProvider` Single-Implementation Trait
+
 **Severity:** Low  
 **Category:** Architecture  
 **Files:** `src-tauri/src/providers/cleanup.rs:39-46`, `src-tauri/src/providers/groq/cleanup.rs:186-188`  
-**Evidence:** `CleanupProvider` is a trait with exactly one production implementation (`GroqCleanupClient`). Two test implementations exist (`FakeCleanupProvider`, `TrackedCleanupProvider`). The trait provides an abstraction boundary that could theoretically support a second provider, but AGENTS.md explicitly disallows provider switching: *"No Qwen cleanup model or GPT-OSS cleanup model is required."* This is the same pattern as the (now-deleted) `AsrProvider` trait, but on a much smaller scale (~46 lines for the trait definition + ~1 production impl).  
+**Evidence:** `CleanupProvider` is a trait with exactly one production implementation (`GroqCleanupClient`). Two test implementations exist (`FakeCleanupProvider`, `TrackedCleanupProvider`). The trait provides an abstraction boundary that could theoretically support a second provider, but AGENTS.md explicitly disallows provider switching: _"No Qwen cleanup model or GPT-OSS cleanup model is required."_ This is the same pattern as the (now-deleted) `AsrProvider` trait, but on a much smaller scale (~46 lines for the trait definition + ~1 production impl).  
 **Why it matters:** Minor architectural overdraft. The trait exists to support a scenario that is explicitly ruled out by project constraints. However, unlike the old `asr/` module, this trait is lean, well-documented, and serves a clear testability purpose.  
 **Suggested fix:** Keep as-is. The testability benefit (mock providers) justifies the abstraction. Close as "wontfix."  
 **Effort:** N/A
 
 ### Finding 6: `HotkeyRegistrar` Single-Implementation Trait
+
 **Severity:** Low  
 **Category:** Architecture  
 **Files:** `src-tauri/src/system/hotkey.rs:77-80`  
@@ -126,6 +137,7 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 **Effort:** N/A
 
 ### Finding 7: `SecretStore` Trait with Two Implementations
+
 **Severity:** Informational  
 **Category:** Architecture  
 **Files:** `src-tauri/src/settings.rs:77-81`  
@@ -135,6 +147,7 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 **Effort:** N/A
 
 ### Finding 8: Frontend Test Coverage Gap
+
 **Severity:** Medium  
 **Category:** Testing  
 **Files:** All `*.test.ts` / `*.test.tsx` under `src/`  
@@ -144,6 +157,7 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 **Effort:** Large
 
 ### Finding 9: RPM Spec at Version 0.1.0
+
 **Severity:** Low  
 **Category:** Release Readiness  
 **File:** `D:\Code\FLOE\floe.spec:2`  
@@ -153,6 +167,7 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 **Effort:** Small
 
 ### Finding 10: `SttProviderDiagnostics` Metadata Skew
+
 **Severity:** Low  
 **Category:** Dead Code  
 **Files:** `src/types/app.ts:173-180`  
@@ -162,6 +177,7 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 **Effort:** Small
 
 ### Finding 11: No `listener` Cleanup for `listen()` in Tests
+
 **Severity:** Low  
 **Category:** Testing  
 **Files:** `src/hooks/usePushToTalk.ts:158-183`, `src/App.tsx:59-70,72-84`  
@@ -171,6 +187,7 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 **Effort:** Small (consequence of Finding 8)
 
 ### Finding 12: Update System Error Paths
+
 **Severity:** Medium  
 **Category:** Error Handling  
 **Files:** `src/components/UpdateSection.tsx:153-155,160-162`, `src/App.tsx:49-56`  
@@ -183,28 +200,28 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 
 ## Scoring
 
-| Category | Score | Explanation |
-|----------|-------|-------------|
-| Feature Completeness | 82/100 | Core pipeline complete. Missing onboarding flow. Dead `AppStatus.setup_only` type. |
-| Architecture | 90/100 | ASR dead weight removed. Clean module boundaries. Minor over-abstraction (CleanupProvider, HotkeyRegistrar traits) but justifiable for testability. |
-| Rust Quality | 85/100 | Solid code quality, idiomatic Rust. 24 dead_code annotations are the main blemish. |
-| Frontend Quality | 78/100 | Clean store design. Dead UI components. Missing onboarding. Thin test coverage. Error swallowing. |
-| Tauri Integration | 88/100 | Commands well-structured. State management correct. No more `unwrap()` in setup. Event system solid. |
-| IPC | 88/100 | Contract mirror well-maintained. CamelCase enforced. 37 commands registered and tested. |
-| Recording Pipeline | 92/100 | Production-quality. Comprehensive race handling. Excellent tests. |
-| Hotkey Lifecycle | 87/100 | Robust registration with fallback. Clean shutdown. Trait abstraction justifiable. |
-| Cleanup Pipeline | 88/100 | Clean separation, correct fallback, output validation, provider-agnostic tests. |
-| Diagnostics | 90/100 | Comprehensive, PII-free, crash detection, session persistence. One of the strongest subsystems. |
-| Update System | 72/100 | Functional via Tauri updater plugin. Error reporting is weak — failures silently logged. |
-| Error Handling | 68/100 | Much improved from previous audit (55). No more `unwrap()` or `map_err(\|_\|)`. But 22 frontend `.catch()` sites swallow errors. Update errors never surfaced. |
-| Security | 92/100 | OS keychain for secrets. No secrets in logs. Clipboard read-back verification. |
-| Privacy | 94/100 | Strong redaction system. Forbidden keys in diagnostics. PII-free report design. |
-| Performance | 86/100 | In-memory WAV, no unnecessary I/O. Dead code adds minor binary bloat. |
-| Resource Management | 88/100 | Clean shutdown, watchdog, device disconnect handling, mutex poisoning recovery. |
-| Test Quality | 78/100 | Excellent Rust tests (unit + integration + contract). Weak frontend tests — critical hooks and views untested. No E2E tests. |
-| Documentation | 90/100 | AGENTS.md accurate. BUILD/CHANGELOG/CONTRIBUTING/README all up to date. ASR_ARCHITECTURE.md deleted. |
-| Release Readiness | 72/100 | CI/CD pipelines exist (CI, release, dependency-review). Missing onboarding hurts first-run UX. RPM spec at 0.1.0. Error paths not fully hardened. |
-| Maintainability | 82/100 | Up from 50/100 — massive improvement. Dead_code annotations reduced from ~4,000 lines of dead asr/ to 24 item-level annotations. Still some cleanup needed. |
+| Category                 | Score      | Explanation                                                                                                                                                                         |
+| ------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Feature Completeness     | 82/100     | Core pipeline complete. Missing onboarding flow. Dead `AppStatus.setup_only` type.                                                                                                  |
+| Architecture             | 90/100     | ASR dead weight removed. Clean module boundaries. Minor over-abstraction (CleanupProvider, HotkeyRegistrar traits) but justifiable for testability.                                 |
+| Rust Quality             | 85/100     | Solid code quality, idiomatic Rust. 24 dead_code annotations are the main blemish.                                                                                                  |
+| Frontend Quality         | 78/100     | Clean store design. Dead UI components. Missing onboarding. Thin test coverage. Error swallowing.                                                                                   |
+| Tauri Integration        | 88/100     | Commands well-structured. State management correct. No more `unwrap()` in setup. Event system solid.                                                                                |
+| IPC                      | 88/100     | Contract mirror well-maintained. CamelCase enforced. 37 commands registered and tested.                                                                                             |
+| Recording Pipeline       | 92/100     | Production-quality. Comprehensive race handling. Excellent tests.                                                                                                                   |
+| Hotkey Lifecycle         | 87/100     | Robust registration with fallback. Clean shutdown. Trait abstraction justifiable.                                                                                                   |
+| Cleanup Pipeline         | 88/100     | Clean separation, correct fallback, output validation, provider-agnostic tests.                                                                                                     |
+| Diagnostics              | 90/100     | Comprehensive, PII-free, crash detection, session persistence. One of the strongest subsystems.                                                                                     |
+| Update System            | 72/100     | Functional via Tauri updater plugin. Error reporting is weak — failures silently logged.                                                                                            |
+| Error Handling           | 68/100     | Much improved from previous audit (55). No more `unwrap()` or `map_err(\|_\|)`. But 22 frontend `.catch()` sites swallow errors. Update errors never surfaced.                      |
+| Security                 | 92/100     | OS keychain for secrets. No secrets in logs. Clipboard read-back verification.                                                                                                      |
+| Privacy                  | 94/100     | Strong redaction system. Forbidden keys in diagnostics. PII-free report design.                                                                                                     |
+| Performance              | 86/100     | In-memory WAV, no unnecessary I/O. Dead code adds minor binary bloat.                                                                                                               |
+| Resource Management      | 88/100     | Clean shutdown, watchdog, device disconnect handling, mutex poisoning recovery.                                                                                                     |
+| Test Quality             | 78/100     | Excellent Rust tests (unit + integration + contract). Weak frontend tests — critical hooks and views untested. No E2E tests.                                                        |
+| Documentation            | 90/100     | AGENTS.md accurate. BUILD/CHANGELOG/CONTRIBUTING/README all up to date. ASR_ARCHITECTURE.md deleted.                                                                                |
+| Release Readiness        | 72/100     | CI/CD pipelines exist (CI, release, dependency-review). Missing onboarding hurts first-run UX. RPM spec at 0.1.0. Error paths not fully hardened.                                   |
+| Maintainability          | 82/100     | Up from 50/100 — massive improvement. Dead_code annotations reduced from ~4,000 lines of dead asr/ to 24 item-level annotations. Still some cleanup needed.                         |
 | **Production Readiness** | **78/100** | Up from 65/100. Core flow works. The biggest improvement is the removed asr/ dead weight. Remaining gaps: onboarding, error swallowing, frontend test coverage, dead UI components. |
 
 ---
@@ -243,18 +260,18 @@ The previous audit identified the `asr/` module tree (~4,000 lines of dead abstr
 
 ## Delta vs Previous Audit
 
-| Metric | Previous | Current | Change |
-|--------|----------|---------|--------|
-| ASR dead code | ~4,000 lines | 0 lines | **-4,000 lines** |
-| `#[allow(dead_code)]` | 3 modules + 7 functions | 1 module + 23 items | **Reduced** |
-| `unwrap()` in lib.rs | 2 | 0 | **Fixed** |
-| `map_err(\|_\|)` | 8+ locations | 0 | **Fixed** |
-| Error swallowing (`.catch(() => {})`) | 8 locations | 5 locations | **Reduced but persists** |
-| Runtime artifacts | 6 files | 0 files | **Cleaned up** |
-| Dead stores | 1 (`settings.ts`) | 0 | **Fixed** |
-| Orphaned docs | 1 (`ASR_ARCHITECTURE.md`) | 0 | **Fixed** |
-| New missing features | — | Onboarding flow | **Regressed** |
-| Frontend test coverage | Not measured | 13 files vs 30+ source files | **Gap identified** |
+| Metric                                | Previous                  | Current                      | Change                   |
+| ------------------------------------- | ------------------------- | ---------------------------- | ------------------------ |
+| ASR dead code                         | ~4,000 lines              | 0 lines                      | **-4,000 lines**         |
+| `#[allow(dead_code)]`                 | 3 modules + 7 functions   | 1 module + 23 items          | **Reduced**              |
+| `unwrap()` in lib.rs                  | 2                         | 0                            | **Fixed**                |
+| `map_err(\|_\|)`                      | 8+ locations              | 0                            | **Fixed**                |
+| Error swallowing (`.catch(() => {})`) | 8 locations               | 5 locations                  | **Reduced but persists** |
+| Runtime artifacts                     | 6 files                   | 0 files                      | **Cleaned up**           |
+| Dead stores                           | 1 (`settings.ts`)         | 0                            | **Fixed**                |
+| Orphaned docs                         | 1 (`ASR_ARCHITECTURE.md`) | 0                            | **Fixed**                |
+| New missing features                  | —                         | Onboarding flow              | **Regressed**            |
+| Frontend test coverage                | Not measured              | 13 files vs 30+ source files | **Gap identified**       |
 
 ### Overall Improvement: **Significant**
 
@@ -285,6 +302,7 @@ Up from 65/100 to 78/100. The core pipeline is solid. The remaining gaps are sur
 The codebase has undergone a major transformation since the previous audit. The single largest architectural liability — the ~4,000-line dead `asr/` abstraction layer — has been completely removed. The recording pipeline, hotkey lifecycle, diagnostics system, and privacy controls are production-quality. The contract mirror discipline between frontend and backend is excellent.
 
 **What stands between this and "Production Ready":**
+
 1. **Onboarding flow** — first-run UX is missing entirely
 2. **Error swallowing** — 22 `.catch()` sites need hardening
 3. **Frontend test coverage** — critical pipeline orchestration is untested
@@ -295,6 +313,6 @@ The delta from the previous audit is one of the cleanest codebase transformation
 
 ---
 
-*Report generated: June 29, 2026*
-*Auditor: principal-engineer audit system*
-*Baseline for future audits: YES*
+_Report generated: June 29, 2026_
+_Auditor: principal-engineer audit system_
+_Baseline for future audits: YES_
